@@ -1,6 +1,6 @@
-# Automated Mobile Wallet Testing
+# Automated Digital Credential Wallet Testing
 
-Automated mobile wallet testing script using Python, Pytest and Appium. 
+Automated digital credential wallet testing script using Python, Pytest and Appium. 
 
 ## Current status (Under development)
 
