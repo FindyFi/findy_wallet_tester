@@ -20,6 +20,7 @@ The script is currently tested using Android Virtual Devices (AVD) with plans to
 
 The current development environment uses Android Studio Virtual Device Manager to create needed testing device. **Log in to Google Play Store with testing account so that applications can be downloaded!**
 
+
 The name of the device can be found using the following command:
 
 ```bash 
@@ -30,6 +31,15 @@ Run the AVD
 
 ```bash
 emulator -avd <AVD_NAME>
+```
+
+The fingerprint sensor emulation needs to be done by hand so that it can be used within the script. 
+
+From Settings go to Security and to set up fingerprint. Set up pin before Android lets you set up fingerprint. **Instead of usign the emulators UI use adb through terminal**
+
+```bash
+# Use this command to set up the fingerprint
+adb emu finger touch 1
 ```
 
 **2. Install Python dependencies:**
