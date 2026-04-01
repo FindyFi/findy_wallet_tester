@@ -1,0 +1,8 @@
+{
+    "server": "http://localhost:4723",
+    "android": {
+        "platform_name": "Android",
+        "device_name": "<change_this>",
+        "automation_name": "UiAutomator2"
+    }
+}

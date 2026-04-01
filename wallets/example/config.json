@@ -1,0 +1,32 @@
+{
+    "application": {
+        "package": "com.example.wallet",
+        "activity": ".MainActivity",
+        "pin": "123456"
+    },
+    "timeouts": {
+        "default": 10,
+        "pin_digit_delay": 0.3,
+        "credential_offer": 30
+    },
+    "reporting": {
+        "screenshot_on_failure": true
+    },
+    "onboarding": {
+        "skip_if_done": true
+    },
+    "test_cases": {
+        "example_issuer": {
+            "base_url": "https://issuer.example.com",
+            "credentials": {
+                "my_credential": { "type": "issuance", "path": "credential.json" }
+            }
+        },
+        "example_verifier": {
+            "base_url": "https://verifier.example.com",
+            "credentials": {
+                "my_verification": { "type": "verification", "path": "/" }
+            }
+        }
+    }
+}
