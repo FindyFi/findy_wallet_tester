@@ -1,0 +1,78 @@
+{
+    "application": {
+        "package": "id.paradym.wallet",
+        "activity": ".MainActivity",
+        "pin": "123456"
+    },
+    "timeouts": {
+        "default": 10,
+        "pin_digit_delay": 0.3,
+        "credential_offer": 30
+    },
+    "reporting": {
+        "screenshot_on_failure": true
+    },
+    "onboarding": {
+        "skip_if_done": true
+        },
+    "test_cases": {
+        "paradym_pension": {
+            "base_url": "https://issuer.paradym.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" },
+                "provisional_issuance":            { "type": "issuance", "path": "pensioncredential-provisional.json" },
+                "disability_issuance":             { "type": "issuance", "path": "pensioncredential-disability.json" },
+                "rehabilitation_issuance":         { "type": "issuance", "path": "pensioncredential-rehabilitation.json" },
+                "rehabilitation_expired_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation-expired.json" }
+            }
+        },
+        "procivis_pension": {
+            "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" },
+                "provisional_issuance":            { "type": "issuance", "path": "pensioncredential-provisional.json" },
+                "disability_issuance":             { "type": "issuance", "path": "pensioncredential-disability.json" },
+                "rehabilitation_issuance":         { "type": "issuance", "path": "pensioncredential-rehabilitation.json" },
+                "rehabilitation_expired_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation-expired.json" }
+            }
+        },
+        "waltid_pension": {
+            "base_url": "https://issuer.waltid.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" },
+                "provisional_issuance":            { "type": "issuance", "path": "pensioncredential-provisional.json" },
+                "disability_issuance":             { "type": "issuance", "path": "pensioncredential-disability.json" },
+                "rehabilitation_issuance":         { "type": "issuance", "path": "pensioncredential-rehabilitation.json" },
+                "rehabilitation_expired_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation-expired.json" }
+            }
+        },
+        "sphereon_pension": {
+            "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" },
+                "provisional_issuance":            { "type": "issuance", "path": "pensioncredential-provisional.json" },
+                "disability_issuance":             { "type": "issuance", "path": "pensioncredential-disability.json" },
+                "rehabilitation_issuance":         { "type": "issuance", "path": "pensioncredential-rehabilitation.json" },
+                "rehabilitation_expired_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation-expired.json" }
+            }
+        },
+        "paradym_verifier": {
+            "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        },
+        "procivis_verifier": {
+            "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        },
+        "waltid_verifier": {
+            "base_url": "https://verifier.waltid.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        }
+    }
+}
