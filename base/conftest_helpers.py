@@ -6,6 +6,7 @@ capturing failure artifacts, and running teardown.  Import them in each
 wallet conftest to avoid repeating the same ~40 lines.
 """
 import logging
+from datetime import datetime, timezone
 
 from base.utils import sanitize_test_name
 
@@ -84,6 +85,34 @@ def capture_failure_artifact(app, request):
             logger.warning(f"[conftest] Could not save screenshot: {e}")
 
 
+def capture_appium_logs(driver, run_dir, test_name):
+    """Fetch Appium server logs and append them (with timestamps) to appium.log.
+
+    ``driver.get_log('server')`` drains the Appium log buffer, so each call
+    returns only entries since the previous call — giving one block per test.
+    Timestamps from the Appium entries (ms since epoch) are formatted to match
+    the ``test.log`` format (``YYYY-MM-DD HH:MM:SS``).
+    """
+    try:
+        entries = driver.get_log("server")
+    except Exception as e:
+        logger.warning(f"[conftest] Could not fetch Appium logs: {e}")
+        return
+    if not entries:
+        return
+
+    appium_log = run_dir / "appium.log"
+    with appium_log.open("a", encoding="utf-8") as f:
+        f.write(f"\n--- TEST: {test_name} ---\n")
+        for entry in entries:
+            ts_ms = entry.get("timestamp", 0)
+            dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone()
+            ts_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+            level = entry.get("level", "INFO").upper()
+            message = entry.get("message", "")
+            f.write(f"{ts_str} [{level}] {message}\n")
+
+
 def teardown_test(app, request, init_flow):
     """Capture any failure artifact then navigate back to the home screen.
 
@@ -91,6 +120,7 @@ def teardown_test(app, request, init_flow):
     standard teardown for wallets that don't need extra post-test steps.
     """
     capture_failure_artifact(app, request)
+    capture_appium_logs(app.driver, request.config._run_dir, sanitize_test_name(request.node.name))
 
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
