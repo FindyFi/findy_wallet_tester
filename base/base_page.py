@@ -33,3 +33,20 @@ class BasePage:
             ).click()
         except TimeoutException:
             raise Exception(f"Element {locator} not clickable after {t}s")
+
+    def swipe_up(self):
+        """Swipe upward to reveal content below the fold (75% → 25% of screen height)."""
+        import time
+        from selenium.webdriver.common.actions.action_builder import ActionBuilder
+        from selenium.webdriver.common.actions.pointer_input import PointerInput
+        size = self.driver.get_window_size()
+        cx = size["width"] // 2
+        touch = PointerInput("touch", "finger")
+        builder = ActionBuilder(self.driver, mouse=touch)
+        builder.pointer_action.move_to_location(cx, int(size["height"] * 0.75))
+        builder.pointer_action.pointer_down()
+        builder.pointer_action.pause(0.1)
+        builder.pointer_action.move_to_location(cx, int(size["height"] * 0.25))
+        builder.pointer_action.release()
+        builder.perform()
+        time.sleep(0.3)
