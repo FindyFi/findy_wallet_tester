@@ -2,9 +2,14 @@
 
 Automated digital credential wallet testing script using Python, Pytest and Appium. 
 
-## Current status (Under development)
+## Current status
 
 The script is currently tested using Android Virtual Devices (AVD) with plans to add iOS and physical devices.
+
+[x] Script tested to work
+[x] First implementations done
+[ ] Wallet implementations published
+[ ] iOS support
 
 ## Requirements
 
