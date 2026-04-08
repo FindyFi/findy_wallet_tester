@@ -71,7 +71,8 @@ def capture_failure_artifact(app, request):
             request.node._artifact_captured = True
         except Exception as e:
             logger.warning(f"[conftest] Could not save XML dump: {e}")
-    elif reporting.get("screenshot_on_failure", True):
+
+    if reporting.get("screenshot_on_failure", True):
         try:
             screenshot_dir = request.config._run_dir / "screenshots"
             screenshot_dir.mkdir(parents=True, exist_ok=True)
