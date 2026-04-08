@@ -1,0 +1,37 @@
+{
+    "application": {
+        "package": "ch.ubique.heidi.android",
+        "activity": ".MainActivity",
+        "pin": "123456"
+    },
+    "timeouts": {
+        "default": 10,
+        "pin_digit_delay": 0.3,
+        "credential_offer": 30
+    },
+    "reporting": {
+        "screenshot_on_failure": false,
+        "xml_on_failure": true
+    },
+    "onboarding": {
+        "skip_if_done": true
+    },
+    "device_setup": {
+        "fingerprint": true,
+        "screen_lock_pin": "0000"
+    },
+    "test_cases": {
+        "sphereon_pension": {
+            "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "procivis_verifier": {
+            "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        }
+    }
+}
