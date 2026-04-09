@@ -1,0 +1,37 @@
+{
+    "application": {
+        "package": "droidwallet.hovi.id",
+        "activity": ".MainActivity",
+        "pin": ""
+    },
+    "timeouts": {
+        "default": 10,
+        "credential_offer": 30
+    },
+    "reporting": {
+        "screenshot_on_failure": true
+    },
+    "onboarding": {
+        "skip_if_done": true
+    },
+    "test_cases": {
+        "hovi_pension": {
+            "base_url": "https://issuer.hovi.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "procivis_pension": {
+            "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "hovi_verifier": {
+            "base_url": "https://verifier.hovi.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        }
+    }
+}
