@@ -1,0 +1,59 @@
+{
+    "application": {
+        "package": "com.toppansecurity.walletapp",
+        "activity": ".MainActivity",
+        "pin": "123456"
+    },
+    "timeouts": {
+        "default": 10,
+        "credential_offer": 30
+    },
+    "reporting": {
+        "screenshot_on_failure": true
+    },
+    "onboarding": {
+        "skip_if_done": true
+    },
+    "test_cases": {
+        "gataca_pension": {
+            "base_url": "https://issuer.gataca.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "/" }
+            }
+        },
+        "sphereon_pension": {
+            "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "procivis_pension": {
+            "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        },
+        "waltid_pension": {
+            "base_url": "https://verifier.waltid.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        },
+        "itb_diipv5": {
+            "type": "itb",
+            "base_url": "https://itb.ilabs.ai",
+            "username": "${ITB_USERNAME}",
+            "password": "${ITB_PASSWORD}",
+            "system_id": 82,
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "test_case_id": 113,
+                    "spec_id": 22,
+                    "actor_id": 61,
+                    "provide_step": "1.2.4"
+                }
+            }
+        }
+    }
+}

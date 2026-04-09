@@ -20,10 +20,10 @@ class CredentialOfferPage(BasePage):
         self.find(SCREEN_ID, timeout=timeout)
 
     def accept(self):
-        # Wait for the Accept button to exist in the DOM (may be off-screen) before swiping,
-        # so we know the screen is fully rendered and not still loading.
+        # Accept button is at the bottom of a scrollable list and is not rendered in the DOM
+        # until scrolled into view (lazy rendering). Swipe to the bottom first, then find+click.
         t = self._get_timeout("credential_offer")
-        self.find(_accept, timeout=t)
         logger.info("[credential_offer] Swiping to reveal Accept button")
         self.swipe_up()
-        self.find(_accept).click()
+        self.swipe_up()
+        self.find(_accept, timeout=t).click()
