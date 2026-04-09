@@ -8,5 +8,6 @@ APP_NAME = Path(__file__).parents[1].name
 
 
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
+@pytest.mark.skip_home_setup
 def test_app_launch(app):
     logger.info(f"App {app.config['application']['package']} is installed and launched successfully!")
