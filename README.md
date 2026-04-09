@@ -81,7 +81,12 @@ appium
 
 # Appium with inspector for development purposes
 appium --allow-cors --use-plugins=inspector
+
+# Appium with adb_shell enabled (required for wallets that need direct am-start targeting)
+appium --allow-insecure adb_shell
 ```
+
+> **Note:** The `--allow-insecure adb_shell` flag is needed for wallet implementations that bypass Android's intent chooser by targeting a specific app component directly. Without it, `mobile: shell` commands will fail with a security error.
 
 
 ## Running tests
@@ -216,6 +221,19 @@ ITB_PASSWORD=yourpassword
 ```
 
 The `${ITB_USERNAME}` and `${ITB_PASSWORD}` placeholders in config are resolved at runtime, so the credentials never need to appear in config files. Shell environment variables and CI/CD injection take precedence over `.env`.
+
+## Implementation notes
+
+### Intentional Appium bypasses
+
+Most device interaction goes through Appium, but two parts of the framework use `adb` via `subprocess` directly because Appium has no equivalent API:
+
+| File | Command | Reason |
+|------|---------|--------|
+| `conftest.py` | `adb logcat` | Streams device logs to `reports/<run>/app.log` for the whole session. Appium has no logcat streaming API. |
+| `base/utils.py` | `adb shell dumpsys package` | Reads app version and build number for reporting. Appium has no package metadata API. |
+
+Some wallet implementations may also need to use `mobile: shell` (which requires `--allow-insecure adb_shell` on the Appium server) to send intents directly to a specific app component, bypassing Android's intent chooser dialog. This is needed when multiple wallets on the same device register for the same URI scheme (e.g. `openid-credential-offer://`).
 
 ## Adding a new wallet
 
