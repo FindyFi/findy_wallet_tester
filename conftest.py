@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -249,6 +250,15 @@ def app(driver, request):
     app_name = request.node.callspec.params["driver"]
     config = load_config(app_name)
 
+    recording_enabled = config.get("recording", {}).get("enabled", False)
+    if recording_enabled:
+        try:
+            driver.start_recording_screen(timeLimit=180)
+            logger.info("[recording] Screen recording started")
+        except Exception as e:
+            logger.warning(f"[recording] Failed to start recording: {e}")
+            recording_enabled = False
+
     base_test = BaseTest(driver, config)
     base_test.setup()
 
@@ -298,3 +308,16 @@ def app(driver, request):
                 logger.info(f"[xml] Saved: {path}")
             except Exception as e:
                 logger.warning(f"[xml] Failed to save XML dump: {e}")
+
+    if recording_enabled:
+        try:
+            video_b64 = driver.stop_recording_screen()
+            if video_b64:
+                recordings_dir = request.config._run_dir / "recordings"
+                recordings_dir.mkdir(exist_ok=True)
+                test_name = sanitize_test_name(request.node.name)
+                path = recordings_dir / f"{test_name}.mp4"
+                path.write_bytes(base64.b64decode(video_b64))
+                logger.info(f"[recording] Saved: {path}")
+        except Exception as e:
+            logger.warning(f"[recording] Failed to save recording: {e}")
