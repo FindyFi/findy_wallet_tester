@@ -4,5 +4,8 @@
         "platform_name": "Android",
         "device_name": "<change_this>",
         "automation_name": "UiAutomator2"
+    },
+    "recording": {
+        "enabled": true
     }
 }
