@@ -275,13 +275,17 @@ def app(driver, request):
         device_serial = driver.capabilities.get("deviceName", "")
         info = get_app_info(app_package, device_serial)
         info["wallet"] = app_name
+        info["platform"] = driver.capabilities.get("platformName", "unknown")
+        info["platform_version"] = driver.capabilities.get("platformVersion", "unknown")
+        info["device_name"] = driver.capabilities.get("deviceModel", device_serial)
         (request.config._run_dir / "app_info.json").write_text(
             json.dumps(info, indent=2)
         )
         request.config._app_info_written = True
         logger.info(
             f"[app] {info['wallet']} — {info['package']} "
-            f"v{info['version_name']} (build {info['version_code']})"
+            f"v{info['version_name']} (build {info['version_code']}) "
+            f"on {info['platform']} {info['platform_version']} ({info['device_name']})"
         )
 
     yield base_test

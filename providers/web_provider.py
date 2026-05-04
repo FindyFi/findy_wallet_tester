@@ -11,9 +11,16 @@ from providers.base import DeeplinkProvider
 logger = logging.getLogger(__name__)
 
 # Known credential offer URL schemes
-_OFFER_SCHEMES = ("openid-credential-offer://", "openid-gatc-credential-offer://", "openid4vp://", "haip://")
+_OFFER_SCHEMES = (
+    "openid-credential-offer://",
+    "openid-gatc-credential-offer://",
+    "openid4vp://",
+    "openid-vp://",
+    "openid-gatc-vp://",
+    "haip://",
+)
 _OFFER_PATTERN = re.compile(
-    r'(?:openid-credential-offer|openid-gatc-credential-offer|openid4vp|haip)://[^\s"\'<>&]+'
+    r'(?:openid-credential-offer|openid-gatc-credential-offer|openid4vp|openid-vp|openid-gatc-vp|haip)://[^\s"\'<>&]+'
 )
 # Matches https:// invitation URLs in href attributes (e.g. Paradym verifier pages
 # embed the request as a clickable link: <a href="https://paradym.id/invitation?...">)
