@@ -94,9 +94,8 @@ def _onboard(driver, pin: str, page_args: dict, default_timeout: float):
     PinPage(driver, **page_args).enter_pin(pin)
 
     # Wallet registers with the backend — may show an error and require retry
-    WebDriverWait(driver, default_timeout).until(
-        EC.presence_of_element_located(_registration_id)
-    )
+    # (screen may appear and disappear faster than the poll interval; wait_for_completion
+    # uses invisibility_of_element_located which returns True if screen is already gone)
     WalletRegistrationPage(driver, **page_args).wait_for_completion()
 
     # Use a longer timeout here: after registration the app may show a brief
