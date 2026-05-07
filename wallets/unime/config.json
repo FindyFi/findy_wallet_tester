@@ -1,0 +1,43 @@
+{
+    "application": {
+        "package": "com.impierce.identity_wallet",
+        "activity": ".MainActivity",
+        "pin": "Findy123"
+    },
+    "timeouts": {
+        "default": 10,
+        "credential_offer": 30
+    },
+    "reporting": {
+        "screenshot_on_failure": true
+    },
+    "onboarding": {
+        "skip_if_done": true
+    },
+    "test_cases": {
+        "sphereon_pension": {
+            "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json", "xfail": "UniMe has no deeplink intent filter; credential offers require QR code scanning" }
+            }
+        },
+        "procivis_pension": {
+            "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json", "xfail": "UniMe has no deeplink intent filter; credential offers require QR code scanning" }
+            }
+        },
+        "paradym_verifier": {
+            "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/", "xfail": "UniMe has no deeplink intent filter; verification requests require QR code scanning" }
+            }
+        },
+        "procivis_verifier": {
+            "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/", "xfail": "UniMe has no deeplink intent filter; verification requests require QR code scanning" }
+            }
+        }
+    }
+}
