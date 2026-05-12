@@ -144,7 +144,7 @@ def load_config(wallet_name):
 
 
 def _resolve_device(config: dict, worker_id: str) -> dict:
-    """Return {server, device_name} for the given xdist worker.
+    """Return {server, device_name, udid} for the given xdist worker.
 
     Single-device config (default):
         "server": "http://127.0.0.1:4723",
@@ -158,13 +158,39 @@ def _resolve_device(config: dict, worker_id: str) -> dict:
             ]
         }
     Worker gw0 → devices[0], gw1 → devices[1], etc.
+
+    The returned `udid` defaults to `device_name` (Android ADB serials like
+    `emulator-5554` work as both). It can be overridden per device with an
+    explicit `udid` key.
     """
     devices = config["android"].get("devices")
     if devices:
         idx = int(worker_id[2:]) if worker_id.startswith("gw") else 0
         device = devices[idx % len(devices)]
-        return {"server": device["server"], "device_name": device["device_name"]}
-    return {"server": config["server"], "device_name": config["android"]["device_name"]}
+        device_name = device["device_name"]
+        return {
+            "server": device["server"],
+            "device_name": device_name,
+            "udid": device.get("udid", device_name),
+        }
+    device_name = config["android"]["device_name"]
+    return {
+        "server": config["server"],
+        "device_name": device_name,
+        "udid": config["android"].get("udid", device_name),
+    }
+
+
+def _validate_device(device: dict) -> None:
+    """Fail fast if device.json hasn't been configured for this machine."""
+    name = device.get("device_name")
+    if not name or name == "<change_this>":
+        raise pytest.UsageError(
+            "config/device.json: 'android.device_name' is not set "
+            f"(got {name!r}). Set it to the ADB serial of the device/emulator "
+            "to use — run `adb devices` to list available serials "
+            "(e.g. 'emulator-5554')."
+        )
 
 
 def pytest_runtest_setup(item):
@@ -232,10 +258,12 @@ def driver(request):
     config = load_config(app_name)
     worker_id = getattr(request.config, "workerinput", {}).get("workerid", "master")
     device = _resolve_device(config, worker_id)
+    _validate_device(device)
 
     opts = UiAutomator2Options()
     opts.platform_name = config["android"]["platform_name"]
     opts.device_name = device["device_name"]
+    opts.udid = device["udid"]
     opts.automation_name = config["android"]["automation_name"]
     opts.no_reset = True
 
