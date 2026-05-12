@@ -3,3 +3,7 @@
 reports
 # If you make changes to config dir then those should be added to repo.
 config
+
+# Generated compact status reports (icons under status/icons/ are tracked)
+status/index.html
+status/data.json
