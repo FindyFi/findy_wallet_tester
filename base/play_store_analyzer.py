@@ -19,7 +19,11 @@ class PlayStoreState(Enum):
     POPUP = "popup"
 
 
-DISMISS_TEXTS = ["Skip", "Not now", "No thanks", "Accept", "Got it", "Continue", "Dismiss"]
+DISMISS_TEXTS = [
+    "Skip", "Not now", "No thanks", "Accept", "Got it", "Continue", "Dismiss",
+    # Finnish
+    "Ohita", "Ei nyt", "Ei kiitos", "Hyväksy", "Selvä", "Jatka", "Hylkää",
+]
 
 ERROR_TEXTS = {
     "Not enough storage space": "Device is out of storage. Free up space and try again.",
@@ -30,6 +34,11 @@ ERROR_TEXTS = {
     "No connection": "No network connection. Check device connectivity.",
     "Can't download": "Play Store could not download the app.",
     "Item not found": "App not found on Play Store. Check the package name.",
+    # Finnish
+    "Tallennustilaa ei ole": "Device is out of storage. Free up space and try again.",
+    "Lataus epäonnistui": "Play Store download failed. Check network connection.",
+    "Ei yhteyttä": "No network connection. Check device connectivity.",
+    "Kohdetta ei löydy": "App not found on Play Store. Check the package name.",
 }
 
 
@@ -77,10 +86,10 @@ class KeywordPlayStoreAnalyzer(PlayStoreAnalyzer):
         if self._exists(driver, f'//*[{dismiss_xpath}]'):
             return PlayStoreState.POPUP
 
-        if self._exists(driver, '//*[@text="Open"]'):
+        if self._exists(driver, '//*[@text="Open" or @text="Avaa"]'):
             return PlayStoreState.INSTALLED
 
-        if self._exists(driver, '//*[contains(@text, "Installing")]'):
+        if self._exists(driver, '//*[contains(@text, "Installing") or contains(@text, "Asennetaan")]'):
             return PlayStoreState.INSTALLING
 
         try:
@@ -90,7 +99,7 @@ class KeywordPlayStoreAnalyzer(PlayStoreAnalyzer):
         except Exception:
             pass
 
-        if self._exists(driver, '//*[@text="Install"]'):
+        if self._exists(driver, '//*[@text="Install" or @text="Asenna"]'):
             return PlayStoreState.READY_TO_INSTALL
 
         return PlayStoreState.UNKNOWN
