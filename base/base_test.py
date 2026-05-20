@@ -35,7 +35,7 @@ class BaseTest:
         """Open Play Store and install the app, reacting to each screen state."""
         debug = self.config.get("debug", False)
         play_store_url = f"https://play.google.com/store/apps/details?id={app_package}"
-        install_locator = (AppiumBy.XPATH, '//*[@text="Install"]')
+        install_locator = (AppiumBy.XPATH, '//*[@text="Install" or @text="Asenna"]')
 
         logger.info(f"[install] Opening Play Store for: {app_package}")
         self.driver.execute_script("mobile: deepLink", {"url": play_store_url, "package": "com.android.vending"})
