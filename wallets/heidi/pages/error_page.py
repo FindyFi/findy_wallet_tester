@@ -7,8 +7,12 @@ from base.utils import wait_present
 
 logger = logging.getLogger(__name__)
 
-# The "An error occurred." heading is unique to Heidi's error screen.
+# Issuance error screen title (Java exception dialog).
 SCREEN_ID = (AppiumBy.XPATH, '//*[@text="An error occurred."]')
+
+# Verification error screen title (network/protocol error dialog).
+# Structurally identical to SCREEN_ID — same ScrollView, CANCEL button, and error text locators work for both.
+VERIFICATION_SCREEN_ID = (AppiumBy.XPATH, '//*[@text="Error"]')
 
 # The CANCEL button: inner TextView has clickable="false"; parent View is clickable="true".
 _CANCEL = (AppiumBy.XPATH,
