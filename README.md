@@ -6,10 +6,7 @@ Automated digital credential wallet testing script using Python, Pytest and Appi
 
 The script is currently tested using Android Virtual Devices (AVD) with plans to add iOS and physical devices.
 
-[x] Script tested to work
-[x] First implementations done
-[ ] Wallet implementations published
-[ ] iOS support
+The test results from this implementations can be seen in compact form here: https://interop.findy.fi/
 
 ## Requirements
 
