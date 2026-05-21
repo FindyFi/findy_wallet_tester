@@ -1,5 +1,6 @@
 # Ignore hidden files
 .*
 reports
+status
 # If you make changes to config dir then those should be added to repo.
 config
