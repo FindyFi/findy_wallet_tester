@@ -7,7 +7,7 @@ from wallets.paradym.pages.issuer_consent_page import IssuerConsentPage
 from wallets.paradym.pages import issuer_consent_page as consent_screen
 from wallets.paradym.pages import pin_page as pin_screen
 from wallets.paradym.pages.pin_page import PinPage
-from wallets.paradym.pages.verification_request_page import VerificationRequestPage
+from wallets.paradym.pages.verification_request_page import VerificationRequestPage, has_unavailable_cards
 from providers.base import DeeplinkProvider
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,14 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
             f"Verifier returned an error or rejected the '{credential_name}' request "
             "— 'Go to wallet' appeared instead of the share screen. "
             "This verifier may be incompatible with this wallet."
+        )
+
+    if has_unavailable_cards(driver):
+        VerificationRequestPage(driver, **page_args).close()
+        raise RuntimeError(
+            f"Wallet does not have the cards required by '{credential_name}' — "
+            "'UNAVAILABLE CARDS' shown. The verifier may request a different credential type "
+            "than the one issued to this wallet."
         )
 
     logger.info("[verification_flow] Review request screen — sharing")
