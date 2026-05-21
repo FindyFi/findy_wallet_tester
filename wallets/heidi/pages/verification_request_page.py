@@ -4,6 +4,7 @@ from base.base_page import BasePage
 from base.utils import wait_present
 
 SCREEN_ID = (AppiumBy.XPATH, '//*[@text="Information Request"]')
+NO_MATCHING_CREDENTIALS_ID = (AppiumBy.XPATH, '//*[@text="No Matching Credentials"]')
 
 _SHARE = (AppiumBy.XPATH,
     '//android.view.View[@clickable="true" and .//android.widget.TextView[@text="SHARE INFOS"]]')

@@ -10,9 +10,14 @@ from wallets.heidi.pages.untrusted_connection_page import (
     SCREEN_ID as _untrusted_id,
     on_screen as untrusted_on_screen,
 )
-from wallets.heidi.pages.error_page import ErrorPage, SCREEN_ID as _error_id
+from wallets.heidi.pages.error_page import (
+    ErrorPage,
+    SCREEN_ID as _error_id,
+    VERIFICATION_SCREEN_ID as _verification_error_id,
+)
 from wallets.heidi.pages.verification_request_page import (
     VerificationRequestPage,
+    NO_MATCHING_CREDENTIALS_ID as _no_credentials_id,
     on_screen as request_on_screen,
 )
 
@@ -62,7 +67,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     t = timeouts.get("credential_offer", timeouts.get("default", 30))
 
     if not request_on_screen(driver, timeout=t):
-        if wait_present(driver, _error_id, timeout=2):
+        if wait_present(driver, _error_id, timeout=2) or wait_present(driver, _verification_error_id, timeout=2):
             error_page = ErrorPage(driver, **page_args)
             error_text = error_page.get_error_text()
             logger.error(f"[verification_flow] Error screen: {error_text}")
@@ -73,6 +78,12 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         raise RuntimeError(
             f"[verification_flow] Information Request screen did not appear "
             f"after deeplink for '{credential_name}' (waited {t}s)"
+        )
+
+    if wait_present(driver, _no_credentials_id, timeout=2):
+        raise RuntimeError(
+            f"[verification_flow] No matching credentials for '{credential_name}' — "
+            "wallet has no credentials to share with this verifier"
         )
 
     logger.info("[verification_flow] Information Request screen — sharing credentials")
