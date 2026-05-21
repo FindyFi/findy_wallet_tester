@@ -31,6 +31,7 @@ from appium import webdriver
 from appium.options.android.uiautomator2.base import UiAutomator2Options
 from selenium.webdriver.support.ui import WebDriverWait
 
+from base.android import handle_biometric_if_present, handle_permission_if_present
 from base.base_test import BaseTest
 from base.utils import list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable, sanitize_test_name
 
@@ -291,10 +292,24 @@ def app(driver, request):
     base_test.setup()
 
     app_package = config["application"]["package"]
+
+    # Wake the device screen before activating the app — if the screen has auto-locked
+    # between tests, activate_app succeeds but the lock screen holds current_package,
+    # causing the foreground check below to time out.
+    try:
+        driver.execute_script("mobile: wakeUpDevice")
+    except Exception:
+        pass
+
     driver.activate_app(app_package)
 
+    def _app_is_foreground(d):
+        # Dismiss permission dialogs that can take focus immediately after activate_app.
+        handle_permission_if_present(d)
+        return d.current_package == app_package
+
     WebDriverWait(driver, config.get("timeouts", {}).get("default", 10)).until(
-        lambda d: d.current_package == app_package,
+        _app_is_foreground,
         message=f"Expected {app_package} to be in foreground, got {driver.current_package}"
     )
 
