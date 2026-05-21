@@ -60,6 +60,14 @@ def _tap_go_to_wallet(driver) -> bool:
         return False
 
 
+def _recover_camera_required(driver, package: str) -> str:
+    """Restart the app to recover from the 'Please allow camera access' broken state."""
+    logger.warning("[init_flow] Camera access screen detected — restarting app to recover")
+    driver.terminate_app(package)
+    driver.activate_app(package)
+    return _detect_state(driver)
+
+
 def _back_to_known_state(driver, package: str) -> str:
     """Return to a known app state.
 
@@ -128,17 +136,16 @@ def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **pa
 
     state = _detect_state(driver)
     if state == "camera_required":
-        raise RuntimeError(
-            "App landed on 'Please allow camera access' — "
-            "a previous test likely left the app in a broken state (e.g. incomplete verification flow)"
-        )
+        state = _recover_camera_required(driver, package)
     if state == "unknown":
         logger.info("[init_flow] App in intermediate state — pressing back to known screen")
         state = _back_to_known_state(driver, package)
     if state == "camera_required":
+        state = _recover_camera_required(driver, package)
+    if state == "camera_required":
         raise RuntimeError(
-            "App navigated to 'Please allow camera access' — "
-            "a previous test likely left the app in a broken state (e.g. incomplete verification flow)"
+            "App stuck on 'Please allow camera access' even after restart — "
+            "check for system dialogs or crashed screens"
         )
 
     if state == "credential_success":
