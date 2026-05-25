@@ -4,7 +4,7 @@ import time as _time
 from base.android import handle_biometric_if_present
 from base.utils import wait_present
 from providers.base import DeeplinkProvider
-from wallets.heidi.pages.home_page import SCREEN_ID as _home_id
+from wallets.heidi.pages.home_page import HomePage, SCREEN_ID as _home_id
 from wallets.heidi.pages.untrusted_connection_page import (
     UntrustedConnectionPage,
     SCREEN_ID as _untrusted_id,
@@ -88,5 +88,19 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
     logger.info("[verification_flow] Information Request screen — sharing credentials")
     VerificationRequestPage(driver, **page_args).share()
+
+    # After sharing, an error dialog may appear (e.g. cert failure, protocol error).
+    # Without this check the test passes silently despite the failure.
+    if wait_present(driver, _error_id, timeout=5) or wait_present(driver, _verification_error_id, timeout=5):
+        error_page = ErrorPage(driver, **page_args)
+        error_text = error_page.get_error_text()
+        logger.error(f"[verification_flow] Error screen after sharing: {error_text}")
+        error_page.cancel()
+        raise RuntimeError(
+            f"[verification_flow] Verification failed after sharing '{credential_name}': {error_text}"
+        )
+
+    logger.info("[verification_flow] Waiting for home screen after sharing")
+    HomePage(driver, **page_args).wait_until_loaded()
 
     logger.info(f"[verification_flow] Credential '{credential_name}' shared successfully")
