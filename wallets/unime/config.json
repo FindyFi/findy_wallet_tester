@@ -18,25 +18,25 @@
         "sphereon_pension": {
             "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json", "xfail": "UniMe has no deeplink intent filter; credential offers require QR code scanning" }
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
             }
         },
         "procivis_pension": {
             "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json", "xfail": "UniMe has no deeplink intent filter; credential offers require QR code scanning" }
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
             }
         },
         "paradym_verifier": {
             "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
             "credentials": {
-                "pension_verification": { "type": "verification", "path": "/", "xfail": "UniMe has no deeplink intent filter; verification requests require QR code scanning" }
+                "pension_verification": { "type": "verification", "path": "/" }
             }
         },
         "procivis_verifier": {
             "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
             "credentials": {
-                "pension_verification": { "type": "verification", "path": "/", "xfail": "UniMe has no deeplink intent filter; verification requests require QR code scanning" }
+                "pension_verification": { "type": "verification", "path": "/" }
             }
         }
     }
