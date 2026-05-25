@@ -27,22 +27,14 @@ class HomePage(BasePage):
     def count_credentials(self) -> int:
         """Return the number of credential cards currently visible in the wallet.
 
-        UniMe shows credentials as clickable Button elements in the home screen list.
-        Each credential card is a Button with a non-empty text (the credential name).
-        We exclude navigation buttons ("Add", "Me", "Scan", "Activity") by checking
-        that the button is inside the credential list area (not the bottom nav).
+        Credential cards are android.widget.Button elements whose text starts with
+        "img_" — React Native prepends the image's accessibility ID to the button's
+        content description, so only credential cards match this pattern.
         """
         try:
-            # Credential cards are android.widget.Button elements with non-empty text
-            # that appear in the main content area above the bottom navigation.
-            # Filter to buttons that are not part of the bottom nav (which uses small icons).
             buttons = self.driver.find_elements(
                 "xpath",
-                '//android.widget.Button[string-length(@text) > 0 '
-                'and not(@text="Add") '
-                'and not(@text="Me") '
-                'and not(@text="Scan") '
-                'and not(@text="Activity")]'
+                '//android.widget.Button[starts-with(@text, "img_")]'
             )
             return len(buttons)
         except Exception:
