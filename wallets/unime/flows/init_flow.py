@@ -125,21 +125,32 @@ def _onboard(driver, pin: str, page_args: dict, default_timeout: float):
     _tap_continue(driver)
 
     # Step 5 — Set password
+    # The password screen title is "Set your new password". The EditText has no hint
+    # attribute (it uses password=true but hint is absent in the accessibility tree).
     WebDriverWait(driver, default_timeout).until(
-        EC.presence_of_element_located(("xpath", '//android.widget.EditText[@hint="Enter a password"]'))
+        EC.presence_of_element_located(("xpath", '//*[@text="Set your new password"]'))
     )
     logger.info("[init_flow] Password screen — entering password")
-    driver.find_element("xpath", '//android.widget.EditText[@hint="Enter a password"]').click()
+    driver.find_element("xpath", '//android.widget.EditText[@password="true"]').click()
     driver.execute_script("mobile: type", {"text": pin})
+    try:
+        driver.hide_keyboard()
+    except Exception:
+        pass
     _tap_continue(driver)
 
-    # Step 6 — Confirm password (hint differs from step 5: "Retype your password")
+    # Step 6 — Confirm password
+    # The confirm screen title is "Confirm Password". The EditText also has no hint.
     WebDriverWait(driver, default_timeout).until(
-        EC.presence_of_element_located(("xpath", '//android.widget.EditText[@hint="Retype your password"]'))
+        EC.presence_of_element_located(("xpath", '//*[@text="Confirm Password"]'))
     )
     logger.info("[init_flow] Confirm password screen — re-entering password")
-    driver.find_element("xpath", '//android.widget.EditText[@hint="Retype your password"]').click()
+    driver.find_element("xpath", '//android.widget.EditText[@password="true"]').click()
     driver.execute_script("mobile: type", {"text": pin})
+    try:
+        driver.hide_keyboard()
+    except Exception:
+        pass
     _tap_continue(driver)
 
     # Step 7 — Fingerprint enrollment prompt (appears right after password confirmation).
@@ -152,27 +163,32 @@ def _onboard(driver, pin: str, page_args: dict, default_timeout: float):
     except TimeoutException:
         pass  # prompt did not appear
 
-    # Step 7b — Password Set Lottie animation.
-    # The app plays a Lottie animation which briefly blocks UiAutomator2's
-    # accessibility tree. Sleep first, then try to tap Continue if screen is still showing.
+    # Step 7b + 8 — Password Set Lottie animation → home screen.
+    # The Lottie animation keeps UiAutomator2 non-idle indefinitely, so element
+    # queries time out even though the screen is visible. Disable idle waiting
+    # for the remainder of the onboarding flow and restore it once home is confirmed.
     time.sleep(3)
     try:
-        WebDriverWait(driver, default_timeout).until(
-            EC.presence_of_element_located(("xpath", '//*[@text="Password Set"]'))
-        )
-        logger.info("[init_flow] Password Set screen — continuing")
-        driver.find_element("xpath", '//*[@text="Continue"]').click()
-    except TimeoutException:
-        pass  # app may have auto-navigated past the animation
+        driver.update_settings({"waitForIdleTimeout": 0})
+        try:
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located(("xpath", '//*[@text="Password Set"]'))
+            )
+            logger.info("[init_flow] Password Set screen — continuing")
+            driver.find_element("xpath", '//*[@text="Continue"]').click()
+        except TimeoutException:
+            pass  # app may have auto-navigated past the animation
 
-    # Step 8 — Wait for home
-    try:
-        WebDriverWait(driver, default_timeout).until(
-            EC.presence_of_element_located(_home_id)
-        )
-    except TimeoutException:
-        raise RuntimeError("UniMe home screen not reached after onboarding")
-    logger.info("[init_flow] Onboarding complete — home screen reached")
+        # Step 8 — Wait for home (keep idle timeout disabled during transition)
+        try:
+            WebDriverWait(driver, default_timeout).until(
+                EC.presence_of_element_located(_home_id)
+            )
+        except TimeoutException:
+            raise RuntimeError("UniMe home screen not reached after onboarding")
+        logger.info("[init_flow] Onboarding complete — home screen reached")
+    finally:
+        driver.update_settings({"waitForIdleTimeout": 10000})
 
 
 def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **page_args):
