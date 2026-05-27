@@ -268,6 +268,11 @@ def driver(request):
     opts.automation_name = config["android"]["automation_name"]
     opts.no_reset = True
 
+    device_pin = config["android"].get("device_pin", "")
+    if device_pin:
+        opts.set_capability("appium:unlockType", "pin")
+        opts.set_capability("appium:unlockKey", device_pin)
+
     driver = webdriver.Remote(device["server"], options=opts)  # type: ignore
     yield driver
     driver.quit()
