@@ -79,14 +79,14 @@ class WebDeeplinkProvider(DeeplinkProvider):
             logger.info(f"[web_provider] Found deeplink in JSON 'uri' field")
             return url
 
-        url = self._scan_href(resp.text)
-        if url:
-            logger.info(f"[web_provider] Found deeplink in href attribute")
-            return url
-
         url = self._scan_source(resp.text)
         if url:
             logger.info(f"[web_provider] Found deeplink in page source")
+            return url
+
+        url = self._scan_href(resp.text)
+        if url:
+            logger.info(f"[web_provider] Found deeplink in href attribute")
             return url
 
         url = self._scan_qr_images(resp.text, page_url)
