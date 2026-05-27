@@ -5,6 +5,7 @@ import pytest
 from pathlib import Path
 
 from providers.factory import get_provider
+from wallets.toppan.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ def test_credential_issuance(app, issuer_name, test_case):
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
 
+    home = HomePage(app.driver, **app.page_args)
+    count_before = home.count_credentials()
+
     provider = get_provider(app.config, issuer_name)
     credential_flow.run(
         app.driver,
@@ -39,4 +43,10 @@ def test_credential_issuance(app, issuer_name, test_case):
         pin=pin,
         **app.page_args,
     )
-    logger.info(f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet")
+
+    home.wait_until_loaded()
+    count_after = home.count_credentials()
+    assert count_after > count_before, (
+        f"Credential was not added to wallet (count before: {count_before}, after: {count_after})"
+    )
+    logger.info(f"[test] Credential added — wallet now has {count_after} credential(s)")
