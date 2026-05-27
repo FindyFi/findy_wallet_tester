@@ -8,6 +8,7 @@ from base.base_page import BasePage
 SCREEN_ID = (AppiumBy.XPATH, '//*[@text="TOPPAN Wallet"]')
 
 
+
 class HomePage(BasePage):
     def wait_until_loaded(self):
         try:
@@ -16,3 +17,14 @@ class HomePage(BasePage):
             )
         except TimeoutException:
             raise RuntimeError("Home screen did not load within timeout")
+
+    def count_credentials(self) -> int:
+        """Return the number of credential cards on the home screen.
+
+        Counts occurrences in the raw page source rather than find_elements so
+        that cards scrolled out of the viewport are included.
+        """
+        try:
+            return self.driver.page_source.count('Issued on')
+        except Exception:
+            return 0
