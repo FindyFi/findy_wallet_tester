@@ -10,9 +10,9 @@ from wallets.toppan.pages.home_page import HomePage, SCREEN_ID as _home_id
 logger = logging.getLogger(__name__)
 
 
-def _detect_state(driver) -> str:
+def _detect_state(driver, timeout: float = 2) -> str:
     """Return the current app state: 'home' or 'unknown'."""
-    if wait_present(driver, _home_id):
+    if wait_present(driver, _home_id, timeout=timeout):
         return "home"
     return "unknown"
 
@@ -49,7 +49,7 @@ def run(driver, pin: str = "", skip_if_done: bool = True, app_package: str = "",
     default_timeout = timeouts.get("default", 10)
     package = app_package or driver.current_package
 
-    state = _detect_state(driver)
+    state = _detect_state(driver, timeout=default_timeout)
     if state == "unknown":
         logger.info("[init_flow] App in intermediate state — pressing back to known screen")
         state = _back_to_known_state(driver, package)
