@@ -1,3 +1,4 @@
+import html as _html
 import re
 import logging
 from io import BytesIO
@@ -20,7 +21,7 @@ _OFFER_SCHEMES = (
     "haip://",
 )
 _OFFER_PATTERN = re.compile(
-    r'(?:openid-credential-offer|openid-gatc-credential-offer|openid4vp|openid-vp|openid-gatc-vp|haip)://[^\s"\'<>&]+'
+    r'(?:openid-credential-offer|openid-gatc-credential-offer|openid4vp|openid-vp|openid-gatc-vp|haip)://[^\s"\'<>]+'
 )
 # Matches https:// invitation URLs in href attributes (e.g. Paradym verifier pages
 # embed the request as a clickable link: <a href="https://paradym.id/invitation?...">)
@@ -96,7 +97,7 @@ class WebDeeplinkProvider(DeeplinkProvider):
 
         raise ValueError(
             f"No credential offer deeplink found on: {page_url} — "
-            f"expected a bare URL, openid-credential-offer:// in page source, or a QR image"
+            f"expected a bare URL, openid-credential-offer:// in page source, or a QR image [no_retry]"
         )
 
     def _scan_json_uri(self, text: str) -> Optional[str]:
@@ -132,7 +133,7 @@ class WebDeeplinkProvider(DeeplinkProvider):
     def _scan_source(self, html: str) -> Optional[str]:
         match = _OFFER_PATTERN.search(html)
         if match:
-            return match.group(0).rstrip('"\';>')
+            return _html.unescape(match.group(0).rstrip('"\';>'))
         return None
 
     def _scan_href(self, html: str) -> Optional[str]:
