@@ -9,50 +9,65 @@
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": true
+        "screenshot_on_failure": true,
+        "xml_on_failure": true
     },
     "onboarding": {
         "skip_if_done": true
     },
     "test_cases": {
-        "gataca_pension": {
-            "base_url": "https://issuer.gataca.pensiondemo.findy.fi",
+        "hovi_issuer": {
+            "base_url": "https://issuer.hovi.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "path": "/" }
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
             }
         },
-        "sphereon_pension": {
+        "procivis_issuer": {
+            "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "waltid_issuer": {
+            "base_url": "https://issuer.waltid.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "paradym_issuer": {
+            "base_url": "https://issuer.paradym.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "sphereon_issuer": {
             "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
             "credentials": {
                 "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
             }
         },
-        "procivis_pension": {
+        "hovi_verifier": {
+            "base_url": "https://verifier.hovi.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        },
+        "procivis_verifier": {
             "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
             "credentials": {
                 "pension_verification": { "type": "verification", "path": "/" }
             }
         },
-        "waltid_pension": {
+        "waltid_verifier": {
             "base_url": "https://verifier.waltid.pensiondemo.findy.fi",
             "credentials": {
                 "pension_verification": { "type": "verification", "path": "/" }
             }
         },
-        "itb_diipv5": {
-            "type": "itb",
-            "base_url": "https://itb.ilabs.ai",
-            "username": "${ITB_USERNAME}",
-            "password": "${ITB_PASSWORD}",
-            "system_id": 82,
+        "paradym_verifier": {
+            "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": {
-                    "type": "issuance",
-                    "test_case_id": 113,
-                    "spec_id": 22,
-                    "actor_id": 61,
-                    "provide_step": "1.2.4"
-                }
+                "pension_verification": { "type": "verification", "path": "/" }
             }
         }
     }

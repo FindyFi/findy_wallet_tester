@@ -16,49 +16,39 @@
     "onboarding": {
         "skip_if_done": true
     },
-    "test_cases": { 
-        "procivis_pension": {
+    "test_cases": {
+        "hovi_issuer": {
+            "base_url": "https://issuer.hovi.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "procivis_issuer": {
             "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" },
-                "provisional_issuance":            { "type": "issuance", "path": "pensioncredential-provisional.json" },
-                "disability_issuance":             { "type": "issuance", "path": "pensioncredential-disability.json" },
-                "rehabilitation_issuance":         { "type": "issuance", "path": "pensioncredential-rehabilitation.json" },
-                "rehabilitation_expired_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation-expired.json" }
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
             }
         },
-        "paradym_pension": {
-            "base_url": "https://issuer.paradym.pensiondemo.findy.fi",
-            "credentials": {
-                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" },
-                "provisional_issuance":            { "type": "issuance", "path": "pensioncredential-provisional.json" },
-                "disability_issuance":             { "type": "issuance", "path": "pensioncredential-disability.json" },
-                "rehabilitation_issuance":         { "type": "issuance", "path": "pensioncredential-rehabilitation.json" },
-                "rehabilitation_expired_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation-expired.json" }
-            }
-        },
-        "waltid_pension": {
+        "waltid_issuer": {
             "base_url": "https://issuer.waltid.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" },
-                "provisional_issuance":            { "type": "issuance", "path": "pensioncredential-provisional.json" },
-                "disability_issuance":             { "type": "issuance", "path": "pensioncredential-disability.json" },
-                "rehabilitation_issuance":         { "type": "issuance", "path": "pensioncredential-rehabilitation.json" },
-                "rehabilitation_expired_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation-expired.json" }
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
             }
         },
-        "sphereon_pension": {
+        "paradym_issuer": {
+            "base_url": "https://issuer.paradym.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "sphereon_issuer": {
             "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" },
-                "provisional_issuance":            { "type": "issuance", "path": "pensioncredential-provisional.json" },
-                "disability_issuance":             { "type": "issuance", "path": "pensioncredential-disability.json" },
-                "rehabilitation_issuance":         { "type": "issuance", "path": "pensioncredential-rehabilitation.json" },
-                "rehabilitation_expired_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation-expired.json" }
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
             }
         },
-        "paradym_verifier": {
-            "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
+        "hovi_verifier": {
+            "base_url": "https://verifier.hovi.pensiondemo.findy.fi",
             "credentials": {
                 "pension_verification": { "type": "verification", "path": "/" }
             }
@@ -71,6 +61,12 @@
         },
         "waltid_verifier": {
             "base_url": "https://verifier.waltid.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        },
+        "paradym_verifier": {
+            "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
             "credentials": {
                 "pension_verification": { "type": "verification", "path": "/" }
             }

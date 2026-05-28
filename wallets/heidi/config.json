@@ -1,4 +1,11 @@
 {
+    "server": "http://localhost:4723",
+    "android": {
+        "platform_name": "Android",
+        "device_name": "emulator-5554",
+        "automation_name": "UiAutomator2",
+        "device_pin": "123456"
+    },
     "application": {
         "package": "ch.ubique.heidi.android",
         "activity": ".MainActivity",
@@ -21,14 +28,56 @@
         "screen_lock_pin": "0000"
     },
     "test_cases": {
-        "sphereon_pension": {
+        "hovi_issuer": {
+            "base_url": "https://issuer.hovi.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "procivis_issuer": {
+            "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "waltid_issuer": {
+            "base_url": "https://issuer.waltid.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "paradym_issuer": {
+            "base_url": "https://issuer.paradym.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "sphereon_issuer": {
             "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance":                    { "type": "issuance", "path": "pensioncredential.json" }
+                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+            }
+        },
+        "hovi_verifier": {
+            "base_url": "https://verifier.hovi.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
             }
         },
         "procivis_verifier": {
             "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        },
+        "waltid_verifier": {
+            "base_url": "https://verifier.waltid.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification", "path": "/" }
+            }
+        },
+        "paradym_verifier": {
+            "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
             "credentials": {
                 "pension_verification": { "type": "verification", "path": "/" }
             }
