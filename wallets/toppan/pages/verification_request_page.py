@@ -25,10 +25,8 @@ class VerificationConfirmationPage(BasePage):
 
 # ── Verification request screen ────────────────────────────────────────────────
 # Appears after CONTINUE — shows the verifier's credential request.
-# TODO: update _share_btn locator once seen with a compatible verifier+credential.
-#       Expected text: "Share" or "Accept" (inspect with `python appium.py screen`).
 
-_request_screen = (AppiumBy.XPATH, '//*[@text="OID4VP Verification"]')
+_request_screen = (AppiumBy.XPATH, '//*[@text="Verification Required"]')
 _share_btn      = (AppiumBy.XPATH, '//*[@text="Share"]')
 
 
@@ -51,4 +49,8 @@ class VerificationRequestPage(BasePage):
 
     def share(self):
         self.wait_until_loaded()
+        for _ in range(5):
+            if wait_present(self.driver, _share_btn, timeout=1):
+                break
+            self.swipe_up()
         self.click(_share_btn)
