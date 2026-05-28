@@ -42,6 +42,12 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         logger.info("[credential_flow] Confirmation dialog — tapping CONTINUE")
         ConfirmationPage(driver, **page_args).confirm()
         check_for_error(driver, "after confirmation")
+    else:
+        check_for_error(driver, "after deeplink")
+        raise RuntimeError(
+            f"App did not respond to credential offer deeplink for '{credential_name}' — "
+            "issuer may be using an unsupported protocol [no_retry]"
+        )
 
     logger.info("[credential_flow] Waiting for credential offer screen")
     CredentialOfferPage(driver, **page_args).accept()

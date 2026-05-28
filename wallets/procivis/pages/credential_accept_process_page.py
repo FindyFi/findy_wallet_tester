@@ -64,7 +64,7 @@ class CredentialAcceptProcessPage(BasePage):
 
         detail_str = ", ".join(f"{k}: {v}" for k, v in details.items()) if details else "no details available"
         logger.error(f"[credential_accept] Issuance failed — {detail_str}")
-        raise RuntimeError(f"Credential issuance failed — {detail_str}")
+        raise RuntimeError(f"Credential issuance failed — {detail_str} [no_retry]")
 
     def _page_kwargs(self) -> dict:
         return {"timeouts": self.timeouts, "debug": self.debug}

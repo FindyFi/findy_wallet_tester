@@ -34,4 +34,4 @@ def check_for_error(driver, step: str):
             ).text
         except Exception:
             msg = "(unknown)"
-        raise RuntimeError(f"[{step}] Toppan error dialog: {msg}")
+        raise RuntimeError(f"[{step}] Toppan error dialog: {msg} [no_retry]")

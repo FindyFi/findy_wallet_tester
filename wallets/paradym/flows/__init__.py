@@ -37,4 +37,4 @@ def check_for_error(driver, step: str):
             reason = " " + driver.find_element(*_ERROR_REASON).text
         except Exception:
             pass
-        raise RuntimeError(f"[{step}] Paradym error screen.{reason}")
+        raise RuntimeError(f"[{step}] Paradym error screen.{reason} [no_retry]")
