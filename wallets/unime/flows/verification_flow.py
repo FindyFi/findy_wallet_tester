@@ -29,6 +29,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
     driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
+
     time.sleep(3)
 
     handle_permission_if_present(driver)
