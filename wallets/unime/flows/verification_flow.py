@@ -23,15 +23,12 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     timeouts = page_args.get("timeouts", {})
     default_timeout = timeouts.get("credential_offer", timeouts.get("default", 30))
 
-    logger.info("[verification_flow] Backgrounding app before deeplink")
-    driver.press_keycode(_KEYCODE_HOME)
-    time.sleep(2)
+    # logger.info("[verification_flow] Backgrounding app before deeplink")
+    # driver.press_keycode(_KEYCODE_HOME)
+    # time.sleep(2)
 
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
-    driver.execute_script("mobile: shell", {
-        "command": "am",
-        "args": ["start", "-a", "android.intent.action.VIEW", "--package", app_package, "-d", url],
-    })
+    driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
     time.sleep(3)
 
     handle_permission_if_present(driver)
