@@ -109,7 +109,7 @@ def collect(run_dir: Path) -> dict:
         wallets.append(wallet)
         data = load_pytest_html(report)
         for tid, recs in data.get("tests", {}).items():
-            rec = recs[0] if isinstance(recs, list) and recs else (recs if isinstance(recs, dict) else {})
+            rec = recs[-1] if isinstance(recs, list) and recs else (recs if isinstance(recs, dict) else {})
             outcome = rec.get("result") if isinstance(rec, dict) else None
             parsed = parse_test_id(tid)
             if not parsed:
