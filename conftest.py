@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 import pytest
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,46 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _ENV_RUN_DIR = "PYTEST_RUN_DIR"
 _ENV_SESSION_DIR = "PYTEST_SESSION_DIR"
+
+
+def _is_anr_present(driver) -> bool:
+    """Return True if an ANR (App Not Responding) system dialog is showing."""
+    try:
+        return bool(driver.find_elements(
+            "xpath",
+            '//*[@resource-id="android:id/aerr_wait" or @resource-id="android:id/aerr_close"]',
+        ))
+    except Exception:
+        return False
+
+
+def _clear_app_cache(driver, package: str) -> None:
+    """Clear all app data and cache via ADB shell."""
+    try:
+        driver.execute_script("mobile: shell", {"command": "pm", "args": ["clear", package]})
+        logger.info(f"[app] Cleared cache for {package}")
+    except Exception as e:
+        logger.warning(f"[app] Could not clear cache for {package}: {e}")
+
+
+def _clear_recent_apps(driver) -> None:
+    """Open the recents screen, clear all background apps, then go to home screen."""
+    try:
+        driver.press_keycode(187)  # KEYCODE_APP_SWITCH
+        time.sleep(1)
+        elems = driver.find_elements(
+            "xpath",
+            '//*[@text="Clear all" or @text="CLEAR ALL" or @content-desc="Clear all" or @content-desc="CLEAR ALL"]',
+        )
+        if elems:
+            elems[0].click()
+            time.sleep(0.5)
+    except Exception:
+        pass
+    try:
+        driver.press_keycode(3)  # KEYCODE_HOME
+    except Exception:
+        pass
 
 
 def _detect_wallet_name(config) -> str:
@@ -306,6 +347,10 @@ def app(driver, request):
     except Exception:
         pass
 
+    if not getattr(request.config, "_apps_cleared", False):
+        _clear_recent_apps(driver)
+        request.config._apps_cleared = True
+
     driver.activate_app(app_package)
 
     def _app_is_foreground(d):
@@ -336,6 +381,7 @@ def app(driver, request):
             f"on {info['platform']} {info['platform_version']} ({info['device_name']})"
         )
 
+    request.node._artifact_captured = False
     yield base_test
 
     if (hasattr(request.node, "rep_call") and request.node.rep_call.failed
@@ -361,6 +407,10 @@ def app(driver, request):
             except Exception as e:
                 logger.warning(f"[xml] Failed to save XML dump: {e}")
 
+    if _is_anr_present(driver):
+        logger.warning(f"[app] ANR detected for {app_package} — clearing app cache before retry")
+        _clear_app_cache(driver, app_package)
+
     if recording_enabled:
         try:
             video_b64 = driver.stop_recording_screen()
@@ -373,3 +423,9 @@ def app(driver, request):
                 logger.info(f"[recording] Saved: {path}")
         except Exception as e:
             logger.warning(f"[recording] Failed to save recording: {e}")
+
+    try:
+        driver.press_keycode(3)  # HOME — let the app save state before clearing
+    except Exception:
+        pass
+    _clear_recent_apps(driver)
