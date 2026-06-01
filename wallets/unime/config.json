@@ -30,6 +30,7 @@
         },
         "hovi_verifier": {
             "base_url": "https://verifier.hovi.pensiondemo.findy.fi",
+            "credentials": {
                 "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
             }
         },
