@@ -5,6 +5,7 @@ import pytest
 from pathlib import Path
 
 from providers.factory import get_provider
+from wallets.heidi.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ def test_credential_issuance(app, issuer_name, test_case):
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
 
+    home = HomePage(app.driver, **app.page_args)
+    count_before = home.count_credentials()
+
     provider = get_provider(app.config, issuer_name)
     credential_flow.run(
         app.driver,
@@ -39,4 +43,11 @@ def test_credential_issuance(app, issuer_name, test_case):
         pin=pin,
         **app.page_args,
     )
-    logger.info(f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet")
+
+    home.wait_until_loaded()
+    count_after = home.count_credentials()
+    added = count_after - count_before
+    logger.info(
+        f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
+        f"(wallet: {count_before} → {count_after}, +{added})"
+    )
