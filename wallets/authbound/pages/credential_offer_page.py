@@ -3,13 +3,12 @@ from appium.webdriver.common.appiumby import AppiumBy
 from base.base_page import BasePage
 from base.utils import wait_present
 
-# TODO: replace with the locator that uniquely identifies the credential offer screen.
+# TODO: the offer/consent/accept screens could NOT be captured yet — the authbound
+# wallet aborts credential offers at its auth/profile gate ("User not authenticated")
+# before the offer screen renders, landing on error_page instead. Fill these in once the
+# wallet has a valid authenticated profile and a real offer reaches this screen.
 SCREEN_ID = (AppiumBy.XPATH, '//*[@text="TODO: credential offer heading"]')
-
-# TODO: replace with the locator for the Accept / Add button.
 _ACCEPT = (AppiumBy.XPATH, '//*[@text="TODO: accept button"]')
-
-# TODO: replace with the locator for the Decline / Cancel button.
 _DECLINE = (AppiumBy.XPATH, '//*[@text="TODO: decline button"]')
 
 

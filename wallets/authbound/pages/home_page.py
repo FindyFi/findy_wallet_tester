@@ -1,5 +1,3 @@
-import re
-
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -7,12 +5,16 @@ from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
 
-# TODO: replace with the locator that uniquely identifies the home screen
-SCREEN_ID = (AppiumBy.XPATH, '//*[@text="TODO: home screen heading"]')
+# EUDI dashboard root — present on every bottom-nav tab once the wallet is open.
+SCREEN_ID = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_screen_root")
 
-# TODO: replace with the locator for the credential count label (e.g. "3 credentials").
-# If no count label exists, implement count_credentials() by counting list items directly.
-_credential_count = (AppiumBy.XPATH, '//*[contains(@text, "TODO: credential count label")]')
+# Bottom-nav "Wallet" tab → the documents (credential list) screen.
+_WALLET_TAB = (AppiumBy.ID, "dashboard_screen_bottom_navigation_item_wallet")
+_DOCUMENTS_ROOT = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_documents_screen_root")
+
+# TODO (Phase B1): replace with the real per-document card locator captured live once a
+# credential has been issued. Until then count_credentials() falls back to 0.
+_DOCUMENT_CARD = (AppiumBy.XPATH, '//*[@text="TODO: document card"]')
 
 
 class HomePage(BasePage):
@@ -25,16 +27,15 @@ class HomePage(BasePage):
             raise RuntimeError("Home screen did not load within timeout")
 
     def count_credentials(self) -> int:
-        """Return the number of credentials currently in the wallet.
+        """Return the number of credentials (documents) currently in the wallet.
 
-        TODO: implement once the home screen layout is known.
-        Options:
-          - Parse a count label: re.search(r'(\\d+)', el.get_attribute("text"))
-          - Count list items: len(driver.find_elements(*_card_locator))
+        Navigates to the Wallet tab and counts document cards. The per-card locator is
+        still a placeholder (confirmed live in Phase B1), so this safely returns 0 until
+        then rather than erroring on an empty/unknown layout.
         """
         try:
-            el = self.find(_credential_count)
-            m = re.search(r'(\d+)', el.get_attribute("text") or "")
-            return int(m.group(1)) if m else 0
+            self.click(_WALLET_TAB)
+            self.find(_DOCUMENTS_ROOT)
+            return len(self.driver.find_elements(*_DOCUMENT_CARD))
         except Exception:
             return 0

@@ -7,8 +7,8 @@ from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
 
-# TODO: replace with the heading text shown on the PIN entry screen
-HEADING = (AppiumBy.XPATH, '//*[@text="TODO: PIN screen heading"]')
+# Passcode/unlock screen title — text reads "Enter Passcode".
+HEADING = (AppiumBy.ID, "io.authbound.wallet:id/quick_pin_title")
 
 
 def on_screen(driver, timeout=2) -> bool:
@@ -22,8 +22,7 @@ def on_screen(driver, timeout=2) -> bool:
 
 class PinPage(BasePage):
     def _digit(self, d: str):
-        # TODO: adjust the accessibility ID pattern to match this wallet's PIN buttons
-        return (AppiumBy.ACCESSIBILITY_ID, f"TODO: pin button prefix {d}")
+        return (AppiumBy.ID, f"io.authbound.wallet:id/quick_pin_digit_{d}")
 
     def enter_pin(self, pin: str):
         delay = self._get_timeout("pin_digit_delay", 0.3)
