@@ -5,9 +5,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.utils import wait_present
-from wallets.example.pages.landing_page import LandingPage, SCREEN_ID as _landing_id
-from wallets.example.pages.home_page import SCREEN_ID as _home_id
-from wallets.example.pages.pin_page import PinPage, HEADING as _pin_heading
+from wallets.authbound.pages.landing_page import LandingPage, SCREEN_ID as _landing_id
+from wallets.authbound.pages.home_page import SCREEN_ID as _home_id
+from wallets.authbound.pages.pin_page import PinPage, HEADING as _pin_heading
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +52,15 @@ def _back_to_known_state(driver, package: str) -> str:
 
 
 def _onboard(driver, pin: str, page_args: dict, default_timeout: float):
-    """Complete the full onboarding flow from the landing screen to home.
+    """Onboarding is intentionally NOT automated for authbound.
 
-    TODO: fill in the actual onboarding steps for this wallet.
-    Use WebDriverWait(...).until(EC.presence_of_element_located(...)) between
-    each step to wait for the next screen before interacting with it.
+    The EUDI wallet onboarding has email/registration phases we don't drive. Tests assume
+    the wallet is already set up; init_flow only handles PIN login on an onboarded wallet.
     """
-    LandingPage(driver, **page_args).get_started()
-    # TODO: add remaining onboarding steps (agreements, PIN setup, registration, etc.)
-    WebDriverWait(driver, default_timeout).until(EC.presence_of_element_located(_home_id))
-    logger.info("[init_flow] Onboarding complete — home screen reached")
+    raise RuntimeError(
+        "authbound onboarding is not automated — set up the wallet manually "
+        "(email/registration/PIN); init_flow only handles PIN login on an onboarded wallet"
+    )
 
 
 def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **page_args):
