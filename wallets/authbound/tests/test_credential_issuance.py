@@ -5,13 +5,13 @@ import pytest
 from pathlib import Path
 
 from providers.factory import get_provider
-from wallets.example.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
 
 # APP_NAME is derived from the parent directory so this file works unchanged in any wallet.
 APP_NAME = Path(__file__).parents[1].name
 credential_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.credential_flow")
+HomePage = importlib.import_module(f"wallets.{APP_NAME}.pages.home_page").HomePage
 _config = json.loads(
     (Path(__file__).parents[1] / "config.json").read_text()
 )
