@@ -68,6 +68,7 @@
             "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
             "credentials": {
                 "pension_verification": { "type": "verification", "path": "/" }
+
             }
         }
     }
