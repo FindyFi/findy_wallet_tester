@@ -10,6 +10,18 @@ from wallets.gataca.flows import setup_flow
 logger = logging.getLogger(__name__)
 
 
+def pytest_configure(config):
+    """Register Gataca-specific markers here (kept with the wallet, not in the shared pytest.ini)."""
+    config.addinivalue_line(
+        "markers",
+        "gataca_did: ensure the Gataca wallet has the configured DID method (config 'did_method') active before the test",
+    )
+    config.addinivalue_line(
+        "markers",
+        "gataca_cleanup: end-of-run credential reset; forced to run last (deletes all deletable credentials)",
+    )
+
+
 def _resolve_did_method(app, request):
     """The DID method this test wants.
 
