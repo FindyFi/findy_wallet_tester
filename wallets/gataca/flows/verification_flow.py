@@ -9,6 +9,7 @@ from selenium.common.exceptions import TimeoutException
 from appium.webdriver.common.appiumby import AppiumBy
 
 from providers.base import DeeplinkProvider
+from base.android import authenticate_with_pin, BIOMETRIC_PROMPT
 from base.utils import wait_present
 from wallets.gataca.pages.home_page import SCREEN_ID as _home_id
 from wallets.gataca.pages.credential_offer_page import CredentialOfferPage, on_screen as _offer_on_screen
@@ -21,9 +22,20 @@ _REJECTED_OK = (AppiumBy.XPATH, '//*[@text="OK" and @clickable="true"]')
 logger = logging.getLogger(__name__)
 
 
-def _wait_for_result(driver, offer_timeout: float):
+def _wait_for_result(driver, offer_timeout: float, device_pin: str):
+    """Poll until the presentation request, error, or home screen appears.
+
+    Some verifiers raise a system biometric prompt *before* showing the request screen. That
+    prompt is not request/error/home, so without handling it the poll would just time out while
+    the wallet is actually waiting on us. Authenticate it via PIN as soon as it appears, then
+    keep polling for the real result.
+    """
     deadline = time.time() + offer_timeout
     while time.time() < deadline:
+        if wait_present(driver, BIOMETRIC_PROMPT, timeout=1):
+            logger.info("[verification_flow] Biometric prompt before request — authenticating with PIN")
+            authenticate_with_pin(driver, device_pin)
+            continue
         if _offer_on_screen(driver, timeout=1):
             return "request"
         if _error_on_screen(driver, timeout=1):
@@ -35,13 +47,12 @@ def _wait_for_result(driver, offer_timeout: float):
 
 
 def _handle_biometric_and_confirm(driver, offer_timeout: float, **page_args):
-    """After tapping Share: send fingerprint (biometric screen has secure flag, can't be detected),
+    """After tapping Share: authenticate the system biometric prompt via PIN,
     then confirm the Login Successful dialog."""
-    # The biometric screen sets Android secure flag — UiAutomator2 can't read it.
-    # Send fingerprint unconditionally after a short delay; it's a no-op if no prompt is active.
+    device_pin = page_args.get("device_pin", "")
     time.sleep(2)
-    logger.info("[verification_flow] Sending fingerprint for biometric prompt")
-    driver.execute_script("mobile: fingerprint", {"fingerprintId": 1})
+    logger.info("[verification_flow] Authenticating biometric prompt with PIN")
+    authenticate_with_pin(driver, device_pin)
 
     deadline = time.time() + offer_timeout
     while time.time() < deadline:
@@ -83,6 +94,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     """
     timeouts = page_args.get("timeouts", {})
     offer_timeout = timeouts.get("credential_offer", 30)
+    device_pin = page_args.get("device_pin", "") or pin
 
     url = provider.get(credential_name)
     url = _to_openid4vp(url)
@@ -90,7 +102,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
     driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
 
-    result = _wait_for_result(driver, offer_timeout)
+    result = _wait_for_result(driver, offer_timeout, device_pin)
 
     if result == "request":
         logger.info("[verification_flow] Sharing requirements — tapping Share")
