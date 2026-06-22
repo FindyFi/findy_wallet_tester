@@ -49,10 +49,17 @@ class HomePage(BasePage):
             return 0
 
     def active_did_alias(self) -> str:
-        """Return the active DID's alias shown on the home top-left button (e.g. 'JWK Identity')."""
+        """Return the active DID's alias shown on the home top-left button (e.g. 'JWK Identity').
+
+        Waits for the button to render — reading it immediately after navigating home can otherwise
+        return "" before the home screen has finished drawing, causing false DID-mismatch failures.
+        """
         try:
-            return self.driver.find_element(*_DID_ALIAS_BTN).get_attribute("content-desc") or ""
-        except Exception:
+            el = WebDriverWait(self.driver, self._get_timeout("default")).until(
+                EC.presence_of_element_located(_DID_ALIAS_BTN)
+            )
+            return el.get_attribute("content-desc") or ""
+        except TimeoutException:
             return ""
 
     def open_deletable_credential(self) -> bool:
