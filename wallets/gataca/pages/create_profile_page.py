@@ -15,8 +15,6 @@ _DID_METHOD_DROPDOWN = (AppiumBy.XPATH,
     '//android.widget.TextView[@text="DID Method"]/following-sibling::android.view.ViewGroup[@clickable="true"]'
 )
 
-# Dropdown options that appear after tapping the DID Method dropdown.
-_OPTION_EBSI_SUBJECT = (AppiumBy.XPATH, '//*[@content-desc="Ebsi Subject"]')
 
 # The "Create" button at the bottom of the dialog (content-desc is "Create").
 _CREATE_BUTTON = (AppiumBy.XPATH, '//*[@content-desc="Create" and @clickable="true"]')
@@ -35,18 +33,19 @@ class CreateProfilePage(BasePage):
         except TimeoutException:
             raise RuntimeError("Gataca Create Profile dialog did not load within timeout")
 
-    def select_ebsi_subject(self):
-        """Open the DID Method dropdown and select 'Ebsi Subject'.
+    def select_method(self, option_desc: str):
+        """Open the DID Method dropdown and select the option by its content-desc.
 
-        Selecting this also auto-fills the Alias field to 'Ebsi Identity'.
+        `option_desc` is the DID Method label shown in the dropdown (e.g. "JWK", "Gataca",
+        "Ebsi Subject"). Selecting it also auto-fills the Alias field accordingly.
         """
         self.click(_DID_METHOD_DROPDOWN)
-        self.click(_OPTION_EBSI_SUBJECT)
+        self.click((AppiumBy.XPATH, f'//*[@content-desc="{option_desc}"]'))
 
     def create(self):
         """Tap Create to generate the new profile.
 
         This triggers an Android system biometric prompt; the caller must authenticate
-        (e.g. via ``driver.execute_script("mobile: fingerprint", ...)``).
+        (e.g. via ``base.android.authenticate_with_pin(driver, pin)``).
         """
         self.click(_CREATE_BUTTON)

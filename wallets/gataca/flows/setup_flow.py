@@ -1,24 +1,25 @@
 """One-time wallet setup flow for Gataca.
 
-Ensures an Ebsi Subject DID (rendered as did:key:...) is active before credential tests run.
-Call once per pytest session from the wallet conftest.
+Ensures the configured DID method is active before credential tests run. The method is chosen by
+the wallet config's "did_method" key (see DID_METHODS); the default is "jwk". Call once per pytest
+session from the wallet conftest.
 
 Full navigation path from home:
     Home → Settings tab → Personal Information → (current DID shown here)
 
-If the current DID is already did:key:..., EBSI is active — no action needed.
+If the current DID already matches the configured method's prefix, it is active — no action needed.
 
-If an existing Ebsi Identity alias exists, activate it by:
-    Home → tap DID alias button → My identities DIDs → tap Ebsi alias →
-    biometric → DID switches
+If an existing alias for that method exists, activate it by:
+    Home → tap DID alias button → My identities DIDs → tap the method's alias →
+    PIN → DID switches (row expands to show its did prefix)
 
-Otherwise, enable the nested toggles and create a new EBSI profile:
+Otherwise, enable the nested toggles and create a new profile:
     Personal Information → Advanced row → toggle Advanced ON →
       tap Multi DID link → toggle Multi DID ON →
       back to Personal Information → tap "+" button →
-      Create Profile dialog → DID Method = Ebsi Subject → Create →
-      authenticate via Android system fingerprint prompt →
-      back on Personal Information, active DID is now did:key:...
+      Create Profile dialog → DID Method = <option> → Create →
+      authenticate via Android system biometric prompt (PIN) →
+      back on Personal Information, active DID now matches the method's prefix.
 """
 import logging
 import time
@@ -27,9 +28,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
-from appium.webdriver.common.appiumby import AppiumBy
-
-from base.android import handle_biometric_if_present
+from base.android import authenticate_with_pin
 from base.utils import wait_present
 from wallets.gataca.pages.home_page import SCREEN_ID as _home_id
 from wallets.gataca.pages.settings_page import SettingsPage, SETTINGS_TAB
@@ -40,29 +39,61 @@ from wallets.gataca.pages.create_profile_page import CreateProfilePage
 from wallets.gataca.pages.did_selector_page import (
     SCREEN_ID as _selector_id,
     HOME_DID_ALIAS_BTN,
-    find_ebsi_alias,
+    find_alias,
+    is_alias_active,
+    list_aliases,
 )
 
 logger = logging.getLogger(__name__)
 
+# Supported DID methods, keyed by the wallet config's "did_method" value. Each spec maps to the
+# wallet's UI specifics for that method:
+#   prefix — the active-DID string prefix shown on Personal Information / the selector row
+#   option — the DID Method dropdown option (content-desc) in the Create Profile dialog
+#   alias  — the identity alias label the wallet auto-assigns (used to find/select an existing one)
+DID_METHODS = {
+    "gatc": {"prefix": "did:gatc:", "option": "Gataca",       "alias": "Gataca"},
+    "jwk":  {"prefix": "did:jwk:",  "option": "JWK",          "alias": "JWK Identity"},
+    "ebsi": {"prefix": "did:key:",  "option": "Ebsi Subject", "alias": "Ebsi Identity"},
+}
 
-def ensure_ebsi_did(driver, app_package: str, **page_args) -> bool:
-    """Navigate to Personal Information and ensure the active DID is an Ebsi Subject (did:key:).
+DEFAULT_DID_METHOD = "jwk"
+
+
+def _device_pin(page_args: dict) -> str:
+    """The device PIN used to answer system biometric prompts (from the wallet's android config)."""
+    return page_args.get("device_pin", "")
+
+
+def ensure_did(driver, app_package: str, did_method: str = DEFAULT_DID_METHOD, **page_args) -> bool:
+    """Navigate to Personal Information and ensure the configured DID method is active.
 
     Must be called from the home screen.
 
+    Args:
+        did_method: a key of DID_METHODS (e.g. "jwk", "gatc", "ebsi"); defaults to "jwk".
+
     Returns:
-        True  — EBSI was already the active DID; no changes made.
-        False — An EBSI profile was activated or created and is now active.
+        True  — the method was already the active DID; no changes made.
+        False — an existing alias was activated, or a new profile was created and is now active.
 
     Raises:
+        ValueError   — if did_method is not a supported DID method.
         RuntimeError — if the Settings or Personal Information screen cannot be reached,
                        or the biometric prompt does not dismiss.
     """
+    spec = DID_METHODS.get(did_method)
+    if spec is None:
+        raise ValueError(
+            f"[setup_flow] Unsupported did_method '{did_method}'. "
+            f"Supported: {', '.join(sorted(DID_METHODS))}"
+        )
+    prefix, alias = spec["prefix"], spec["alias"]
+
     timeouts = page_args.get("timeouts", {})
     default_timeout = timeouts.get("default", 10)
 
-    logger.info("[setup_flow] Checking active DID method")
+    logger.info(f"[setup_flow] Ensuring DID method '{did_method}' ({prefix}) is active")
 
     _open_personal_information(driver, default_timeout, page_args)
 
@@ -70,19 +101,19 @@ def ensure_ebsi_did(driver, app_package: str, **page_args) -> bool:
     current_did = personal_info.current_did()
     logger.info(f"[setup_flow] Current DID: {current_did[:50]}...")
 
-    if personal_info.is_ebsi_active():
-        logger.info("[setup_flow] EBSI (did:key) is already active — no changes needed")
+    if personal_info.is_method_active(prefix):
+        logger.info(f"[setup_flow] {did_method} ({prefix}) is already active — no changes needed")
         _return_home(driver, default_timeout)
         return True
 
-    logger.info("[setup_flow] EBSI not active — looking for existing EBSI alias")
+    logger.info(f"[setup_flow] {did_method} not active — looking for existing '{alias}' alias")
     _return_home(driver, default_timeout)
 
-    if _activate_existing_ebsi_alias(driver, default_timeout, page_args):
-        logger.info("[setup_flow] EBSI DID is now active (existing alias)")
+    if _activate_existing_alias(driver, default_timeout, page_args, spec):
+        logger.info(f"[setup_flow] {did_method} DID is now active (existing alias)")
         return False
 
-    logger.info("[setup_flow] No existing EBSI alias — enabling Multi DID and creating profile")
+    logger.info(f"[setup_flow] No existing '{alias}' alias — enabling Multi DID and creating profile")
 
     _open_personal_information(driver, default_timeout, page_args)
     _enable_advanced_and_multi_did(driver, default_timeout, page_args)
@@ -92,22 +123,26 @@ def ensure_ebsi_did(driver, app_package: str, **page_args) -> bool:
         EC.presence_of_element_located(_personal_info_id)
     )
 
-    _create_ebsi_profile(driver, default_timeout, page_args)
+    _create_profile(driver, default_timeout, page_args, spec)
 
     # The active DID may take a moment to update in the UI after profile creation.
-    deadline = time.time() + default_timeout
     personal_info = PersonalInfoPage(driver, **page_args)
+    deadline = time.time() + default_timeout
+    now_active = False
     while time.time() < deadline:
-        if personal_info.is_ebsi_active():
+        if personal_info.is_method_active(prefix):
+            now_active = True
             break
         time.sleep(1)
-    else:
+
+    if not now_active:
         new_did = personal_info.current_did()
         raise RuntimeError(
-            f"[setup_flow] Created Ebsi Subject profile but active DID is not did:key: (got: {new_did[:50]}...)"
+            f"[setup_flow] Created {did_method} profile but active DID is not {prefix} "
+            f"(got: {new_did[:50]}...)"
         )
 
-    logger.info("[setup_flow] EBSI DID is now active")
+    logger.info(f"[setup_flow] {did_method} DID is now active")
     _return_home(driver, default_timeout)
     return False
 
@@ -129,12 +164,13 @@ def _open_personal_information(driver, default_timeout: float, page_args: dict):
     personal_info.wait_until_loaded()
 
 
-def _activate_existing_ebsi_alias(driver, default_timeout: float, page_args: dict) -> bool:
-    """From home, open the DID selector and activate an existing EBSI alias if one exists.
+def _activate_existing_alias(driver, default_timeout: float, page_args: dict, spec: dict) -> bool:
+    """From home, open the DID selector and activate an existing alias for `spec` if one exists.
 
-    Returns True if an EBSI alias was found and activated, False otherwise.
+    Returns True if the alias was found and activated, False otherwise.
     Leaves the user on home when done.
     """
+    alias, prefix = spec["alias"], spec["prefix"]
     try:
         WebDriverWait(driver, default_timeout).until(
             EC.element_to_be_clickable(HOME_DID_ALIAS_BTN)
@@ -152,25 +188,28 @@ def _activate_existing_ebsi_alias(driver, default_timeout: float, page_args: dic
         driver.back()
         return False
 
-    ebsi_el = find_ebsi_alias(driver)
-    if ebsi_el is None:
-        logger.info("[setup_flow] No existing EBSI alias found in selector")
+    # Enumerate the DIDs that already exist so we only create one when the configured method
+    # is genuinely missing (avoids piling up duplicate profiles across runs).
+    logger.info(f"[setup_flow] Existing identities: {list_aliases(driver)}")
+
+    alias_el = find_alias(driver, alias)
+    if alias_el is None:
+        logger.info(f"[setup_flow] No existing '{alias}' alias found in selector — will create one")
         driver.back()
         return False
 
-    alias_name = ebsi_el.get_attribute("content-desc") or "Ebsi alias"
-    logger.info(f"[setup_flow] Found existing EBSI alias: {alias_name} — activating")
-    ebsi_el.click()
+    alias_name = alias_el.get_attribute("content-desc") or alias
+    logger.info(f"[setup_flow] Found existing alias: {alias_name} — activating")
+    alias_el.click()
 
-    # Biometric prompt appears to confirm the DID switch.
+    # Biometric prompt appears to confirm the DID switch — authenticate via PIN.
     time.sleep(2)
-    if not handle_biometric_if_present(driver):
-        driver.execute_script("mobile: fingerprint", {"fingerprintId": 1})
+    authenticate_with_pin(driver, _device_pin(page_args))
 
-    _ACTIVATED = (AppiumBy.XPATH, '//*[contains(@text, "is now active")]')
+    # The selected row expands to include its did prefix once the switch registers.
     deadline = time.time() + default_timeout
     while time.time() < deadline:
-        if wait_present(driver, _ACTIVATED, timeout=1):
+        if is_alias_active(driver, alias, prefix, timeout=1):
             time.sleep(1)  # brief pause for DID to fully register
             break
         if wait_present(driver, _home_id, timeout=1):
@@ -223,27 +262,23 @@ def _enable_advanced_and_multi_did(driver, default_timeout: float, page_args: di
     driver.back()
 
 
-def _create_ebsi_profile(driver, default_timeout: float, page_args: dict):
-    """From Personal Information, tap "+" and create an Ebsi Subject profile.
+def _create_profile(driver, default_timeout: float, page_args: dict, spec: dict):
+    """From Personal Information, tap "+" and create a profile for the `spec` DID method.
 
-    Handles the biometric prompt that appears after tapping Create.
+    Handles the biometric prompt that appears after tapping Create (via PIN).
     """
     personal_info = PersonalInfoPage(driver, **page_args)
     personal_info.open_create_profile()
 
     create_profile = CreateProfilePage(driver, **page_args)
     create_profile.wait_until_loaded()
-    create_profile.select_ebsi_subject()
+    create_profile.select_method(spec["option"])
     create_profile.create()
 
     # System biometric prompt appears. The prompt is rendered by com.android.systemui and
-    # takes a moment to surface. Give it time then send the fingerprint.
+    # takes a moment to surface. Give it time then authenticate via PIN.
     time.sleep(2)
-    if not handle_biometric_if_present(driver):
-        # Fallback: send fingerprint unconditionally (the prompt may have a secure-flag
-        # variant that UiAutomator2 can't detect).
-        logger.info("[setup_flow] Biometric prompt not detected via handler — sending fingerprint anyway")
-        driver.execute_script("mobile: fingerprint", {"fingerprintId": 1})
+    authenticate_with_pin(driver, _device_pin(page_args))
 
     # Wait for return to Personal Information.
     try:
@@ -265,4 +300,4 @@ def _return_home(driver, default_timeout: float):
         except TimeoutException:
             driver.back()
 
-    raise RuntimeError("[setup_flow] Could not return to home after EBSI setup")
+    raise RuntimeError("[setup_flow] Could not return to home after DID setup")

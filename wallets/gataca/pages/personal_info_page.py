@@ -41,9 +41,9 @@ class PersonalInfoPage(BasePage):
         except Exception:
             return ""
 
-    def is_ebsi_active(self) -> bool:
-        """Return True if the active DID is a did:key (EBSI Subject)."""
-        return self.current_did().startswith("did:key:")
+    def is_method_active(self, did_prefix: str) -> bool:
+        """Return True if the active DID starts with did_prefix (e.g. 'did:jwk:')."""
+        return self.current_did().startswith(did_prefix)
 
     def open_advanced(self):
         """Tap the Advanced row to open the Advanced settings page."""
