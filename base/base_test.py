@@ -24,6 +24,7 @@ class BaseTest:
         return {
             "debug": self.config.get("debug", False),
             "timeouts": self.config.get("timeouts", {}),
+            "device_pin": self.config.get("android", {}).get("device_pin", ""),
         }
 
     def setup(self):

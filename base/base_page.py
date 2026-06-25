@@ -7,7 +7,10 @@ logger = logging.getLogger(__name__)
 
 
 class BasePage:
-    def __init__(self, driver, debug=False, timeouts=None):
+    def __init__(self, driver, debug=False, timeouts=None, **_config):
+        # Pages are constructed with the shared `page_args` bag (debug, timeouts, device_pin, ...).
+        # Only debug/timeouts are used here; **_config absorbs the rest (e.g. device_pin, which is
+        # consumed by the flows, not the pages) so adding a key to page_args never breaks a page.
         self.driver = driver
         self.debug = debug
         self.timeouts = timeouts or {}
