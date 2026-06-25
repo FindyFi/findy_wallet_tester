@@ -33,6 +33,24 @@ SYSTEMUI_PKG = "com.android.systemui"
 # The biometric icon is present whenever the fingerprint/face prompt is on screen.
 BIOMETRIC_PROMPT = (AppiumBy.ID, "com.android.systemui:id/biometric_icon")
 
+# The system auth prompt appears in different shapes across devices/Android versions: a fingerprint
+# sheet (biometric_icon + a "Use PIN" button), or — e.g. Motorola / Android 14 — straight to the
+# PIN field (lockPassword) with no fingerprint step. Detect any of these so PIN auth works on real
+# phones too, not just the emulator's AOSP SystemUI.
+_AUTH_PROMPT = (AppiumBy.XPATH,
+    '//*[@resource-id="com.android.systemui:id/biometric_icon"'
+    ' or @resource-id="com.android.systemui:id/button_use_credential"'
+    ' or @resource-id="com.android.systemui:id/lockPassword"'
+    ' or @resource-id="com.android.systemui:id/auth_credential_header"]'
+)
+
+# "Use PIN" fallback on the fingerprint sheet (by text or by id), and the PIN entry field.
+_USE_PIN_BTN = (AppiumBy.XPATH,
+    '//*[@text="Use PIN" or @resource-id="com.android.systemui:id/button_use_credential"]'
+)
+_LOCK_PASSWORD = (AppiumBy.ID, "com.android.systemui:id/lockPassword")
+_KEYCODE_ENTER = 66
+
 # App crash: shown when an app throws an unhandled exception.
 _APP_CRASH = (AppiumBy.XPATH, '//*[contains(@text, "has stopped")]')
 
@@ -97,6 +115,49 @@ def handle_biometric_if_present(driver, dismiss_timeout=10) -> bool:
 
     logger.info("[android] Biometric prompt detected — simulating fingerprint")
     driver.execute_script("mobile: fingerprint", {"fingerprintId": 1})
+    WebDriverWait(driver, dismiss_timeout).until(
+        lambda d: d.current_package != SYSTEMUI_PKG
+    )
+    return True
+
+
+def authenticate_with_pin(driver, pin, detect_timeout=2, dismiss_timeout=10) -> bool:
+    """If the Android biometric prompt is on screen, authenticate via PIN instead of fingerprint.
+
+    Taps "Use PIN", types `pin` into the system credential field, and submits with Enter. This
+    is preferred over ``handle_biometric_if_present`` for wallets where fingerprint simulation is
+    unreliable or locks out ("Biometry is disabled. Please try again in 10 seconds.").
+
+    Args:
+        detect_timeout: How long to wait (seconds) for the biometric prompt to appear. Keep the
+            short default (2) when calling speculatively (no prompt expected). Pass a longer value
+            right after an action that triggers a prompt (e.g. tapping a button), since the system
+            bottom-sheet can take a couple of seconds to surface.
+        dismiss_timeout: How long to wait for the prompt to dismiss after the PIN is submitted.
+
+    Returns True if a prompt was detected and handled, False if none was present. Safe to call
+    speculatively — does nothing if the prompt is not showing.
+    """
+    if not wait_present(driver, _AUTH_PROMPT, timeout=detect_timeout):
+        return False
+
+    logger.info("[android] Auth prompt detected — authenticating with PIN")
+    # If the PIN field isn't already visible, tap "Use PIN" to reveal it. Some devices open
+    # straight on the PIN screen (no fingerprint sheet), so a missing button is not fatal.
+    if not wait_present(driver, _LOCK_PASSWORD, timeout=1):
+        try:
+            driver.find_element(*_USE_PIN_BTN).click()
+        except Exception as e:
+            logger.warning(f"[android] 'Use PIN' tap failed: {e}")
+
+    if not wait_present(driver, _LOCK_PASSWORD, timeout=5):
+        raise RuntimeError("[android] PIN entry field did not appear after switching to PIN")
+
+    field = driver.find_element(*_LOCK_PASSWORD)
+    field.click()
+    field.send_keys(str(pin))
+    driver.press_keycode(_KEYCODE_ENTER)
+
     WebDriverWait(driver, dismiss_timeout).until(
         lambda d: d.current_package != SYSTEMUI_PKG
     )

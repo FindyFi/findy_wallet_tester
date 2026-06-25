@@ -66,9 +66,18 @@ def _clear_app_cache(driver, package: str) -> None:
 
 
 def _clear_recent_apps(driver) -> None:
-    """Open the recents screen, clear all background apps, then go to home screen."""
+    """Close the foreground app the way a user would, then return to the home screen.
+
+    Opens recents and dismisses the app: taps 'Clear all' if the launcher has it, otherwise swipes
+    the centered recents card away (the AOSP/emulator launcher has no 'Clear all' button). We
+    deliberately avoid force-stop — that's a brute kill, not a user-style close.
+
+    NOTE: closing the app is a cold start, so a wallet's transient state resets — e.g. Gataca
+    reverts its active DID to the default. Flows that need a specific DID must re-establish it each
+    test (the gataca conftest re-runs ensure_did per test for exactly this reason).
+    """
     try:
-        driver.press_keycode(187)  # KEYCODE_APP_SWITCH
+        driver.press_keycode(187)  # KEYCODE_APP_SWITCH (recents)
         time.sleep(1)
         elems = driver.find_elements(
             "xpath",
@@ -76,7 +85,14 @@ def _clear_recent_apps(driver) -> None:
         )
         if elems:
             elems[0].click()
-            time.sleep(0.5)
+        else:
+            # No 'Clear all' button: swipe the centered foreground card up to dismiss it.
+            size = driver.get_window_size()
+            x = size["width"] // 2
+            driver.execute_script("mobile: shell", {"command": "input", "args": [
+                "swipe", str(x), str(int(size["height"] * 0.6)), str(x), str(int(size["height"] * 0.1)), "250",
+            ]})
+        time.sleep(0.5)
     except Exception:
         pass
     try:
