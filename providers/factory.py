@@ -13,6 +13,8 @@ def get_provider(config: dict, issuer_name: str) -> DeeplinkProvider:
     Looks up the issuer under config["test_cases"][issuer_name] and selects:
       - ItbProvider            when ``type`` is ``"itb"``
         (authenticates to itb.ilabs.ai and drives a test session)
+      - AuthboundProvider      when ``type`` is ``"authbound"``
+        (POSTs to the Authbound demo to mint an offer / presentation request)
       - WebDeeplinkProvider    when the issuer has a ``base_url``
         (credentials specify a ``path`` suffix)
       - ConfigDeeplinkProvider when there is no ``base_url``
@@ -42,6 +44,10 @@ def get_provider(config: dict, issuer_name: str) -> DeeplinkProvider:
                 password=password,
             )
         return _itb_provider_cache[key]
+
+    if issuer.get("type") == "authbound":
+        from providers.authbound_provider import AuthboundProvider
+        return AuthboundProvider(issuer["base_url"], credentials)
 
     base_url = issuer.get("base_url")
     if base_url:
