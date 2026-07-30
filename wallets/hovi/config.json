@@ -15,6 +15,20 @@
         "skip_if_done": true
     },
     "test_cases": {
+        "authbound_issuer": {
+            "type": "authbound",
+            "base_url": "https://authbound.pensiondemo.findy.fi",
+            "credentials": {
+                "credential_issuance": { "type": "issuance", "slug": "kael" }
+            }
+        },
+        "authbound_verifier": {
+            "type": "authbound",
+            "base_url": "https://authbound.pensiondemo.findy.fi",
+            "credentials": {
+                "pension_verification": { "type": "verification" }
+            }
+        },
         "hovi_issuer": {
             "base_url": "https://issuer.hovi.pensiondemo.findy.fi",
             "credentials": {
