@@ -8,6 +8,14 @@ The script is currently tested using Android Virtual Devices (AVD) with plans to
 
 The test results from this implementations can be seen in compact form here: https://interop.findy.fi/
 
+## Documentation
+
+| Document | Contents |
+|---|---|
+| This file | Requirements, setup, running tests, configuration, adding a new wallet |
+| [`wallets/README.md`](wallets/README.md) | Wallet directory layout and the **capability matrix** — what the suite can do with each wallet (install, onboard, issue, verify, count, review, delete, …). Check and update it whenever wallet code changes. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution guidelines |
+
 ## Requirements
 
 - Python 3.9+
@@ -126,6 +134,7 @@ python runners/run_tests.py example
 │   ├── itb_provider.py         # Drives ITB test sessions and retrieves deeplinks via WebSocket
 │   └── factory.py              # Selects the right provider based on config
 ├── wallets/
+│   ├── README.md               # Wallet layout + capability matrix (keep it up to date)
 │   ├── example/                # Template wallet — copy this to start a new wallet
 │   └── <wallet>/
 │       ├── config.json         # Wallet-specific config (package name, test cases, timeouts)
@@ -239,3 +248,4 @@ Some wallet implementations may also need to use `mobile: shell` (which requires
 3. Fill in the TODO locators in `pages/` by inspecting screens with `adb` or Appium Inspector
 4. Implement the flows in `flows/` following the inline TODO comments
 5. The wallet is automatically picked up by `run_tests.py`
+6. Add a column for it in the [capability matrix](wallets/README.md) and keep it updated as flows land
