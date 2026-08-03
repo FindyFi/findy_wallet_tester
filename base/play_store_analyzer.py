@@ -20,8 +20,17 @@ class PlayStoreState(Enum):
     POPUP = "popup"
 
 
-# Text on the button that upgrades an already-installed app.
-UPDATE_TEXTS = ["Update", "Päivitä"]
+# Text on the app details page's primary action button, mapped to the state it implies.
+# Only the *topmost* match counts: the related-apps section further down the page carries
+# its own Install/Update/Open buttons, and matching one of those reports another app's state.
+ACTION_TEXTS = {
+    "Install": PlayStoreState.READY_TO_INSTALL,
+    "Asenna": PlayStoreState.READY_TO_INSTALL,
+    "Update": PlayStoreState.UPDATE_AVAILABLE,
+    "Päivitä": PlayStoreState.UPDATE_AVAILABLE,
+    "Open": PlayStoreState.INSTALLED,
+    "Avaa": PlayStoreState.INSTALLED,
+}
 
 DISMISS_TEXTS = [
     "Skip", "Not now", "No thanks", "Accept", "Got it", "Continue", "Dismiss",
@@ -66,17 +75,33 @@ class PlayStoreAnalyzer(ABC):
         """Dismiss a visible popup. Returns True if something was clicked."""
         pass
 
+    @abstractmethod
+    def find_primary_action(self, driver):
+        """Return (element, state) for the app's own action button, or (None, None).
+
+        The element is what a caller should click to act on the app the details page is
+        showing — never a button belonging to a related app listed further down.
+        """
+        pass
+
 
 class KeywordPlayStoreAnalyzer(PlayStoreAnalyzer):
     """XPath-based Play Store analyzer.
 
-    Detection priority: ERROR > POPUP > UPDATE_AVAILABLE > INSTALLED > INSTALLING >
-    DOWNLOADING > READY_TO_INSTALL > UNKNOWN
+    Detection priority: ERROR > POPUP > primary action button > INSTALLING >
+    DOWNLOADING > UNKNOWN
 
-    UPDATE_AVAILABLE must be tested **before** INSTALLED: when an update is pending, the
-    app details page shows an "Update" button *next to* "Open", so checking "Open" first
-    would report INSTALLED and mask the available update.
+    The three mutually exclusive "what can I do with this app" states —
+    UPDATE_AVAILABLE, INSTALLED and READY_TO_INSTALL — are decided together, by the
+    text of the *topmost* action button (see ``find_primary_action``). Two reasons:
+
+    * When an update is pending the details page shows "Update" *next to* "Open", so
+      testing "Open" first would report INSTALLED and mask the available update.
+    * Any of the three texts can also appear on a related app's card lower down the
+      page; deciding on position rather than on match order ignores those.
     """
+
+    _ACTION_XPATH = '//*[' + " or ".join(f'@text="{t}"' for t in ACTION_TEXTS) + ']'
 
     def _exists(self, driver, xpath, timeout=0.5) -> bool:
         try:
@@ -96,12 +121,9 @@ class KeywordPlayStoreAnalyzer(PlayStoreAnalyzer):
         if self._exists(driver, f'//*[{dismiss_xpath}]'):
             return PlayStoreState.POPUP
 
-        update_xpath = " or ".join(f'@text="{t}"' for t in UPDATE_TEXTS)
-        if self._exists(driver, f'//*[{update_xpath}]'):
-            return PlayStoreState.UPDATE_AVAILABLE
-
-        if self._exists(driver, '//*[@text="Open" or @text="Avaa"]'):
-            return PlayStoreState.INSTALLED
+        _, action_state = self.find_primary_action(driver)
+        if action_state is not None:
+            return action_state
 
         if self._exists(driver, '//*[contains(@text, "Installing") or contains(@text, "Asennetaan")]'):
             return PlayStoreState.INSTALLING
@@ -113,10 +135,24 @@ class KeywordPlayStoreAnalyzer(PlayStoreAnalyzer):
         except Exception:
             pass
 
-        if self._exists(driver, '//*[@text="Install" or @text="Asenna"]'):
-            return PlayStoreState.READY_TO_INSTALL
-
         return PlayStoreState.UNKNOWN
+
+    def find_primary_action(self, driver):
+        """Return (element, state) for the topmost Install/Update/Open button.
+
+        Position, not match order, decides which button is the app's own: the details page
+        for the requested app puts its action button at the top, while the related-apps
+        section lower down carries buttons for entirely different packages.
+        """
+        try:
+            elements = driver.find_elements(AppiumBy.XPATH, self._ACTION_XPATH)
+            if not elements:
+                return None, None
+            topmost = min(elements, key=lambda el: el.location["y"])
+            return topmost, ACTION_TEXTS.get(topmost.get_attribute("text") or "")
+        except Exception:
+            # Elements can go stale mid-read while the page re-renders.
+            return None, None
 
     def get_error_description(self, driver) -> str:
         for error_text, description in ERROR_TEXTS.items():
