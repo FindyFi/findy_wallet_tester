@@ -12,12 +12,16 @@ logger = logging.getLogger(__name__)
 class PlayStoreState(Enum):
     UNKNOWN = "unknown"
     READY_TO_INSTALL = "ready_to_install"
+    UPDATE_AVAILABLE = "update_available"
     DOWNLOADING = "downloading"
     INSTALLING = "installing"
     INSTALLED = "installed"
     ERROR = "error"
     POPUP = "popup"
 
+
+# Text on the button that upgrades an already-installed app.
+UPDATE_TEXTS = ["Update", "Päivitä"]
 
 DISMISS_TEXTS = [
     "Skip", "Not now", "No thanks", "Accept", "Got it", "Continue", "Dismiss",
@@ -65,7 +69,13 @@ class PlayStoreAnalyzer(ABC):
 
 class KeywordPlayStoreAnalyzer(PlayStoreAnalyzer):
     """XPath-based Play Store analyzer.
-    Detection priority: ERROR > POPUP > INSTALLED > INSTALLING > DOWNLOADING > READY_TO_INSTALL > UNKNOWN
+
+    Detection priority: ERROR > POPUP > UPDATE_AVAILABLE > INSTALLED > INSTALLING >
+    DOWNLOADING > READY_TO_INSTALL > UNKNOWN
+
+    UPDATE_AVAILABLE must be tested **before** INSTALLED: when an update is pending, the
+    app details page shows an "Update" button *next to* "Open", so checking "Open" first
+    would report INSTALLED and mask the available update.
     """
 
     def _exists(self, driver, xpath, timeout=0.5) -> bool:
@@ -85,6 +95,10 @@ class KeywordPlayStoreAnalyzer(PlayStoreAnalyzer):
         dismiss_xpath = " or ".join(f'@text="{t}"' for t in DISMISS_TEXTS)
         if self._exists(driver, f'//*[{dismiss_xpath}]'):
             return PlayStoreState.POPUP
+
+        update_xpath = " or ".join(f'@text="{t}"' for t in UPDATE_TEXTS)
+        if self._exists(driver, f'//*[{update_xpath}]'):
+            return PlayStoreState.UPDATE_AVAILABLE
 
         if self._exists(driver, '//*[@text="Open" or @text="Avaa"]'):
             return PlayStoreState.INSTALLED

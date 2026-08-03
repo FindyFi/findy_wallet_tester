@@ -355,6 +355,23 @@ def app(driver, request):
 
     app_package = config["application"]["package"]
 
+    # Check the Play Store for a newer build — once per session, not per test.
+    # `driver`/`app` are function-scoped, so an unguarded check would open the Play Store
+    # before every single test.  Runs before app_info.json is written so the report records
+    # the version actually tested.
+    updates = config.get("updates", {})
+    if updates.get("check", False) and not getattr(request.config, "_update_checked", False):
+        request.config._update_checked = True
+        try:
+            request.config._update_result = base_test.check_for_updates(
+                apply=updates.get("apply", True),
+                timeout=updates.get("timeout", 300),
+            )
+        except Exception as e:
+            # A Play Store problem must not take the whole wallet's suite down.
+            logger.warning(f"[update] Update check failed for {app_package}: {e}")
+            request.config._update_result = {"update_check_error": str(e)}
+
     # Wake the device screen before activating the app — if the screen has auto-locked
     # between tests, activate_app succeeds but the lock screen holds current_package,
     # causing the foreground check below to time out.
@@ -387,6 +404,7 @@ def app(driver, request):
         info["platform"] = driver.capabilities.get("platformName", "unknown")
         info["platform_version"] = driver.capabilities.get("platformVersion", "unknown")
         info["device_name"] = driver.capabilities.get("deviceModel", device_serial)
+        info.update(getattr(request.config, "_update_result", {}))
         (request.config._run_dir / "app_info.json").write_text(
             json.dumps(info, indent=2)
         )
