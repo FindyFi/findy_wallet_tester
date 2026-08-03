@@ -16,9 +16,8 @@
         "skip_if_done": true
     },
     "updates": {
-        "check": true,
-        "apply": true,
-        "timeout": 300
+        "enabled": true,
+        "timeout": 900
     },
     "test_cases": {
         "example_issuer": {
