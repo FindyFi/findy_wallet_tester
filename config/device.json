@@ -4,9 +4,13 @@
         "platform_name": "Android",
         "device_name": "<device_name>",
         "automation_name": "UiAutomator2",
-        "device_pin": "0000"
+        "device_pin": "<device_pin>"
     },
     "recording": {
         "enabled": true
+    },
+    "updates": {
+        "enabled": true,
+        "timeout": 900
     }
 }
