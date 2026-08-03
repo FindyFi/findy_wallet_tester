@@ -2,18 +2,26 @@ import logging
 import time
 
 from appium.webdriver.common.appiumby import AppiumBy
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from base.base_page import BasePage
-from base.play_store_analyzer import KeywordPlayStoreAnalyzer, PlayStoreState, UPDATE_TEXTS
+from base.play_store_analyzer import KeywordPlayStoreAnalyzer, PlayStoreState
 from base.utils import get_app_info
 
 logger = logging.getLogger(__name__)
 
 _PLAY_STORE_PKG = "com.android.vending"
 _KEYCODE_HOME = 3
+
+
+class UpdateNotFinished(Exception):
+    """An update was started but never confirmed installed.
+
+    Raised only after the Update button has been tapped, so the Play Store may still be
+    replacing the package in the background. Every result from the rest of the session is
+    then meaningless — the app under test is mid-swap — so this must fail the run rather
+    than be logged and stepped over.
+    """
 
 
 class BaseTest:
@@ -31,13 +39,16 @@ class BaseTest:
             "device_pin": self.config.get("android", {}).get("device_pin", ""),
         }
 
-    def setup(self):
+    def setup(self) -> bool:
+        """Install the app if it is missing. Returns True if an installation was performed."""
         app_package = self.config["application"]["package"]
-        if not self.driver.is_app_installed(app_package):
-            self._install_app_from_play_store(app_package)
+        if self.driver.is_app_installed(app_package):
+            return False
+        self._install_app_from_play_store(app_package)
+        return True
 
-    def check_for_updates(self, apply: bool = True, timeout: int = 300) -> dict:
-        """Open the app's Play Store page and report (optionally apply) a pending update.
+    def check_for_updates(self, timeout: int = 900) -> dict:
+        """Open the app's Play Store page and install a pending update, if any.
 
         Reuses the same Play Store state machine as installation — the only differences are
         that the button reads "Update" instead of "Install", and that completion cannot be
@@ -45,18 +56,19 @@ class BaseTest:
         polled instead.
 
         Wallets not published on the Play Store (sideloaded/branded builds) land on an error
-        or unrecognised page; that is reported as a warning and never fails the run.
+        or unrecognised page; that is reported as a warning and never fails the run. Once the
+        Update button has been tapped, however, failure to confirm the new build raises
+        ``UpdateNotFinished`` — see that exception for why it can't be stepped over.
 
         Args:
-            apply:   Tap Update when one is offered. False only reports availability.
-            timeout: Seconds to wait for the update to finish installing.
+            timeout: Seconds of wall-clock time to wait for the update to finish installing.
 
         Returns a dict for the run report:
             {"update_available": bool, "updated": bool,
              "version_before": str, "version_after": str}
         """
         app_package = self.config["application"]["package"]
-        before = get_app_info(app_package, self._device_serial())["version_code"]
+        before = self._version_code(app_package)
         result = {
             "update_available": False,
             "updated": False,
@@ -64,7 +76,21 @@ class BaseTest:
             "version_after": before,
         }
 
+        if before == "unknown":
+            # A version change is the only signal that an update landed, so without a
+            # readable baseline the check can neither detect nor confirm one. Reporting
+            # "up to date" would be a guess and applying an update would be unverifiable.
+            logger.warning(
+                f"[update] Cannot read the installed versionCode for {app_package} via adb "
+                f"(device '{self._device_serial() or 'default'}') — skipping the update check."
+            )
+            result["update_skipped"] = "versionCode unavailable"
+            return result
+
         state = self._open_play_store_page(app_package, "update")
+
+        if state == PlayStoreState.INSTALLED:
+            state = self._recheck_for_update()
 
         if state == PlayStoreState.INSTALLED:
             logger.info(f"[update] {app_package} is up to date (build {before})")
@@ -81,18 +107,8 @@ class BaseTest:
             return result
 
         result["update_available"] = True
-        if not apply:
-            logger.warning(
-                f"[update] An update is available for {app_package} (installed build {before}) "
-                "but updates.apply is false — testing the older build."
-            )
-            self._leave_play_store()
-            return result
-
-        update_locator = (AppiumBy.XPATH,
-                          " | ".join(f'//*[@text="{t}"]' for t in UPDATE_TEXTS))
         logger.info(f"[update] Update available for {app_package} — clicking Update...")
-        self._click_topmost(update_locator)
+        self._click_primary_action(PlayStoreState.UPDATE_AVAILABLE)
 
         result["version_after"] = self._wait_for_update_to_finish(
             app_package, before, timeout
@@ -113,6 +129,27 @@ class BaseTest:
         self._leave_play_store()
         return result
 
+    def _recheck_for_update(self, timeout=15) -> PlayStoreState:
+        """Re-read the details page for a while before accepting "up to date".
+
+        "Open" and "Uninstall" render from local package state, but the "Update" button only
+        appears once the Play Store has resolved the available version over the network. A
+        first read of INSTALLED can therefore be a page that simply hasn't finished loading,
+        which would silently report every wallet as current forever.
+        """
+        deadline = time.time() + timeout
+        state = PlayStoreState.INSTALLED
+        while time.time() < deadline:
+            time.sleep(1)
+            state = self._analyzer.get_state(self.driver)
+            if state == PlayStoreState.POPUP:
+                self._analyzer.dismiss_popup(self.driver)
+                continue
+            if state != PlayStoreState.INSTALLED:
+                logger.info(f"[update] Page settled to '{state.value}' on re-read")
+                return state
+        return state
+
     def _wait_for_update_to_finish(self, app_package, version_before, timeout) -> str:
         """Poll until the app's versionCode changes, or the Update button is gone.
 
@@ -122,12 +159,16 @@ class BaseTest:
         """
         debug = self.config.get("debug", False)
         poll_interval = 2
-        elapsed = 0
+        # Wall clock, not a counter: a single get_state() costs several seconds (it probes a
+        # dozen error strings), so counting poll intervals would overrun `timeout` many-fold.
+        started = time.time()
+        deadline = started + timeout
         prev_state = None
         settled = 0
 
-        while elapsed < timeout:
-            current = get_app_info(app_package, self._device_serial())["version_code"]
+        while time.time() < deadline:
+            elapsed = int(time.time() - started)
+            current = self._version_code(app_package)
             if current != version_before:
                 logger.info(f"[update] SUCCESS — new build {current} after {elapsed}s.")
                 return current
@@ -138,7 +179,6 @@ class BaseTest:
                 # UiAutomator2 instrumentation is killed while the package is replaced.
                 logger.info(f"[update] UiAutomator2 unavailable (installing) — waiting... ({elapsed}s)")
                 time.sleep(poll_interval)
-                elapsed += poll_interval
                 continue
 
             if state != prev_state:
@@ -147,7 +187,9 @@ class BaseTest:
 
             if state == PlayStoreState.ERROR:
                 description = self._analyzer.get_error_description(self.driver)
-                raise Exception(f"Play Store error while updating {app_package}: {description}")
+                raise UpdateNotFinished(
+                    f"Play Store error while updating {app_package}: {description}"
+                )
 
             if state == PlayStoreState.POPUP:
                 if debug:
@@ -159,7 +201,9 @@ class BaseTest:
                 # package manager a couple of polls to catch up before giving up.
                 settled += 1
                 if settled >= 3:
-                    return version_before
+                    # One last read: the package may have been committed since the poll
+                    # above, and returning a stale build would contradict app_info.json.
+                    return self._version_code(app_package)
 
             elif state == PlayStoreState.DOWNLOADING:
                 logger.info(f"[update] Downloading... ({elapsed}s elapsed)")
@@ -168,16 +212,27 @@ class BaseTest:
                 logger.info(f"[update] Finalising... ({elapsed}s elapsed)")
 
             time.sleep(poll_interval)
-            elapsed += poll_interval
 
-        raise TimeoutException(
-            f"[update] TIMEOUT: {app_package} not updated within {timeout}s."
+        raise UpdateNotFinished(
+            f"{app_package} was not confirmed updated within {timeout}s (still build "
+            f"{version_before}). The Play Store may still be installing it in the background, "
+            "so the app under test cannot be trusted for this run."
         )
 
+    def _version_code(self, app_package: str) -> str:
+        """Installed versionCode via adb, or "unknown" if it can't be read."""
+        return get_app_info(app_package, self._device_serial())["version_code"]
+
     def _device_serial(self) -> str:
-        """ADB serial for adb-based helpers; empty string targets the only device."""
+        """ADB serial for adb-based helpers; empty string targets the only device.
+
+        ``udid`` first: device.json allows a device_name that is a friendly label with the
+        real serial given separately as ``udid`` (see ``_resolve_device`` in conftest), and
+        only the serial is a valid ``adb -s`` target.
+        """
         try:
-            return self.driver.capabilities.get("deviceName", "") or ""
+            caps = self.driver.capabilities or {}
+            return caps.get("udid") or caps.get("deviceName") or ""
         except Exception:
             return ""
 
@@ -211,15 +266,22 @@ class BaseTest:
         logger.warning(f"[{label}] Play Store page did not settle within {timeout}s")
         return PlayStoreState.UNKNOWN
 
-    def _click_topmost(self, locator):
-        """Click the topmost matching button on the Play Store page.
+    def _click_primary_action(self, expected: PlayStoreState):
+        """Click the app's own action button, refusing to click anything unexpected.
 
-        The page also lists related apps further down with their own Install/Update
-        buttons — selecting the smallest y-coordinate always hits the main app's button.
+        The related-apps section further down the page carries Install/Update buttons for
+        other packages; ``find_primary_action`` picks by position so those are never hit,
+        and re-checking the text guards against the page changing under us between the
+        state read and the click.
         """
-        WebDriverWait(self.driver, 10).until(EC.presence_of_element_located(locator))
-        candidates = self.driver.find_elements(*locator)
-        min(candidates, key=lambda el: el.location["y"]).click()
+        element, state = self._analyzer.find_primary_action(self.driver)
+        if element is None or state != expected:
+            found = state.value if state else "no action button"
+            raise Exception(
+                f"Expected the Play Store's primary button to be '{expected.value}', "
+                f"found '{found}'"
+            )
+        element.click()
 
     def _leave_play_store(self):
         """Return to the launcher so the caller can activate the wallet cleanly."""
@@ -231,13 +293,12 @@ class BaseTest:
     def _install_app_from_play_store(self, app_package):
         """Open Play Store and install the app, reacting to each screen state."""
         debug = self.config.get("debug", False)
-        install_locator = (AppiumBy.XPATH, '//*[@text="Install" or @text="Asenna"]')
 
         self._open_play_store_page(app_package, "install")
         self._wait_for_state(PlayStoreState.READY_TO_INSTALL, timeout=20)
 
         logger.info("[install] Clicking Install...")
-        self._click_topmost(install_locator)
+        self._click_primary_action(PlayStoreState.READY_TO_INSTALL)
 
         timeout = 120
         poll_interval = 2
