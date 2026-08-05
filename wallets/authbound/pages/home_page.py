@@ -4,6 +4,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
+from base.credential_count import CredentialCountUnavailable
 
 # EUDI dashboard root — present on every bottom-nav tab once the wallet is open.
 SCREEN_ID = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_screen_root")
@@ -12,9 +13,10 @@ SCREEN_ID = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_screen_root")
 _WALLET_TAB = (AppiumBy.ID, "dashboard_screen_bottom_navigation_item_wallet")
 _DOCUMENTS_ROOT = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_documents_screen_root")
 
-# TODO (Phase B1): replace with the real per-document card locator captured live once a
-# credential has been issued. Until then count_credentials() falls back to 0.
-_DOCUMENT_CARD = (AppiumBy.XPATH, '//*[@text="TODO: document card"]')
+# TODO (Phase B1): capture the real per-document card locator from a live dump of the Wallet
+# tab with a credential present, then implement count_credentials() below. The previous
+# placeholder locator matched nothing and the method returned 0, which reported an empty
+# wallet as fact — see base/credential_count.py for why that is worse than no count at all.
 
 
 class HomePage(BasePage):
@@ -27,15 +29,13 @@ class HomePage(BasePage):
             raise RuntimeError("Home screen did not load within timeout")
 
     def count_credentials(self) -> int:
-        """Return the number of credentials (documents) currently in the wallet.
+        """Not implemented yet — authbound cannot report a credential count.
 
-        Navigates to the Wallet tab and counts document cards. The per-card locator is
-        still a placeholder (confirmed live in Phase B1), so this safely returns 0 until
-        then rather than erroring on an empty/unknown layout.
+        Reaching the list is solved (`_WALLET_TAB` → `_DOCUMENTS_ROOT`); what's missing is the
+        per-document card locator, which needs a live dump of the Wallet tab with a credential
+        present. Raising keeps that gap visible instead of reporting the wallet as empty.
         """
-        try:
-            self.click(_WALLET_TAB)
-            self.find(_DOCUMENTS_ROOT)
-            return len(self.driver.find_elements(*_DOCUMENT_CARD))
-        except Exception:
-            return 0
+        raise CredentialCountUnavailable(
+            "authbound: the per-document card locator has not been captured yet, so the wallet "
+            "cannot report a count (needs a live dump of the Wallet tab with a credential)"
+        )

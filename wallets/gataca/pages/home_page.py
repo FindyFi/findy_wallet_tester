@@ -4,6 +4,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
+from base.credential_count import CredentialCountUnavailable
+from base.utils import wait_present
 
 # "My credentials" heading is always visible on the home screen.
 SCREEN_ID = (AppiumBy.XPATH, '//*[@text="My credentials"]')
@@ -42,11 +44,21 @@ class HomePage(BasePage):
             raise RuntimeError("Gataca home screen did not load within timeout")
 
     def count_credentials(self) -> int:
-        """Return the number of credentials currently in the wallet."""
+        """Return the number of credentials currently in the wallet.
+
+        Cards are on the home screen, so counting needs no navigation — but it does need the
+        home screen to actually be showing: anywhere else the card locator matches nothing,
+        which is indistinguishable from an empty wallet.
+        """
+        if not wait_present(self.driver, SCREEN_ID, timeout=self._get_timeout("default")):
+            raise CredentialCountUnavailable(
+                "gataca: 'My credentials' is not showing, so a count would mean "
+                "'could not look', not 'wallet is empty'"
+            )
         try:
             return len(self.driver.find_elements(*_credential_card))
-        except Exception:
-            return 0
+        except Exception as e:
+            raise CredentialCountUnavailable(f"gataca: credential card lookup failed: {e}") from e
 
     def active_did_alias(self) -> str:
         """Return the active DID's alias shown on the home top-left button (e.g. 'JWK Identity').
