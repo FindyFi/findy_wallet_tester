@@ -66,7 +66,7 @@ a difference to justify. Status as of 2026-08-03, branch `update/unification`.
 | **Credentials**                       |           |        |       |      |         |          |        |       |
 | Issue credential (deeplink -> accept) |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Verify credential (deeplink -> share) |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Count credentials                     |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ❌    |   ✅   |  ✅   |
+| Count credentials                     |    ❌     |   ✅   |  ✅   |  ✅  |   ✅    |    ❌    |   ✅   |  ✅   |
 | **Assert** the count changed          |    ⚠️      |   ✅   |  ⚠️    |  ⚠️   |   ⚠️     |    ❌    |   ✅   |  ✅   |
 | Open / review a credential's detail   |    ❌     |   ✅   |  ⚠️    |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
 | Delete a single credential            |    ❌     |   ✅   |  ❌   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
@@ -129,9 +129,25 @@ and gataca are ⚠️: they clear the data and then raise, because they can't re
 complete up to the accept/share tap, but the wallet's auth gate has never let the happy path render,
 so `credential_offer_page.py` and `verification_request_page.py` still hold `TODO:` locators.
 
-**Count credentials** — seven different implementations (list cards / parsed label / page-source text
-count / separate tab). authbound is ⚠️ (placeholder locator → always returns 0). procivis is the only
-outright ❌: its `HomePage` has just `wait_until_loaded()`.
+**Count credentials** — the mechanism is per-wallet and stays that way: gataca, hovi and unime count
+card elements (with locators that have nothing in common), heidi and paradym parse a count label,
+toppan counts the card containers in its WebView list. Only heidi navigates — to a list screen and
+back.
+
+One lesson worth carrying to the other card-counting wallets: **count containers, never text inside
+them.** Toppan counted an "Issued on" line per card until 2026-08-05, when a saved page dump showed 14
+card containers but only 11 of those lines — Chrome prunes the descendants of cards below the scroll
+viewport, so the count saturated and every issuance looked like it stored nothing. Any wallet whose
+credential list outgrows the accessibility tree will read low; keeping wallets trimmed is what keeps
+counting honest. What *is* uniform is the contract, in `base/credential_count.py`: every wallet returns a real
+number or raises `CredentialCountUnavailable`, verifies its screen before believing a count, and
+leaves the app where it found it. No wallet returns a silent 0 any more, so "wallet is empty" and
+"my locator broke" are finally different answers.
+
+Both ❌ are the same missing piece — a per-credential locator read off a live device:
+**authbound** knows how to reach its documents list but has no card locator (it used to return a
+hard-coded 0, which is why it was ⚠️ before); **procivis** has no list locator at all. Both now say so
+explicitly instead of reporting an empty wallet.
 
 **Assert the count changed** — the actual pass criterion, and it is inconsistent. gataca, toppan and
 unime hard-assert an increase. authbound, heidi, hovi and paradym compute `count_before`/`count_after`

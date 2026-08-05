@@ -4,6 +4,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
+from base.credential_count import CredentialCountUnavailable
 from base.utils import wait_present
 
 # Home screen is identified by the "Scan QR" bottom nav button which is always present.
@@ -30,8 +31,18 @@ class HomePage(BasePage):
             raise RuntimeError("Hovi home screen did not load within timeout")
 
     def count_credentials(self) -> int:
-        """Return the number of credential cards visible on the home screen."""
+        """Return the number of credential cards on the home screen.
+
+        No navigation — the cards are on home. The screen check matters because hovi's home
+        heading differs between the empty and non-empty states, so "no cards found" is only
+        meaningful once we know home is up.
+        """
+        if not on_screen(self.driver, timeout=self._get_timeout("default")):
+            raise CredentialCountUnavailable(
+                "hovi: home screen is not showing, so a count would mean 'could not look', "
+                "not 'wallet is empty'"
+            )
         try:
             return len(self.driver.find_elements(*_credential_card))
-        except Exception:
-            return 0
+        except Exception as e:
+            raise CredentialCountUnavailable(f"hovi: credential card lookup failed: {e}") from e
