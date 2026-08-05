@@ -9,7 +9,8 @@
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": true
+        "screenshot_on_failure": true,
+        "xml_on_failure": true
     },
     "onboarding": {
         "skip_if_done": true

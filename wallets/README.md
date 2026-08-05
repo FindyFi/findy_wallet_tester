@@ -66,7 +66,7 @@ a difference to justify. Status as of 2026-08-03, branch `update/unification`.
 | **Credentials**                       |           |        |       |      |         |          |        |       |
 | Issue credential (deeplink -> accept) |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Verify credential (deeplink -> share) |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Count credentials                     |    ❌     |   ✅   |  ✅   |  ✅  |   ✅    |    ❌    |   ✅   |  ✅   |
+| Count credentials                     |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ❌    |   ✅   |  ✅   |
 | **Assert** the count changed          |    ⚠️      |   ✅   |  ⚠️    |  ⚠️   |   ⚠️     |    ❌    |   ✅   |  ✅   |
 | Open / review a credential's detail   |    ❌     |   ✅   |  ⚠️    |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
 | Delete a single credential            |    ❌     |   ✅   |  ❌   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
@@ -125,9 +125,19 @@ per session by `conftest_helpers.navigate_to_home` when `onboarding.skip_if_done
 and gataca are ⚠️: they clear the data and then raise, because they can't re-onboard — so using
 `skip_if_done=false` on those two leaves the wallet unusable until someone registers it by hand.
 
-**Issue / verify credential** — every wallet has both flows. authbound is ⚠️ on both: the flows are
-complete up to the accept/share tap, but the wallet's auth gate has never let the happy path render,
-so `credential_offer_page.py` and `verification_request_page.py` still hold `TODO:` locators.
+**Issue / verify credential** — every wallet has both flows. authbound is ⚠️ on both, for two
+different reasons:
+
+- *Issuance* reaches a real consent screen (ISSUANCE REQUEST → "Add"), and its locators were captured
+  live on 2026-08-05, so the flow recognises and accepts the offer. It cannot finish: storing the
+  credential needs a biometric, and on a device with **none enrolled** Android opens its enrollment
+  wizard instead of an auth prompt — which needs a real finger on the sensor, so no test can pass it.
+  The flow detects that detour and says so. Enrolling a fingerprint once unblocks it; the expected
+  path afterwards is a normal biometric prompt, which `base/android.py` handles.
+  (This supersedes the older diagnosis of an auth/profile gate rejecting offers before any consent
+  screen — that gate is gone.)
+- *Verification* still holds `TODO:` locators in `verification_request_page.py`: the Findy pension
+  verifiers are rejected at the OpenID4VP protocol layer, so the share screen has never rendered.
 
 **Count credentials** — the mechanism is per-wallet and stays that way: gataca, hovi and unime count
 card elements (with locators that have nothing in common), heidi and paradym parse a count label,
@@ -144,10 +154,18 @@ number or raises `CredentialCountUnavailable`, verifies its screen before believ
 leaves the app where it found it. No wallet returns a silent 0 any more, so "wallet is empty" and
 "my locator broke" are finally different answers.
 
-Both ❌ are the same missing piece — a per-credential locator read off a live device:
-**authbound** knows how to reach its documents list but has no card locator (it used to return a
-hard-coded 0, which is why it was ⚠️ before); **procivis** has no list locator at all. Both now say so
-explicitly instead of reporting an empty wallet.
+The two incomplete ones are blocked on the same missing piece — a per-credential locator, which can
+only be read off a device that actually holds a credential:
+
+- **authbound** ⚠️ — reaches its documents screen and reports a real `0` when it says "Your wallet is
+  empty", but cannot count a populated list. Its wallet has never held a credential (see *Issue
+  credential* above), so there has been nothing to capture the card locator from. Counting switches to
+  the Wallet tab and back, making it the second wallet after heidi where counting is a navigation step.
+- **procivis** ❌ — no credential-list locator at all; its `HomePage` only knows `wait_until_loaded()`.
+  It does issue credentials successfully, so this one is capturable as soon as someone dumps
+  `WalletScreen` with a credential present.
+
+Neither reports a fabricated 0 any more.
 
 **Assert the count changed** — the actual pass criterion, and it is inconsistent. gataca, toppan and
 unime hard-assert an increase. authbound, heidi, hovi and paradym compute `count_before`/`count_after`

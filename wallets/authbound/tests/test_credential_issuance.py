@@ -4,6 +4,7 @@ import logging
 import pytest
 from pathlib import Path
 
+from base.credential_count import CredentialCountUnavailable
 from providers.factory import get_provider
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,15 @@ def test_credential_issuance(app, issuer_name, test_case):
     app_package = app.config["application"]["package"]
 
     home = HomePage(app.driver, **app.page_args)
-    count_before = home.count_credentials()
+    # authbound cannot report a credential count yet (no document-card locator). An unreadable
+    # count says nothing about whether the credential arrived, so warn and carry on rather than
+    # failing the issuance test on it. This handling belongs in the shared assertion helper once
+    # that exists — every wallet needs the same three lines.
+    try:
+        count_before = home.count_credentials()
+    except CredentialCountUnavailable as e:
+        count_before = None
+        logger.warning(f"[test] Credential count before issuance is unavailable: {e}")
 
     provider = get_provider(app.config, issuer_name)
     credential_flow.run(
@@ -50,9 +59,19 @@ def test_credential_issuance(app, issuer_name, test_case):
     )
 
     home.wait_until_loaded()
-    count_after = home.count_credentials()
-    added = count_after - count_before
-    logger.info(
-        f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
-        f"(wallet: {count_before} → {count_after}, +{added})"
-    )
+    try:
+        count_after = home.count_credentials()
+    except CredentialCountUnavailable as e:
+        count_after = None
+        logger.warning(f"[test] Credential count after issuance is unavailable: {e}")
+
+    if count_before is None or count_after is None:
+        logger.info(
+            f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
+            "(wallet count unavailable — no count evidence for this run)"
+        )
+    else:
+        logger.info(
+            f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
+            f"(wallet: {count_before} → {count_after}, +{count_after - count_before})"
+        )

@@ -17,6 +17,20 @@ from wallets.authbound.pages.credential_offer_page import (
 
 logger = logging.getLogger(__name__)
 
+_SETTINGS_PKG = "com.android.settings"
+
+
+def _in_biometric_enrollment(driver) -> bool:
+    """True if the system took us into Settings — i.e. fingerprint enrollment, not a prompt.
+
+    A biometric *prompt* is a SystemUI bottom sheet; the enrollment wizard is a full-screen
+    Settings activity (ConfirmLockPassword, then FingerprintEnrollIntroduction).
+    """
+    try:
+        return driver.current_package == _SETTINGS_PKG
+    except WebDriverException:
+        return False
+
 
 def _native_deeplink(url: str) -> str:
     """Rebuild a Paradym https invitation under authbound's own scheme.
@@ -77,12 +91,17 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     deeplink merely resume the existing task ("brought to the front") WITHOUT delivering
     the offer, so we fire the deeplink directly while the app is open.
 
-    Known limitation: the wallet gates credential issuance behind a valid authenticated
-    profile. Without it, the offer is rejected before any consent/offer screen renders and
-    the generic error screen appears — this flow captures that error text and raises a
-    clear RuntimeError. The 'offer' (accept) path is scaffolded but its locators in
-    credential_offer_page.py are still placeholders until the happy path can be observed
-    on an authenticated wallet.
+    Known limitation (re-diagnosed 2026-08-05): the offer itself is accepted — the wallet
+    renders a real ISSUANCE REQUEST consent screen — but tapping "Add" hands off to the
+    system, and on a device with **no fingerprint enrolled** Android opens the enrollment
+    wizard (confirm device PIN, then "Unlock with your fingerprint") instead of an
+    authentication prompt. Enrolling needs a real finger on the sensor, so no test can get
+    past it; this flow detects that detour and reports it as the device-provisioning gap it
+    is. Once a fingerprint is enrolled once on the device, the expected path is a normal
+    biometric prompt, which `base/android.py` already handles.
+
+    This supersedes the earlier diagnosis that the wallet rejected offers at an
+    auth/profile gate before any consent screen — that gate is gone.
     """
     url = _native_deeplink(provider.get(credential_name))
 
@@ -114,6 +133,23 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     if result == "offer":
         logger.info("[credential_flow] Credential offer screen — accepting")
         CredentialOfferPage(driver, **page_args).accept()
+
+        # "Add" delegates to the system. With a fingerprint enrolled that is a biometric
+        # prompt (handled below); with none it is the *enrollment* wizard, which no test can
+        # complete — so name that explicitly instead of timing out on an unknown screen.
+        _time.sleep(2)
+        if _in_biometric_enrollment(driver):
+            raise RuntimeError(
+                f"[credential_flow] Cannot complete issuance of '{credential_name}': tapping "
+                f"'Add' opened Android's fingerprint enrollment wizard ({_SETTINGS_PKG}), which "
+                "means no biometric is enrolled on this device. Enroll one once by hand — it "
+                "needs a real finger on the sensor — then the wallet should show a normal "
+                "biometric prompt here instead [no_retry]"
+            )
+
+        if handle_biometric_if_present(driver):
+            logger.info("[credential_flow] Biometric prompt after accept — fingerprint injected")
+
         logger.info(f"[credential_flow] Credential '{credential_name}' accepted")
         return
 
