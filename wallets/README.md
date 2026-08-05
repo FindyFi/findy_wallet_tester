@@ -57,7 +57,7 @@ a difference to justify. Status as of 2026-08-03, branch `update/unification`.
 |:--------------------------------------|:---------:|:------:|:-----:|:----:|:-------:|:--------:|:------:|:-----:|
 | **Lifecycle**                         |           |        |       |      |         |          |        |       |
 | Install app (Play Store)              |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
-| **Update app to a newer release**     |    ❌     |   ❌   |  ❌   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
+| Update app to a newer release         |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
 | Record app version                    |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
 | Launch app                            |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Onboard from fresh install            |    ❌     |   ❌   |  ✅   |  ✅  |   ✅    |    ✅    |   –    |  ✅   |
@@ -86,17 +86,26 @@ to the Play Store page and drive the install, reacting to `READY_TO_INSTALL / DO
 INSTALLING / POPUP / ERROR` states (bilingual EN/FI keywords, tolerates UiAutomator2 dying mid-install).
 Identical for all wallets — no per-wallet code. No APK sideloading path.
 
-**Update app — the one universal gap.** Nothing anywhere updates an already-installed wallet.
-`PlayStoreState` has no `UPDATE` member and `KeywordPlayStoreAnalyzer.get_state()` only looks for
-`Install`/`Asenna` and `Open`/`Avaa`, so a Play Store page showing **Update** reads as `UNKNOWN`, and
-`setup()` skips the whole path anyway once the package is present. Consequence: the suite silently
-tests whatever build happens to be on the device, and a wallet update is discovered only when
-locators break — exactly what happened on 2026-07-30 when unime v0.13.8 changed its password field
-and `pin_page.py` had to be patched by hand.
+**Update app** — `BaseTest.check_for_updates()`, run once per wallet session from the `app` fixture and
+controlled by `updates` in `config/device.json`. It opens the same Play Store page as the install path,
+and if the primary button reads **Update** it taps it and waits for the app's `versionCode` to change,
+recording `update_available` / `updated` / `version_before` / `version_after` into `app_info.json`.
+Identical for all wallets — no per-wallet code. Two behaviours worth knowing:
+
+- An update that starts but can't be confirmed installed raises `UpdateNotFinished` and **fails the
+  whole wallet session**, because every later result would come from an app mid-replacement. Problems
+  *before* the button is tapped (no Play Store listing, unreadable `versionCode`) only warn.
+- Verified end to end on 2026-08-03 across all 8 wallets for the *detect* path (each reported "up to
+  date" against its real build). The *apply* path has not run against a genuine pending update yet —
+  turn off Play Store auto-update on the device so updates land when the suite decides, not before.
+
+Before this existed, a wallet update was discovered only when locators broke — as on 2026-07-30, when
+unime v0.13.8 changed its password field and `pin_page.py` had to be patched by hand.
 
 **Record app version** — `get_app_info()` parses `adb shell dumpsys package` for
-`versionName`/`versionCode` and writes `reports/<ts>/<wallet>/app_info.json`. Recorded only; never
-compared against an expected or latest version, so a silent upgrade produces no warning.
+`versionName`/`versionCode` and writes `reports/<ts>/<wallet>/app_info.json`. Never compared against an
+*expected* version, so there is no pinning; the only comparison is the update check above, which
+reports the build as of the moment the run started.
 
 **Launch app** — `tests/test_install.py::test_app_launch`. Note the filename is misleading: it asserts
 the app *launched*, not that an install happened (install is a side effect of the `app` fixture). The
@@ -176,18 +185,15 @@ Provided by the root `conftest.py`, `base/conftest_helpers.py` and `base/android
 
 ## Gaps, in the order they cost us most
 
-1. **Update capability — missing for all wallets.** No way to move a wallet to a new release, and no
-   warning when one moves on its own. Highest leverage: the only capability where *zero* wallets have
-   coverage, and the direct cause of surprise locator breakage.
-2. **Counting: procivis has none, authbound returns a hard-coded 0.** Until these exist, "did the
+1. **Counting: procivis has none, authbound returns a hard-coded 0.** Until these exist, "did the
    credential arrive?" is unanswerable for two wallets.
-3. **Assertion strength: 4 log-only + 1 nothing.** Unifying this will turn currently-green cases red.
+2. **Assertion strength: 4 log-only + 1 nothing.** Unifying this will turn currently-green cases red.
    That's the point — those greens are not evidence of anything today.
-4. **Reviewing a credential — only gataca.** No wallet except gataca can check *what* landed. If the
+3. **Reviewing a credential — only gataca.** No wallet except gataca can check *what* landed. If the
    unified scenario is to assert on issued content (claims/issuer), this needs a detail page per wallet.
-5. **Delete / cleanup — only gataca.** Without it, wallet state drifts monotonically across runs, and
+4. **Delete / cleanup — only gataca.** Without it, wallet state drifts monotonically across runs, and
    verification results depend on accumulated history rather than the credential just issued.
-6. **Error detection missing in unime and hovi.** Both fail as timeouts with no diagnostic, so triage
+5. **Error detection missing in unime and hovi.** Both fail as timeouts with no diagnostic, so triage
    means watching the recording.
-7. **Onboarding blocked for authbound and gataca** (server-side registration). Not a code gap — tracked
+6. **Onboarding blocked for authbound and gataca** (server-side registration). Not a code gap — tracked
    here so it isn't mistaken for one.

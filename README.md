@@ -153,7 +153,27 @@ python runners/run_tests.py example
 
 ## Configuration
 
-**`config/device.json`** — shared infrastructure settings (template committed, modify manually as shown above).
+**`config/device.json`** — shared infrastructure settings (template committed, modify manually as shown above). Beyond the Appium/device keys shown in Setup, it carries two run-wide switches:
+
+```json
+{
+    "recording": {
+        "enabled": true
+    },
+    "updates": {
+        "enabled": true,
+        "timeout": 900
+    }
+}
+```
+
+| Key | Meaning |
+|:----|:--------|
+| `recording.enabled` | Save an `.mp4` screen recording per test under `reports/<ts>/<wallet>/recordings/`. |
+| `updates.enabled` | Before the first test of each wallet, check the Play Store and install a pending update, recording the outcome in `app_info.json`. Set `false` to test whatever build is on the device. |
+| `updates.timeout` | Wall-clock seconds to wait for an update to finish installing. If it can't be confirmed within this budget the whole wallet session fails, since the app would be mid-replacement — so keep it generous. |
+
+Either block may be overridden per wallet in `wallets/<wallet>/config.json`; the wallet's value replaces the device-level one entirely.
 
 **`wallets/<wallet>/config.json`** — wallet-specific settings:
 ```json
