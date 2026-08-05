@@ -15,6 +15,10 @@
     "onboarding": {
         "skip_if_done": true
     },
+    "updates": {
+        "enabled": true,
+        "timeout": 900
+    },
     "test_cases": {
         "example_issuer": {
             "base_url": "https://issuer.example.com",

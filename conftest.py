@@ -33,7 +33,7 @@ from appium.options.android.uiautomator2.base import UiAutomator2Options
 from selenium.webdriver.support.ui import WebDriverWait
 
 from base.android import handle_biometric_if_present, handle_permission_if_present
-from base.base_test import BaseTest
+from base.base_test import BaseTest, UpdateNotFinished
 from base.utils import list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable, sanitize_test_name
 
 logger = logging.getLogger(__name__)
@@ -341,6 +341,13 @@ def app(driver, request):
     app_name = request.node.callspec.params["driver"]
     config = load_config(app_name)
 
+    # An earlier test in this session started an update that never confirmed installed, so
+    # the app under test may be mid-replacement. Refuse to run rather than report results
+    # for an unknown build.
+    update_failure = getattr(request.config, "_update_fatal", None)
+    if update_failure:
+        pytest.fail(f"Wallet update did not complete: {update_failure}", pytrace=False)
+
     recording_enabled = config.get("recording", {}).get("enabled", False)
     if recording_enabled:
         try:
@@ -351,7 +358,7 @@ def app(driver, request):
             recording_enabled = False
 
     base_test = BaseTest(driver, config)
-    base_test.setup()
+    just_installed = base_test.setup()
 
     app_package = config["application"]["package"]
 
@@ -366,6 +373,36 @@ def app(driver, request):
     if not getattr(request.config, "_apps_cleared", False):
         _clear_recent_apps(driver)
         request.config._apps_cleared = True
+
+    if just_installed and not getattr(request.config, "_update_checked", False):
+        # A freshly installed app is by definition the current build.
+        request.config._update_checked = True
+        logger.info(f"[update] {app_package} was just installed — no update check needed")
+
+    # Check the Play Store for a newer build — once per session, not per test.
+    # `driver`/`app` are function-scoped, so an unguarded check would open the Play Store
+    # before every single test.  Runs after the screen is awake (so the details page is what
+    # gets read, not the lock screen) and before app_info.json is written (so the report
+    # records the version actually tested).
+    updates = config.get("updates", {})
+    if updates.get("enabled", True) and not getattr(request.config, "_update_checked", False):
+        request.config._update_checked = True
+        try:
+            request.config._update_result = base_test.check_for_updates(
+                timeout=updates.get("timeout", 900),
+            )
+        except UpdateNotFinished as e:
+            # The package is being replaced underneath the suite — fail the whole session
+            # instead of reporting results for an app mid-swap.
+            request.config._update_fatal = str(e)
+            request.config._update_result = {"update_check_error": str(e)}
+            pytest.fail(f"Wallet update did not complete: {e}", pytrace=False)
+        except Exception as e:
+            # Everything that can fail before the Update button is tapped (no Play Store
+            # listing, store unreachable) leaves the installed build untouched, so the run
+            # is still valid — warn and carry on.
+            logger.warning(f"[update] Update check failed for {app_package}: {e}")
+            request.config._update_result = {"update_check_error": str(e)}
 
     driver.activate_app(app_package)
 
@@ -387,6 +424,7 @@ def app(driver, request):
         info["platform"] = driver.capabilities.get("platformName", "unknown")
         info["platform_version"] = driver.capabilities.get("platformVersion", "unknown")
         info["device_name"] = driver.capabilities.get("deviceModel", device_serial)
+        info.update(getattr(request.config, "_update_result", {}))
         (request.config._run_dir / "app_info.json").write_text(
             json.dumps(info, indent=2)
         )
