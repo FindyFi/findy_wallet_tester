@@ -26,6 +26,10 @@ def main():
         wallets_to_test = _args
     else:
         wallets_to_test = list_wallets()
+        # This removes the example wallet from the wallets to test.
+        wallets_to_test.remove("example")
+
+    print(f"Running the wallets: {wallets_to_test}")
 
     # Create one shared session directory; each wallet gets its own subdirectory inside.
     timestamp = datetime.now().strftime(TIMESTAMP_FORMAT)
