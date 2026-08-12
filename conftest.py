@@ -44,6 +44,13 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _ENV_RUN_DIR = "PYTEST_RUN_DIR"
 _ENV_SESSION_DIR = "PYTEST_SESSION_DIR"
 
+_KEYCODE_WAKEUP = 224
+
+
+def device_pin_for(config: dict) -> str:
+    """The device's screen-lock PIN from the merged config, or "" when not configured."""
+    return config.get("android", {}).get("device_pin", "")
+
 
 def _is_anr_present(driver) -> bool:
     """Return True if an ANR (App Not Responding) system dialog is showing."""
@@ -288,6 +295,44 @@ def pytest_runtest_setup(item):
         pytest.skip(f"Provider '{issuer_name}' is unreachable: {reason}")
 
 
+# Lifecycle order for every wallet's tests. pytest collects files alphabetically, which puts
+# test_install and test_onboarding *after* the credential tests — backwards as a report reads,
+# and it only happens to work because the `app` fixture installs and `navigate_to_home`
+# onboards as a side effect of whichever test runs first. Cleanup stays last so it wipes
+# credentials only once everything has run.
+_MODULE_ORDER = (
+    "test_install",
+    "test_onboarding",
+    "test_credential_issuance",
+    "test_credential_verification",
+    "test_cleanup",
+)
+
+
+def _module_of(nodeid: str) -> str:
+    """Test module name from a nodeid, e.g. 'test_credential_issuance'.
+
+    Must split on '::' before the path separator: parametrize IDs contain slashes
+    (``test_credential_issuance.py::test_credential_issuance[hovi_issuer/credential_issuance]``),
+    so splitting on '/' alone yields the test ID instead of the module.
+    """
+    return nodeid.split("::")[0].rsplit("/", 1)[-1].split(".")[0]
+
+
+def pytest_collection_modifyitems(items):
+    """Sort each wallet's tests into lifecycle order.
+
+    Stable, and keyed only on the module, so a wallet with its own ordering hook (gataca groups
+    credential tests by DID method to avoid slow DID switches) keeps that grouping within each
+    phase. Modules not listed keep their relative order, at the end.
+    """
+    def phase(item):
+        module = _module_of(item.nodeid)
+        return _MODULE_ORDER.index(module) if module in _MODULE_ORDER else len(_MODULE_ORDER)
+
+    items.sort(key=phase)
+
+
 _REPORT_EXCLUDED_MODULES = {"test_onboarding", "test_install"}
 
 
@@ -298,7 +343,7 @@ def pytest_html_results_table_row(report, cells):
     with results that aren't meaningful to reviewers.
     """
     # report.nodeid looks like: wallets/heidi/tests/test_onboarding.py::test_onboard[...]
-    module = report.nodeid.split("/")[-1].split(".")[0]
+    module = _module_of(report.nodeid)
     if module in _REPORT_EXCLUDED_MODULES:
         cells.clear()
 
@@ -329,6 +374,22 @@ def driver(request):
     if device_pin:
         opts.set_capability("appium:unlockType", "pin")
         opts.set_capability("appium:unlockKey", device_pin)
+        # Unlock by typing the PIN on the keyguard, NOT via adb.
+        #
+        # Appium's default unlock strategy is "locksettings", which unlocks by *deleting* the
+        # device lock and re-creating it:
+        #     locksettings clear --old <pin>
+        #     locksettings set-pin <pin>
+        # Clearing the lock credential wipes every enrolled fingerprint (Android guarantees
+        # that), and set-pin restores only the PIN. Any wallet that stores credentials behind a
+        # biometric-backed key then finds no biometric enrolled and sends the run into Android's
+        # fingerprint *enrollment* wizard, which no test can complete — see
+        # wallets/authbound/flows/credential_flow.py.
+        #
+        # It only bites when a session starts with the screen locked, which is why it looked
+        # intermittent: the log says "Screen already unlocked, doing nothing" on the runs that
+        # were unaffected. Diagnosed 2026-08-10 from appium.log.
+        opts.set_capability("appium:unlockStrategy", "uiautomator")
 
     driver = webdriver.Remote(device["server"], options=opts)  # type: ignore
     yield driver
@@ -365,10 +426,21 @@ def app(driver, request):
     # Wake the device screen before activating the app — if the screen has auto-locked
     # between tests, activate_app succeeds but the lock screen holds current_package,
     # causing the foreground check below to time out.
+    #
+    # `mobile: wakeUpDevice` does NOT exist in this driver (it threw 182 times in a single run,
+    # silently swallowed), so this guard never actually ran. Use supported calls, and unlock with
+    # the uiautomator strategy — the default `locksettings` one clears the device lock, which
+    # wipes enrolled fingerprints (see the driver capabilities above).
     try:
-        driver.execute_script("mobile: wakeUpDevice")
-    except Exception:
-        pass
+        driver.press_keycode(_KEYCODE_WAKEUP)
+        if device_pin_for(config) and driver.execute_script("mobile: isLocked"):
+            driver.execute_script("mobile: unlock", {
+                "key": device_pin_for(config),
+                "type": "pin",
+                "strategy": "uiautomator",
+            })
+    except Exception as e:
+        logger.warning(f"[app] Could not wake/unlock the screen: {e}")
 
     if not getattr(request.config, "_apps_cleared", False):
         _clear_recent_apps(driver)
