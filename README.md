@@ -60,23 +60,26 @@ source <your_env_name>/bin/activate
 pip install -r requirements.txt
 ```
 
-**3. Create `config/device.json`** with your Appium server and device settings:
+**3. Create your `.env`** with the device this machine tests against:
 
 ```bash
-# NAME_OF_THE_DEVICE can be found using adb and the following command:
+cp env.example .env
+
+# The adb serial for DEVICE_NAME comes from:
 adb devices -l
 ```
 
-```json
-{
-    "server": "http://127.0.0.1:4723",
-    "android": {
-        "platform_name": "Android",
-        "device_name": "<NAME_OF_THE_DEVICE>",
-        "automation_name": "UiAutomator2"
-    }
-}
 ```
+# .env  (gitignored — real serials and PINs never enter the repository)
+DEVICE_NAME=emulator-5554
+DEVICE_PIN=1234
+```
+
+`config/device.json` is committed with `${DEVICE_NAME}` / `${DEVICE_PIN}` placeholders that resolve
+from `.env` at runtime, so it needs no editing. A wallet that runs on a *different* device than the
+rest overrides them with its own variables — heidi uses `${HEIDI_DEVICE_NAME}` and
+`${HEIDI_DEVICE_PIN}` because it targets the emulator while the others target a phone. See
+`env.example` for the full list.
 
 **4. Start Appium:**
 
@@ -142,7 +145,9 @@ python runners/run_tests.py example
 │       ├── flows/              # Multi-step user flows
 │       └── tests/              # Test files
 ├── config/
-│   └── device.json             # Shared infrastructure config
+│   └── device.json             # Shared infrastructure config (${VAR} placeholders, filled from .env)
+├── env.example                 # Every environment variable the configs expect — copy to .env
+├── .env                        # Your real device serials, PINs and credentials (gitignored)
 ├── runners/
 │   └── run_tests.py            # Runs all wallets in sequence under one report directory
 ├── reports/
@@ -153,7 +158,26 @@ python runners/run_tests.py example
 
 ## Configuration
 
-**`config/device.json`** — shared infrastructure settings (template committed, modify manually as shown above). Beyond the Appium/device keys shown in Setup, it carries two run-wide switches:
+### Machine-specific values come from `.env`
+
+**Any string in any config file may reference an environment variable as `${VAR}`**, resolved when
+the config is loaded. That keeps device serials, PINs and credentials out of the committed JSON:
+
+```json
+"device_name": "${DEVICE_NAME}",
+"device_pin":  "${DEVICE_PIN}"
+```
+
+- `.env` at the project root holds the real values and is gitignored; `env.example` lists every
+  variable the configs expect. Copy it to `.env` and fill it in.
+- Shell exports and CI/CD injection take precedence over `.env`.
+- **A referenced variable that isn't set fails the run immediately**, naming the variable and the
+  config key that used it — rather than passing a literal `"${DEVICE_NAME}"` through to Appium.
+- Keep comments on their own lines in `.env`. Everything after the first `=` is the value, so a
+  trailing `# comment` becomes part of it.
+
+**`config/device.json`** — shared infrastructure settings (committed with placeholders; put your
+values in `.env` as shown in Setup). Beyond the Appium/device keys, it carries two run-wide switches:
 
 ```json
 {
@@ -238,7 +262,8 @@ To test against the [FIDES Interoperability Test Bed](https://itb.ilabs.ai), use
 
 `system_id`, `test_case_id`, `spec_id`, `actor_id`, and `provide_step` are organisation-specific values from your ITB registration. The wallet directories in this repo already have the correct values set for the FindyNet organisation. External users need to register their own wallet system in ITB to obtain their own IDs.
 
-ITB credentials are loaded from a `.env` file at the project root (gitignored):
+ITB credentials go in the same `.env` as everything else (see
+[Machine-specific values come from `.env`](#machine-specific-values-come-from-env)):
 
 ```
 # .env
@@ -246,7 +271,7 @@ ITB_USERNAME=your@email.com
 ITB_PASSWORD=yourpassword
 ```
 
-The `${ITB_USERNAME}` and `${ITB_PASSWORD}` placeholders in config are resolved at runtime, so the credentials never need to appear in config files. Shell environment variables and CI/CD injection take precedence over `.env`.
+The `${ITB_USERNAME}` and `${ITB_PASSWORD}` placeholders in config are resolved at runtime, so the credentials never need to appear in config files.
 
 ## Implementation notes
 
