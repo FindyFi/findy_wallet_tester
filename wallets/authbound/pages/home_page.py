@@ -1,9 +1,10 @@
+import logging
+import re
+
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-
-import logging
 
 from base.base_page import BasePage
 from base.credential_count import CredentialCountUnavailable
@@ -23,11 +24,14 @@ _DOCUMENTS_ROOT = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_documents_scre
 # "Your wallet is empty" / "Add your first document to get started".
 _DOCUMENTS_EMPTY = (AppiumBy.XPATH, '//*[@text="Your wallet is empty"]')
 
-# TODO (Phase B1): capture the per-document card locator — it needs a wallet holding at least
-# one credential, and issuance is currently blocked before anything is stored (see
-# flows/credential_flow.py: tapping "Add" opens fingerprint enrollment on a device with no
-# biometric enrolled). Until then a non-empty documents screen is reported as unavailable
-# rather than guessed at.
+# The wallet reports its own total next to the "Wallet" header title — a sibling TextView
+# reading "· 3" (U+00B7, space, digits). Captured live 2026-08-05 with one document present;
+# an empty wallet omits the label entirely. Preferred over counting cards: it is the wallet's
+# own number, so it can't be truncated by what happens to be rendered.
+_DOCUMENT_COUNT = (AppiumBy.XPATH,
+    '//android.widget.TextView[@text="Wallet"]'
+    '/following-sibling::android.widget.TextView[1]'
+)
 
 
 class HomePage(BasePage):
@@ -40,14 +44,16 @@ class HomePage(BasePage):
             raise RuntimeError("Home screen did not load within timeout")
 
     def count_credentials(self) -> int:
-        """Return the number of documents in the wallet — only when it is provably empty.
+        """Return the number of documents in the wallet.
 
         Counting means switching to the Wallet tab and back, since the dashboard doesn't list
-        documents. An empty wallet says so in as many words ("Your wallet is empty"), so that
-        case is a real 0. A *populated* list can't be counted yet — the per-document card
-        locator needs a wallet with a credential in it, which issuance can't produce on this
-        device (see `flows/credential_flow.py`) — so it reports the count as unavailable rather
-        than guessing.
+        documents — authbound is the second wallet after heidi where counting is a navigation
+        step. The number comes from the wallet's own header total ("Wallet · 3") rather than
+        from counting cards, so it is not limited to what happens to be rendered.
+
+        An empty wallet omits that label and says "Your wallet is empty" instead, which is a
+        real 0. A missing label with no empty-state text means something changed and is
+        reported as unavailable rather than guessed at.
         """
         try:
             self.click(_WALLET_TAB)
@@ -58,13 +64,22 @@ class HomePage(BasePage):
             ) from e
 
         try:
-            if wait_present(self.driver, _DOCUMENTS_EMPTY, timeout=2):
-                return 0
-            raise CredentialCountUnavailable(
-                "authbound: the documents screen holds at least one document, but the "
-                "per-document card locator has not been captured yet, so the wallet cannot "
-                "report how many"
-            )
+            try:
+                label = self.find(_DOCUMENT_COUNT, timeout=2).get_attribute("text") or ""
+            except Exception:
+                if wait_present(self.driver, _DOCUMENTS_EMPTY, timeout=2):
+                    return 0
+                raise CredentialCountUnavailable(
+                    "authbound: no document-count label next to the 'Wallet' title and no "
+                    "empty-state text either — the documents screen layout has changed"
+                )
+
+            match = re.search(r"\d+", label)
+            if not match:
+                raise CredentialCountUnavailable(
+                    f"authbound: document-count label read {label!r}, which contains no number"
+                )
+            return int(match.group())
         finally:
             # Back to the dashboard the caller started on.
             try:

@@ -5,12 +5,20 @@ from urllib.parse import urlsplit
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.common.exceptions import WebDriverException
 
-from base.android import handle_biometric_if_present
-from base.utils import wait_present
+from base.android import (
+    authenticate_with_pin,
+    handle_biometric_if_present,
+    in_biometric_enrollment,
+)
+from base.utils import wait_present, wait_visible
 from providers.base import DeeplinkProvider
 from wallets.authbound.pages.home_page import HomePage, SCREEN_ID as _home_id
 from wallets.authbound.pages.pin_page import PinPage, HEADING as _pin_heading
 from wallets.authbound.pages.error_page import ErrorPage, SCREEN_ID as _error_id
+from wallets.authbound.pages.document_success_page import (
+    DocumentSuccessPage,
+    wait_for_outcome,
+)
 from wallets.authbound.pages.verification_request_page import (
     VerificationRequestPage,
     SCREEN_ID as _request_id,
@@ -24,6 +32,14 @@ logger = logging.getLogger(__name__)
 # (and "Just once") to route the request into this wallet.
 _CHOOSER_ITEM = (AppiumBy.XPATH, '//*[@text="Authbound Wallet"]')
 _CHOOSER_ONCE = (AppiumBy.XPATH, '//*[@text="Just once"]')
+
+_ENROLLMENT_REQUIRED = (
+    "[verification_flow] Cannot complete sharing for '{what}': Android opened its fingerprint "
+    "enrollment wizard, which means no biometric is enrolled on this device (check with "
+    "`adb shell dumpsys fingerprint` — \"count\":0 means none). Enrolling needs a real finger on "
+    "the sensor, so no test can pass this; enroll one by hand. Note that changing the device "
+    "lock PIN wipes existing enrollments [no_retry]"
+)
 
 
 def _native_deeplink(url: str) -> str:
@@ -91,12 +107,19 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     when it is already in the foreground — pressing HOME first only resumes the task without
     delivering the request, so we fire the deeplink directly.
 
-    Known limitation: verification is gated behind a valid authenticated profile (same gate as
-    issuance) and the wallet is currently empty, so the request/share screens cannot be observed
-    yet — this flow detects the generic error screen and the "no matching credentials" state and
-    reports them clearly. The 'request' (share) path is scaffolded but its locators in
-    verification_request_page.py are placeholders until the happy path can be observed on an
-    authenticated wallet holding a matching credential.
+    The request screen's locators were captured live 2026-08-05 (`request_screen_root`,
+    `request_screen_button`, and the `request_screen_empty_state` shown when the verifier asks
+    for something the wallet doesn't hold). Sharing, like accepting an offer, hands off to
+    Android for authentication — the device PIN, not the wallet's passcode.
+
+    The wallet presents **every** matching document and demands a separate authentication for
+    each: measured live 2026-08-12, six listed documents needed seven authentications before it
+    completed. So the prompt budget is derived from the request screen's document count rather
+    than assumed. Because that count grows as the wallet accumulates credentials, sharing looked
+    like it "worked once and then broke" — a one-credential wallet needed a single prompt.
+
+    This supersedes two earlier notes: that verification was blocked by an auth/profile gate,
+    and that a repeating prompt meant a key requiring BIOMETRIC_STRONG.
     """
     url = _native_deeplink(provider.get(credential_name))
 
@@ -137,24 +160,84 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         )
 
     # result == "request"
-    if wait_present(driver, _no_credentials_id, timeout=2):
+    # Visibility, not presence: the request screen may keep its empty-state panel in the
+    # hierarchy even when a document matches, and a presence check would then abort every
+    # verification with a false "no matching credentials".
+    if wait_visible(driver, _no_credentials_id, timeout=2):
         raise RuntimeError(
-            f"[verification_flow] No matching credentials for '{credential_name}' — "
-            "wallet has no credential to share with this verifier"
+            f"[verification_flow] No matching credentials for '{credential_name}' — the wallet "
+            "reports it holds nothing this verifier asked for. Check the credential's remaining "
+            "presentation instances: authbound issues a batch, and a credential showing "
+            "'0/1 instances remaining' cannot be presented again [no_retry]"
         )
 
-    logger.info("[verification_flow] Presentation request screen — sharing credentials")
-    VerificationRequestPage(driver, **page_args).share()
+    request_page = VerificationRequestPage(driver, **page_args)
 
-    # A post-share error dialog may appear (e.g. protocol/cert failure) — without this check
-    # the test would pass silently despite the failure.
-    if wait_present(driver, _error_id, timeout=5):
+    # The wallet presents every matching document and demands a separate device authentication
+    # for each, so budget the prompts from what it is actually about to share (+2 headroom: the
+    # first prompt precedes the per-document ones). Measured live 2026-08-12: 6 documents → 7
+    # authentications. This number grows with the wallet's contents.
+    documents = request_page.requested_document_count()
+    logger.info(
+        f"[verification_flow] Presentation request screen — sharing {documents} document(s); "
+        f"expect up to {documents + 2} authentication prompts"
+    )
+    request_page.share()
+
+    # Sharing requires device authentication, same as accepting an offer: either the SystemUI
+    # biometric sheet or Settings' ConfirmLockPassword, both taking the **device** PIN.
+    _time.sleep(2)
+    device_pin = page_args.get("device_pin", "")
+    try:
+        if authenticate_with_pin(driver, device_pin, detect_timeout=10):
+            logger.info("[verification_flow] Device authentication completed with PIN")
+        elif handle_biometric_if_present(driver):
+            logger.info("[verification_flow] Biometric prompt — fingerprint injected")
+    except Exception as exc:
+        # The PIN is often accepted and Android *then* opens the enrollment wizard, so this has
+        # to be checked on the failure path too — not only when auth never started.
+        if in_biometric_enrollment(driver):
+            raise RuntimeError(_ENROLLMENT_REQUIRED.format(what=credential_name)) from exc
+        raise
+
+    if in_biometric_enrollment(driver):
+        raise RuntimeError(_ENROLLMENT_REQUIRED.format(what=credential_name))
+
+    # Sharing ends on the wallet's success screen ("You successfully shared the following…"),
+    # the same screen issuance ends on — not on the dashboard. Waiting for home here reported
+    # a successful presentation as a failure.
+    outcome = wait_for_outcome(driver, _error_id, timeout=t, device_pin=device_pin,
+                               max_prompts=max(documents + 2, 4))
+
+    if outcome == "error":
         error_text = ErrorPage(driver, **page_args).get_error_text()
         logger.error(f"[verification_flow] Error screen after sharing: {error_text}")
         raise RuntimeError(
             f"[verification_flow] Verification failed after sharing '{credential_name}': {error_text}"
         )
 
-    logger.info("[verification_flow] Waiting for home screen after sharing")
+    if outcome == "prompt_loop":
+        raise RuntimeError(
+            f"[verification_flow] '{credential_name}' could not be shared: the wallet kept "
+            "re-requesting device authentication — every PIN was accepted and a fresh prompt "
+            "appeared immediately, with no success or error screen. This is what a signing "
+            "key that requires BIOMETRIC_STRONG looks like: the device-credential PIN "
+            "satisfies Android's prompt but does not unlock the key, so a real fingerprint "
+            "touch on the sensor may be the only thing that completes it [no_retry]"
+        )
+
+    if outcome != "success":
+        raise RuntimeError(
+            f"[verification_flow] '{credential_name}' was shared and authenticated, but neither "
+            f"the success nor the error screen appeared within {t}s"
+        )
+
+    success = DocumentSuccessPage(driver, **page_args)
+    shared = success.added_document_names()
+    logger.info(
+        f"[verification_flow] Credential '{credential_name}' shared successfully — presented: "
+        f"{shared or '(name not readable)'}"
+    )
+    # Close the success screen so the caller resumes on the dashboard.
+    success.close()
     HomePage(driver, **page_args).wait_until_loaded()
-    logger.info(f"[verification_flow] Credential '{credential_name}' shared successfully")
