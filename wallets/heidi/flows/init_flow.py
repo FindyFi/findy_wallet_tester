@@ -71,7 +71,11 @@ def _back_to_known_state(driver, package: str) -> str:
 
 def _activate_biometric(driver, page_args: dict, default_timeout: float = 10):
     """Tap 'ACTIVATE NOW', dismiss system dialogs, then verify success."""
-    screen_lock_pin = page_args.get("device_setup", {}).get("screen_lock_pin", "0000")
+    # The device's screen-lock PIN, from config `android.device_pin`. This used to read
+    # `device_setup.screen_lock_pin` with a "0000" fallback — but page_args only ever carries
+    # debug/timeouts/device_pin (see BaseTest.page_args), so that lookup always missed and the
+    # fallback was what got typed. Wrong PIN, silently, every run.
+    screen_lock_pin = page_args.get("device_pin", "")
 
     SecurityPage(driver, **page_args).activate_now()
 
