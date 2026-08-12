@@ -1,6 +1,7 @@
+import re
 import subprocess
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 import requests as _requests
 
@@ -62,6 +63,39 @@ def get_app_info(package_name: str, device_serial: str = "") -> dict:
     }
 
 
+def fingerprint_enrolled(device_serial: str = "") -> Optional[bool]:
+    """Return whether the device has at least one fingerprint enrolled.
+
+    Some wallets store credentials behind a biometric-backed key. When nothing is enrolled,
+    Android answers an app's authentication request by opening its *enrollment* wizard, which
+    needs a real finger on the sensor and so cannot be automated on a physical device — the
+    run has to stop and ask a human. Checking up front turns that into one clear message
+    instead of a failure several screens deep.
+
+    Reads ``adb shell dumpsys fingerprint``, whose JSON line carries one ``"count":N`` per
+    enrolled set.
+
+    Returns:
+        True/False when the count could be read, or **None** when it could not — no adb, no
+        fingerprint HAL on the device, or an unrecognised dump. None means "don't know", so
+        callers must not treat it as "not enrolled".
+    """
+    cmd = ["adb"]
+    if device_serial:
+        cmd += ["-s", device_serial]
+    cmd += ["shell", "dumpsys", "fingerprint"]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+
+    counts = re.findall(r'"count":\s*(\d+)', result.stdout)
+    if not counts:
+        return None
+    return any(int(c) > 0 for c in counts)
+
+
 def check_provider_reachable(base_url: str, timeout: float = 10) -> Tuple[bool, str]:
     """Return (True, "") if base_url responds with a non-5xx status, else (False, reason)."""
     try:
@@ -87,9 +121,23 @@ def sanitize_test_name(name: str) -> str:
 
 
 def wait_present(driver, locator, timeout: float = 2) -> bool:
-    """Return True if the element appears within timeout seconds."""
+    """Return True if the element appears in the hierarchy within timeout seconds.
+
+    Presence only — the element may be in the tree without being shown. Use `wait_visible`
+    when the element's *appearance* is the signal being tested (e.g. an empty-state panel that
+    a screen may keep in its hierarchy either way).
+    """
     try:
         WebDriverWait(driver, timeout).until(EC.presence_of_element_located(locator))
+        return True
+    except TimeoutException:
+        return False
+
+
+def wait_visible(driver, locator, timeout: float = 2) -> bool:
+    """Return True if the element is present **and displayed** within timeout seconds."""
+    try:
+        WebDriverWait(driver, timeout).until(EC.visibility_of_element_located(locator))
         return True
     except TimeoutException:
         return False

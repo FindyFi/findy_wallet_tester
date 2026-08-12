@@ -21,6 +21,7 @@ from enum import Enum
 from typing import Optional
 
 from appium.webdriver.common.appiumby import AppiumBy
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 
 from base.utils import wait_present
@@ -29,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 # Android system UI package that hosts the biometric prompt bottom-sheet.
 SYSTEMUI_PKG = "com.android.systemui"
+
+# Settings hosts the *other* shape of device-credential auth: a full-screen ConfirmLockPassword
+# ("Re-enter your PIN" / "Enter your device PIN to continue"). Apps get this instead of the
+# bottom sheet when they ask for device-credential authentication directly, or when a biometric
+# key needs re-confirmation. It takes the **device** PIN, not any app passcode.
+SETTINGS_PKG = "com.android.settings"
 
 # The biometric icon is present whenever the fingerprint/face prompt is on screen.
 BIOMETRIC_PROMPT = (AppiumBy.ID, "com.android.systemui:id/biometric_icon")
@@ -41,14 +48,22 @@ _AUTH_PROMPT = (AppiumBy.XPATH,
     '//*[@resource-id="com.android.systemui:id/biometric_icon"'
     ' or @resource-id="com.android.systemui:id/button_use_credential"'
     ' or @resource-id="com.android.systemui:id/lockPassword"'
-    ' or @resource-id="com.android.systemui:id/auth_credential_header"]'
+    ' or @resource-id="com.android.systemui:id/auth_credential_header"'
+    ' or @resource-id="com.android.settings:id/password_entry"]'
 )
 
-# "Use PIN" fallback on the fingerprint sheet (by text or by id), and the PIN entry field.
+# "Use PIN" fallback on the fingerprint sheet (by text or by id), and the PIN entry field —
+# `lockPassword` on the SystemUI sheet, `password_entry` on Settings' ConfirmLockPassword.
 _USE_PIN_BTN = (AppiumBy.XPATH,
     '//*[@text="Use PIN" or @resource-id="com.android.systemui:id/button_use_credential"]'
 )
-_LOCK_PASSWORD = (AppiumBy.ID, "com.android.systemui:id/lockPassword")
+_LOCK_PASSWORD = (AppiumBy.XPATH,
+    '//*[@resource-id="com.android.systemui:id/lockPassword"'
+    ' or @resource-id="com.android.settings:id/password_entry"]'
+)
+
+# "Cancel" on FingerprintEnrollIntroduction (alongside "Setup"); the buttons carry no ids.
+_ENROLL_CANCEL = (AppiumBy.XPATH, '//android.widget.Button[@text="Cancel"]')
 _KEYCODE_ENTER = 66
 
 # App crash: shown when an app throws an unhandled exception.
@@ -158,10 +173,74 @@ def authenticate_with_pin(driver, pin, detect_timeout=2, dismiss_timeout=10) -> 
     field.send_keys(str(pin))
     driver.press_keycode(_KEYCODE_ENTER)
 
-    WebDriverWait(driver, dismiss_timeout).until(
-        lambda d: d.current_package != SYSTEMUI_PKG
-    )
+    # Settings' ConfirmLockPassword is a full-screen activity, not a SystemUI sheet, so wait
+    # for either host to go away rather than just SystemUI.
+    try:
+        WebDriverWait(driver, dismiss_timeout).until(
+            lambda d: d.current_package not in (SYSTEMUI_PKG, SETTINGS_PKG)
+        )
+    except TimeoutException as exc:
+        # A bare timeout here says nothing; name the screen we're stuck on. The common cause
+        # is a correct PIN followed by Android's fingerprint *enrollment* wizard.
+        raise TimeoutException(
+            f"[android] PIN was accepted but the system auth UI did not close within "
+            f"{dismiss_timeout}s — still on {_current_screen(driver)}"
+            + (". Android is asking to enroll a fingerprint, which means none is enrolled on "
+               "this device; enrolling needs a real finger on the sensor."
+               if in_biometric_enrollment(driver) else "")
+        ) from exc
     return True
+
+
+def _current_screen(driver) -> str:
+    """"package/activity" for diagnostics, or "unknown" if the driver can't say."""
+    try:
+        return f"{driver.current_package}/{driver.current_activity}"
+    except WebDriverException:
+        return "unknown"
+
+
+def dismiss_biometric_enrollment(driver, timeout: float = 5) -> bool:
+    """Cancel Android's fingerprint-enrollment offer. Returns True if it was dismissed.
+
+    The wizard is an *upsell*: Android can push it after a successful device-credential
+    authentication, and the app's own operation may already have completed underneath it. So
+    cancelling and then checking the app's result is more accurate than treating the wizard's
+    appearance as failure.
+    """
+    if not in_biometric_enrollment(driver):
+        return False
+    logger.info("[android] Fingerprint enrollment offer — cancelling")
+    try:
+        driver.find_element(*_ENROLL_CANCEL).click()
+    except Exception as e:
+        logger.warning(f"[android] Could not cancel the enrollment offer: {e}")
+        return False
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: d.current_package != SETTINGS_PKG
+        )
+    except TimeoutException:
+        logger.warning("[android] Enrollment offer did not close after Cancel")
+        return False
+    return True
+
+
+def in_biometric_enrollment(driver) -> bool:
+    """True if Android opened the fingerprint *enrollment* wizard rather than an auth prompt.
+
+    Being in Settings is not enough to conclude that: ConfirmLockPassword ("Re-enter your
+    PIN") is also a Settings activity, and that one is ordinary device-credential auth which
+    ``authenticate_with_pin`` satisfies. Only enrollment genuinely can't be automated, since
+    it needs a real finger on the sensor — so wallets should report it as a device-setup gap
+    rather than a test failure.
+    """
+    try:
+        if driver.current_package != SETTINGS_PKG:
+            return False
+        return "FingerprintEnroll" in (driver.current_activity or "")
+    except WebDriverException:
+        return False
 
 
 def handle_anr_if_present(driver) -> bool:

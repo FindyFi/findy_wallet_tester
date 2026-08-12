@@ -82,7 +82,7 @@ class BaseTest:
             # "up to date" would be a guess and applying an update would be unverifiable.
             logger.warning(
                 f"[update] Cannot read the installed versionCode for {app_package} via adb "
-                f"(device '{self._device_serial() or 'default'}') — skipping the update check."
+                f"(device '{self.device_serial() or 'default'}') — skipping the update check."
             )
             result["update_skipped"] = "versionCode unavailable"
             return result
@@ -221,9 +221,9 @@ class BaseTest:
 
     def _version_code(self, app_package: str) -> str:
         """Installed versionCode via adb, or "unknown" if it can't be read."""
-        return get_app_info(app_package, self._device_serial())["version_code"]
+        return get_app_info(app_package, self.device_serial())["version_code"]
 
-    def _device_serial(self) -> str:
+    def device_serial(self) -> str:
         """ADB serial for adb-based helpers; empty string targets the only device.
 
         ``udid`` first: device.json allows a device_name that is a friendly label with the
