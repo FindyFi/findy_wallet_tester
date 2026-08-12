@@ -35,8 +35,13 @@ def _resolve_did_method(app, request):
     return configured[0] if isinstance(configured, list) else configured
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(items):
     """Order gataca tests: setup tests first, credential tests grouped by did_method, reset last.
+
+    `trylast` so this runs *after* the root conftest's lifecycle ordering: DID grouping has to be
+    the outer grouping (switching DID is the expensive part), with install/onboarding/issuance/
+    verification order preserved inside each group by the stable sort.
 
     Switching the active DID is slow (Settings → select alias → PIN → home), so every test for one
     method should run consecutively. The credential-reset test (@pytest.mark.gataca_cleanup) is
