@@ -2,14 +2,14 @@
     "server": "http://localhost:4723",
     "android": {
         "platform_name": "Android",
-        "device_name": "emulator-5554",
+        "device_name": "${HEIDI_DEVICE_NAME}",
         "automation_name": "UiAutomator2",
-        "device_pin": "123456"
+        "device_pin": "${HEIDI_DEVICE_PIN}"
     },
     "application": {
         "package": "ch.ubique.heidi.android",
         "activity": ".MainActivity",
-        "pin": "123456"
+        "pin": "${HEIDI_APP_PIN}"
     },
     "timeouts": {
         "default": 10,
@@ -22,10 +22,6 @@
     },
     "onboarding": {
         "skip_if_done": true
-    },
-    "device_setup": {
-        "fingerprint": true,
-        "screen_lock_pin": "0000"
     },
     "test_cases": {
         "authbound_issuer": {
