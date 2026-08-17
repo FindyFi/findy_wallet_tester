@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 import pytest
@@ -202,10 +203,45 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
         logcat_file.close()
 
 
+_ENV_PLACEHOLDER = re.compile(r"\$\{(\w+)\}")
+
+
+def _expand_env(value, missing: list, where: str = ""):
+    """Substitute ${VAR} from the environment throughout a config structure.
+
+    Any string value in any config file can reference an environment variable, so
+    machine-specific settings (device serials, PINs) live in the gitignored `.env` instead of in
+    committed JSON. Variables that are not set are collected in `missing` rather than left as a
+    literal "${VAR}" — that used to surface as a device named "${DEVICE_NAME}" and an Appium
+    error three steps later.
+    """
+    if isinstance(value, dict):
+        return {k: _expand_env(v, missing, f"{where}.{k}" if where else k)
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v, missing, f"{where}[{i}]") for i, v in enumerate(value)]
+    if isinstance(value, str):
+        expanded = os.path.expandvars(value)
+        for name in _ENV_PLACEHOLDER.findall(expanded):
+            missing.append(f"{name} (used by {where})")
+        return expanded
+    return value
+
+
 def load_config(wallet_name):
     device = json.loads((Path("config") / "device.json").read_text())
     wallet = json.loads((Path("wallets") / wallet_name / "config.json").read_text())
-    return {**device, **wallet}
+    merged = {**device, **wallet}
+
+    missing = []
+    merged = _expand_env(merged, missing)
+    if missing:
+        raise pytest.UsageError(
+            f"Unset environment variable(s) referenced by the {wallet_name} config:\n  "
+            + "\n  ".join(sorted(set(missing)))
+            + "\nSet them in the project's .env file (see env.example) or export them."
+        )
+    return merged
 
 
 def _resolve_device(config: dict, worker_id: str) -> dict:
@@ -247,14 +283,18 @@ def _resolve_device(config: dict, worker_id: str) -> dict:
 
 
 def _validate_device(device: dict) -> None:
-    """Fail fast if device.json hasn't been configured for this machine."""
-    name = device.get("device_name")
-    if not name or name == "<change_this>":
+    """Fail fast if device.json hasn't been configured for this machine.
+
+    Rejects any leftover placeholder, not just one hard-coded sentinel: an unfilled
+    "<device_name>" used to pass this check and then die inside Appium several steps later.
+    """
+    name = device.get("device_name") or ""
+    if not name or (name.startswith("<") and name.endswith(">")) or "${" in name:
         raise pytest.UsageError(
             "config/device.json: 'android.device_name' is not set "
-            f"(got {name!r}). Set it to the ADB serial of the device/emulator "
-            "to use — run `adb devices` to list available serials "
-            "(e.g. 'emulator-5554')."
+            f"(got {name!r}). Set DEVICE_NAME in the project's .env (see env.example) to the "
+            "ADB serial of the device/emulator to use — run `adb devices` to list available "
+            "serials (e.g. 'emulator-5554')."
         )
 
 
