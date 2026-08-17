@@ -38,10 +38,11 @@ def test_credential_issuance(app, issuer_name, test_case):
     app_package = app.config["application"]["package"]
 
     home = HomePage(app.driver, **app.page_args)
-    # authbound cannot report a credential count yet (no document-card locator). An unreadable
-    # count says nothing about whether the credential arrived, so warn and carry on rather than
-    # failing the issuance test on it. This handling belongs in the shared assertion helper once
-    # that exists — every wallet needs the same three lines.
+    # authbound counts from the Wallet tab's own header total ("Wallet · 2"), verified live on
+    # ZT322L348J 2026-08-13. An unreadable count still says nothing about whether the credential
+    # arrived (see base/credential_count.py), so it warns and skips the check rather than failing
+    # the issuance test on it — but a count that IS readable is asserted below. This handling
+    # belongs in the shared assertion helper once that exists — every wallet needs the same lines.
     try:
         count_before = home.count_credentials()
     except CredentialCountUnavailable as e:
@@ -66,12 +67,20 @@ def test_credential_issuance(app, issuer_name, test_case):
         logger.warning(f"[test] Credential count after issuance is unavailable: {e}")
 
     if count_before is None or count_after is None:
-        logger.info(
-            f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
-            "(wallet count unavailable — no count evidence for this run)"
+        logger.warning(
+            f"[test] Credential '{test_case}' from '{issuer_name}': the flow reported success but "
+            "the wallet count could not be read — no count evidence for this run"
         )
-    else:
-        logger.info(
-            f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
-            f"(wallet: {count_before} → {count_after}, +{count_after - count_before})"
-        )
+        return
+
+    logger.info(
+        f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
+        f"(wallet: {count_before} → {count_after}, +{count_after - count_before})"
+    )
+    # The wallet's own total is the only wallet-independent evidence the credential landed: the
+    # flow reaching its success screen only proves the wallet said so. Without this, a silent
+    # no-op issuance passes.
+    assert count_after > count_before, (
+        f"Credential '{test_case}' from '{issuer_name}' did not reach the wallet: the document "
+        f"count stayed at {count_after}"
+    )

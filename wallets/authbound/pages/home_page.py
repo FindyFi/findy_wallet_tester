@@ -16,8 +16,19 @@ logger = logging.getLogger(__name__)
 SCREEN_ID = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_screen_root")
 
 # Bottom-nav tabs. Counting goes to Wallet and must come back to Home.
-_WALLET_TAB = (AppiumBy.ID, "dashboard_screen_bottom_navigation_item_wallet")
-_HOME_TAB = (AppiumBy.ID, "dashboard_screen_bottom_navigation_item_home")
+#
+# These MUST be XPath, not AppiumBy.ID — do not "simplify" them back. The tabs are Compose
+# `testTag`s, so they appear in the tree as a BARE resource-id ("dashboard_screen_bottom_
+# navigation_item_wallet") with no "<package>:id/" part, unlike every other locator in this
+# wallet. Appium's `id` strategy only matches the qualified form (a bare value is looked up as
+# `[^:]+:id/<name>$`), so it can never resolve a bare tag: the 2026-08-12 run shows the
+# uiautomator2 server answering `no such element` on every retry for 10 s, which BasePage.click
+# then reports as the misleading "not clickable after 10s". Verified live 2026-08-13 — the nodes
+# are present with clickable=true, enabled=true.
+_WALLET_TAB = (AppiumBy.XPATH,
+               '//*[@resource-id="dashboard_screen_bottom_navigation_item_wallet"]')
+_HOME_TAB = (AppiumBy.XPATH,
+             '//*[@resource-id="dashboard_screen_bottom_navigation_item_home"]')
 _DOCUMENTS_ROOT = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_documents_screen_root")
 
 # Empty state of the documents screen, captured live 2026-08-05: "YOUR DOCUMENTS" above
@@ -28,6 +39,12 @@ _DOCUMENTS_EMPTY = (AppiumBy.XPATH, '//*[@text="Your wallet is empty"]')
 # reading "· 3" (U+00B7, space, digits). Captured live 2026-08-05 with one document present;
 # an empty wallet omits the label entirely. Preferred over counting cards: it is the wallet's
 # own number, so it can't be truncated by what happens to be rendered.
+#
+# Re-verified live 2026-08-13 with two credentials (read "· 2"): "Wallet" and "· 2" are adjacent
+# sibling TextViews under one parent with nothing between them, so following-sibling[1] is exact.
+# The label sits in the app bar, above the screen's Documents/Actions/Health sub-tabs. The cards
+# themselves are android.view.View with NO resource-id inside a scrolling list — which is why
+# counting them was never a workable alternative.
 _DOCUMENT_COUNT = (AppiumBy.XPATH,
     '//android.widget.TextView[@text="Wallet"]'
     '/following-sibling::android.widget.TextView[1]'
