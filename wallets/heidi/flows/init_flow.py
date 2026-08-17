@@ -96,7 +96,12 @@ def _activate_biometric(driver, page_args: dict, default_timeout: float = 10):
     if wait_present(driver, _activation_failed_id, timeout=3):
         raise RuntimeError(
             "Heidi biometric activation failed — the emulator/device has no fingerprint enrolled.\n"
-            "  Run tests once to auto-enroll, or check device_setup.fingerprint in config.json."
+            "  Nothing in this suite enrolls one, and re-running will not help: `mobile: fingerprint`\n"
+            "  only simulates a touch on a print that is already enrolled. Enroll it by hand:\n"
+            "    Settings > Security > Fingerprint (set a screen lock first), and answer the\n"
+            "    sensor prompt with `adb emu finger touch 1` on an emulator (see the README) or a\n"
+            "    real finger on a phone.\n"
+            "  Confirm with: adb -s <serial> shell dumpsys fingerprint   # \"count\":0 means none"
         )
 
 
