@@ -1,6 +1,6 @@
 import logging
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 
 logger = logging.getLogger(__name__)
@@ -28,14 +28,34 @@ class BasePage:
         except TimeoutException:
             raise Exception(f"Element {locator} not found")
 
-    def click(self, locator, timeout=None):
+    def click(self, locator, timeout=None, attempts=3):
+        """Wait for the element to be clickable, then tap it — retrying if it goes stale.
+
+        `element_to_be_clickable` re-finds the element on every poll, but it can still be replaced
+        in the moment between the wait handing it back and the tap landing. That is routine on
+        Compose screens that are still animating (a bottom sheet sliding in, a carousel
+        recomposing after a tab switch), and it surfaced as `stale element reference` aborting
+        authbound's first cleanup run on 2026-08-17. Re-locate and try again rather than failing:
+        a stale reference means the screen moved, not that the element is gone.
+        """
         t = timeout if timeout is not None else self._get_timeout("default")
-        try:
-            WebDriverWait(self.driver, t).until(
-                EC.element_to_be_clickable(locator)
-            ).click()
-        except TimeoutException:
-            raise Exception(f"Element {locator} not clickable after {t}s")
+        for attempt in range(1, attempts + 1):
+            try:
+                WebDriverWait(self.driver, t).until(
+                    EC.element_to_be_clickable(locator)
+                ).click()
+                return
+            except TimeoutException:
+                raise Exception(f"Element {locator} not clickable after {t}s")
+            except StaleElementReferenceException:
+                logger.info(
+                    f"[page] {locator} went stale before the tap "
+                    f"(attempt {attempt}/{attempts}) — re-locating"
+                )
+
+        raise Exception(
+            f"Element {locator} kept going stale — gave up after {attempts} attempts"
+        )
 
     def swipe_up(self):
         """Swipe upward to reveal content below the fold (75% → 25% of screen height)."""
