@@ -16,6 +16,7 @@
     "onboarding": {
         "skip_if_done": true
     },
+    "requires_fingerprint": true,
     "test_cases": {
         "authbound_issuer": {
             "type": "authbound",

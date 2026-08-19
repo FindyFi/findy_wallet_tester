@@ -16,26 +16,8 @@ _NO_FINGERPRINT = (
     "  Enroll one by hand (Settings > Security > Fingerprint), then confirm with:\n"
     "      adb -s {device} shell dumpsys fingerprint    # \"count\":0 means none\n"
     "  Note: changing the device lock PIN wipes existing enrollments.\n"
-    "  Set device_setup.fingerprint to false in wallets/authbound/config.json to skip this check."
+    "  Set requires_fingerprint to false in wallets/authbound/config.json to skip this check."
 )
-
-
-def pytest_sessionfinish(session, exitstatus):  # exitstatus required by the hookspec
-    """Log the fingerprint enrollment state once more, after every driver has quit.
-
-    Brackets the whole session together with the per-test check below. If enrollment is present
-    on the last test but gone here, whatever removes it happens in teardown (driver.quit, app
-    close, recents clearing) rather than during a test — which is the one window the per-test
-    check can't see.
-    """
-    serial = getattr(session.config, "_fingerprint_serial", None)
-    if serial is None:
-        return
-    final = fingerprint_enrolled(serial)
-    logger.warning(
-        f"[device_setup] Fingerprint enrollment at session end: {final} "
-        f"(was {getattr(session.config, '_fingerprint_checked', None)} at the last test)"
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -44,19 +26,30 @@ def _require_fingerprint(app, request):
 
     Checked once per session (one adb call), before any credential flow gets far enough to
     walk into Android's enrollment wizard. Skipped entirely unless the wallet's config asks
-    for it via `device_setup.fingerprint`, and skipped when the check can't tell (no adb, or
-    a device without a fingerprint sensor) so it never blocks on a guess.
+    for it via `requires_fingerprint`, and skipped when the check can't tell (no adb, or a
+    device without a fingerprint sensor) so it never blocks on a guess.
+
+    The config key is `requires_fingerprint`, not `device_setup.*`: nothing in this suite ever
+    *sets up* a fingerprint. Enrollment needs a real finger on the sensor (or, on an emulator,
+    `adb emu finger touch 1` answering the enrollment wizard by hand — see the README), and
+    `mobile: fingerprint` only simulates a touch on a print that is already enrolled. This
+    fixture asserts a precondition and nothing more.
+
+    A precondition only. This used to also re-read the state after every test and again at
+    session end, because enrollments were seen disappearing mid-run — that turned out to be
+    Appium's default `locksettings` unlock strategy running `locksettings clear --old <pin>`,
+    which wipes every enrolled fingerprint. The root conftest pins `unlockStrategy` to
+    `uiautomator` (see the driver capabilities there), so nothing in the suite clears the lock
+    credential any more and the monitoring was only logging a warning on healthy runs.
     """
-    if not app.config.get("device_setup", {}).get("fingerprint", False):
-        yield
+    if not app.config.get("requires_fingerprint", False):
         return
     if getattr(request.config, "_fingerprint_checked", None) is None:
         serial = app.device_serial()
-        request.config._fingerprint_serial = serial
         request.config._fingerprint_checked = fingerprint_enrolled(serial)
         if request.config._fingerprint_checked is None:
             logger.warning(
-                "[device_setup] Could not read fingerprint enrollment state — continuing"
+                "[fingerprint] Could not read enrollment state — continuing"
             )
         elif not request.config._fingerprint_checked:
             request.config._fingerprint_reason = _NO_FINGERPRINT.format(
@@ -64,20 +57,6 @@ def _require_fingerprint(app, request):
 
     if request.config._fingerprint_checked is False:
         pytest.fail(request.config._fingerprint_reason, pytrace=False)
-
-    yield
-
-    # The enrollment has been observed vanishing mid-session, and nothing in this suite can
-    # delete one (the only biometric call is `mobile: fingerprint`, an emulator-only
-    # simulation). Re-read it after each test and log the transition, so a run pinpoints which
-    # test it disappears on instead of leaving us to guess.
-    still = fingerprint_enrolled(app.device_serial())
-    if still is not request.config._fingerprint_checked:
-        logger.warning(
-            f"[device_setup] Fingerprint enrollment changed during "
-            f"{request.node.name}: {request.config._fingerprint_checked} -> {still}"
-        )
-        request.config._fingerprint_checked = still
 
 
 @pytest.fixture(autouse=True)

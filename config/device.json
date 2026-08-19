@@ -2,9 +2,9 @@
     "server": "http://localhost:4723",
     "android": {
         "platform_name": "Android",
-        "device_name": "<device_name>",
+        "device_name": "${DEVICE_NAME}",
         "automation_name": "UiAutomator2",
-        "device_pin": "<device_pin>"
+        "device_pin": "${DEVICE_PIN}"
     },
     "recording": {
         "enabled": true
