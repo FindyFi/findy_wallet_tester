@@ -35,6 +35,18 @@ _DOCUMENTS_ROOT = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_documents_scre
 # "Your wallet is empty" / "Add your first document to get started".
 _DOCUMENTS_EMPTY = (AppiumBy.XPATH, '//*[@text="Your wallet is empty"]')
 
+# The dashboard's credential carousel — one card at a time, with a "Page <n> of <m>" indicator
+# under it. Verified live 2026-08-17: the carousel is the ONLY `android.view.View` with
+# scrollable="true" on this screen (the outer scroller is an `android.widget.ScrollView`, a
+# different class), and it holds exactly one clickable descendant — the front card. Confirmed
+# stable at both 4 and 3 credentials.
+#
+# The cards carry no resource-id and no stable text, so this structural anchor is what there is;
+# the documents list on the Wallet tab is worse, having been seen render its cards outside the
+# accessibility tree entirely. Tapping the card opens the document details screen.
+_CAROUSEL_CARD = (AppiumBy.XPATH,
+                  '//android.view.View[@scrollable="true"]//*[@clickable="true"]')
+
 # The wallet reports its own total next to the "Wallet" header title — a sibling TextView
 # reading "· 3" (U+00B7, space, digits). Captured live 2026-08-05 with one document present;
 # an empty wallet omits the label entirely. Preferred over counting cards: it is the wallet's
@@ -59,6 +71,33 @@ class HomePage(BasePage):
             )
         except TimeoutException:
             raise RuntimeError("Home screen did not load within timeout")
+
+    def open_credential(self) -> bool:
+        """Open the credential currently at the front of the dashboard carousel.
+
+        Returns False only when the dashboard still presents no card after waiting for one, so a
+        caller can stop looping. Deleting a credential returns to the dashboard with the next one
+        at the front, which makes "open the front card, delete, repeat" a complete traversal — no
+        indexing into a list that shifts underneath us.
+
+        Must be called on the Home tab; `count_credentials()` leaves the app there.
+
+        **Waits for the card rather than sampling for it.** Callers arrive straight out of
+        `count_credentials()`, which returns from the Wallet tab via the Home tab, and the
+        dashboard has not composed yet at that moment. A bare `find_elements` reports "no
+        credentials" for a wallet that still holds several — which is what stopped the 2026-08-17
+        cleanup three deletions in, with the count still reading 2. The deletions before it only
+        worked by luck: each lost its first tap to a stale reference, and that retry's short sleep
+        was what gave the dashboard time to appear.
+
+        `BasePage.click` re-locates and retries on staleness, which covers the recomposition that
+        follows the tab switch — so the card must not be cached here.
+        """
+        if not wait_present(self.driver, _CAROUSEL_CARD,
+                            timeout=self._get_timeout("default")):
+            return False
+        self.click(_CAROUSEL_CARD)
+        return True
 
     def count_credentials(self) -> int:
         """Return the number of documents in the wallet.
