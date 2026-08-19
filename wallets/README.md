@@ -41,7 +41,7 @@ become uniform.
 ## Capability matrix
 
 What the test suite can actually **do** with each wallet today. Every ❌/⚠️ is either a gap to close or
-a difference to justify. Status as of 2026-08-03, branch `update/unification`.
+a difference to justify. Status as of 2026-08-17, branch `main`.
 
 **Legend**
 
@@ -64,13 +64,13 @@ a difference to justify. Status as of 2026-08-03, branch `update/unification`.
 | Open / unlock returning wallet        |    ✅     |   ✅   |  ✅   |  –   |   ✅    |    ✅    |   –    |  ✅   |
 | Reset wallet (wipe + re-onboard)      |    ⚠️      |   ⚠️    |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | **Credentials**                       |           |        |       |      |         |          |        |       |
-| Issue credential (deeplink -> accept) |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Verify credential (deeplink -> share) |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Count credentials                     |    ⚠️      |   ✅   |  ✅   |  ✅  |   ✅    |    ❌    |   ✅   |  ✅   |
-| **Assert** the count changed          |    ⚠️      |   ✅   |  ⚠️    |  ⚠️   |   ⚠️     |    ❌    |   ✅   |  ✅   |
-| Open / review a credential's detail   |    ❌     |   ✅   |  ⚠️    |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
-| Delete a single credential            |    ❌     |   ✅   |  ❌   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
-| Wipe all credentials (post-suite)     |    ❌     |   ✅   |  ❌   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
+| Issue credential (deeplink -> accept) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
+| Verify credential (deeplink -> share) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
+| Count credentials                     |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ❌    |   ✅   |  ✅   |
+| **Assert** the count changed          |    ✅     |   ⚠️    |  ⚠️    |  ⚠️   |   ⚠️     |    ❌    |   ✅   |  ✅   |
+| Open / review a credential's detail   |    ⚠️      |   ✅   |  ⚠️    |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
+| Delete a single credential            |    ⚠️      |   ✅   |  ❌   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
+| Wipe all credentials (post-suite)     |    ⚠️      |   ✅   |  ❌   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
 | **Support**                           |           |        |       |      |         |          |        |       |
 | Detect app error screens              |    ✅     |   ✅   |  ✅   |  ❌  |   ✅    |    ✅    |   ✅   |  ❌   |
 | Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
@@ -116,7 +116,7 @@ sequence. authbound and gataca deliberately raise: both need server-side registr
 email/registration; gataca: email) that isn't automated, so tests assume an already-registered
 wallet. toppan has no onboarding at all.
 
-**Open / unlock returning wallet** — six different mechanisms: app passcode (authbound), device PIN via
+**Open / unlock returning wallet** — five different mechanisms: app passcode (authbound), device PIN via
 the system biometric prompt (gataca), biometric only (heidi), app PIN (paradym, procivis), password
 (unime). hovi and toppan have no lock to open.
 
@@ -125,24 +125,36 @@ per session by `conftest_helpers.navigate_to_home` when `onboarding.skip_if_done
 and gataca are ⚠️: they clear the data and then raise, because they can't re-onboard — so using
 `skip_if_done=false` on those two leaves the wallet unusable until someone registers it by hand.
 
-**Issue / verify credential** — every wallet has both flows. authbound is ⚠️ on both, for two
-different reasons:
+**Issue / verify credential** — every wallet has both flows, and all eight now complete both for at
+least one counterparty. authbound was the last ⚠️ and closed on 2026-08-13:
 
-- *Issuance* reaches a real consent screen (ISSUANCE REQUEST → "Add"), and its locators were captured
-  live on 2026-08-05, so the flow recognises and accepts the offer. It cannot finish: storing the
-  credential needs a biometric, and on a device with **none enrolled** Android opens its enrollment
-  wizard instead of an auth prompt — which needs a real finger on the sensor, so no test can pass it.
-  The flow detects that detour and says so. Enrolling a fingerprint once unblocks it; the expected
-  path afterwards is a normal biometric prompt, which `base/android.py` handles.
-  (This supersedes the older diagnosis of an auth/profile gate rejecting offers before any consent
-  screen — that gate is gone.)
-- *Verification* still holds `TODO:` locators in `verification_request_page.py`: the Findy pension
-  verifiers are rejected at the OpenID4VP protocol layer, so the share screen has never rendered.
+- *Issuance* runs end to end against `authbound_issuer`: consent screen (ISSUANCE REQUEST → "Add"),
+  device authentication, success screen, and the wallet's own total goes up. The old blocker was a
+  device with no fingerprint enrolled, which makes Android open its *enrollment* wizard instead of an
+  auth prompt. Once one is enrolled the prompt carries a **PIN fallback**, which `base/android.py`
+  answers — no fingerprint is ever simulated on a physical device. `requires_fingerprint: true` in the
+  wallet's config asserts that precondition and fails fast with instructions if it goes missing.
+  (This supersedes two earlier diagnoses — an auth/profile gate rejecting offers, and enrollment being
+  unautomatable. Both are resolved.)
+- *Verification* runs end to end against `authbound_verifier`: request screen, share, and a complete
+  `request.jwt` → `direct_post` round trip. `verification_request_page.py` holds real captured
+  locators; its `TODO:` placeholders are gone.
+
+The wallet demands roughly **one authentication per document it presents** — seven for six documents,
+measured 2026-08-12 — so `document_success_page.wait_for_outcome()` answers repeat prompts up to a cap
+instead of assuming a single one. That page is shared by both flows: the same success screen and ids
+serve issuance and presentation, only the header copy differs.
+
+The other counterparties fail, and these are *results*, not defects: waltid returns 404 for the
+spec-required `.well-known/openid-credential-issuer/<path>` metadata, while hovi, procivis, sphereon and
+paradym serve valid metadata and offers that the wallet then rejects internally
+(`issueDocumentsFromOffer failure`). Both are readable straight from `app.log`, which carries the
+wallet's full HTTP traffic under the logcat tag `EUDI Wallet PROD-RELEASE`.
 
 **Count credentials** — the mechanism is per-wallet and stays that way: gataca, hovi and unime count
-card elements (with locators that have nothing in common), heidi and paradym parse a count label,
-toppan counts the card containers in its WebView list. Only heidi navigates — to a list screen and
-back.
+card elements (with locators that have nothing in common), heidi, paradym and authbound parse a count
+label, toppan counts the card containers in its WebView list. heidi and authbound navigate to get it —
+to a list screen and the Wallet tab respectively — and both return to where they started.
 
 One lesson worth carrying to the other card-counting wallets: **count containers, never text inside
 them.** Toppan counted an "Issued on" line per card until 2026-08-05, when a saved page dump showed 14
@@ -154,32 +166,58 @@ number or raises `CredentialCountUnavailable`, verifies its screen before believ
 leaves the app where it found it. No wallet returns a silent 0 any more, so "wallet is empty" and
 "my locator broke" are finally different answers.
 
-The two incomplete ones are blocked on the same missing piece — a per-credential locator, which can
-only be read off a device that actually holds a credential:
+**authbound** ✅ since 2026-08-13 — it switches to the Wallet tab and back (the second wallet after
+heidi where counting is a navigation step) and reads the wallet's *own* header total, "Wallet · 4",
+rather than counting cards: its document cards are `android.view.View` with no resource-id inside a
+scrolling list, so the header is both simpler and immune to the truncation described above. An empty
+wallet omits that label and says "Your wallet is empty", which is a real 0.
 
-- **authbound** ⚠️ — reaches its documents screen and reports a real `0` when it says "Your wallet is
-  empty", but cannot count a populated list. Its wallet has never held a credential (see *Issue
-  credential* above), so there has been nothing to capture the card locator from. Counting switches to
-  the Wallet tab and back, making it the second wallet after heidi where counting is a navigation step.
-- **procivis** ❌ — no credential-list locator at all; its `HomePage` only knows `wait_until_loaded()`.
-  It does issue credentials successfully, so this one is capturable as soon as someone dumps
-  `WalletScreen` with a credential present.
+**procivis** ❌ is the only wallet left with no counting at all — no credential-list locator, its
+`HomePage` only knows `wait_until_loaded()`. It does issue credentials successfully, so this is
+capturable as soon as someone dumps `WalletScreen` with a credential present.
 
-Neither reports a fabricated 0 any more.
+A second locator lesson, from the authbound fix: **a resource-id you can see in a dump is not
+necessarily findable via `AppiumBy.ID`.** Appium's `id` strategy only matches the qualified
+`pkg:id/name` form, so bare Compose `testTag`s — which is what authbound's bottom-nav tabs are — resolve
+only via XPath on `@resource-id`. authbound's counting logic was correct for months but never ran,
+because that first tab click never resolved and `BasePage.click` reports every timeout as "not
+clickable", which reads like an overlay or timing problem. When a locator times out, grep the run's
+`appium.log`: `no such element` on every retry means not-found, not un-clickable.
 
-**Assert the count changed** — the actual pass criterion, and it is inconsistent. gataca, toppan and
-unime hard-assert an increase. authbound, heidi, hovi and paradym compute `count_before`/`count_after`
-and only **log** the delta — so a no-op issuance passes. procivis asserts nothing at all.
+**Assert the count changed** — the actual pass criterion, and still the most inconsistent thing here.
+Measured 2026-08-17: **authbound, toppan and unime** hard-assert an increase. **gataca, heidi, hovi and
+paradym** compute `count_before`/`count_after` and only **log** the delta, so a no-op issuance passes.
+**procivis** asserts nothing at all. Re-measure with
+`grep -l "assert count_after" wallets/*/tests/test_credential_issuance.py` rather than trusting this
+line — it was wrong before (gataca was listed as asserting, and does not).
 
-**Open / review a credential's detail** — the "check credential" capability. Only gataca has it
-(`CredentialDetailPage`, heading "Credential details"). heidi is ⚠️: it navigates to the credential
-*list* screen to read a count label and immediately backs out — no detail view, no field inspection.
-Nobody can currently assert *what* was issued (claims, issuer, validity), only *how many*.
+**Open / review a credential's detail** — the "check credential" capability. Only gataca has it in
+full (`CredentialDetailPage`, heading "Credential details"). heidi is ⚠️: it navigates to the
+credential *list* to read a count label and immediately backs out. authbound is ⚠️ for the opposite
+reason — its detail screen is reachable and captured (see below) and does expose the raw claims
+(`exp`, `iat`, `jti`, `nbf`, `sub`, expandable Pension/Person groups, ISSUER), but the page object
+only uses it to delete; nothing reads a field. So still no wallet can assert *what* was issued
+(claims, issuer, validity), only *how many*.
 
-**Delete a single credential / wipe all** — gataca only: detail → trash → "Yes, delete" → system
-biometric, wrapped by `cleanup_flow.prune_credentials()` and `tests/test_cleanup.py`, forced to run
-last. Every other wallet accumulates credentials across runs forever, which inflates counts and
-changes what verifiers match against.
+**Delete a single credential / wipe all** — gataca, plus authbound as of 2026-08-17 (⚠️ — written and
+its locators captured live, but not yet exercised by a run; flip to ✅ after one).
+
+- **gataca**: detail → trash → "Yes, delete" → system biometric, and it must preserve the
+  self-attested device credential.
+- **authbound**: Home dashboard → tap the front **carousel** card → document details →
+  `document_details_screen_delete_button` → `…dialogue_delete_document_positive_button`, then
+  straight back to the dashboard. Two differences worth knowing: it needs **no authentication at
+  all** (confirming is enough — waiting for a biometric or PIN prompt would just time out), and it
+  has **no protected credential**, so a target of 0 really does empty the wallet. It deletes the
+  front carousel card and re-reads, rather than indexing a list that shifts underneath it — the
+  documents list on the Wallet tab has been seen rendering its cards outside the accessibility tree
+  entirely, while the carousel card is reliably the single clickable descendant of the only nested
+  scrollable on the screen. `cleanup.max_credentials` in the wallet config sets how many to keep.
+
+Both are wrapped by `flows/cleanup_flow.prune_credentials()` and `tests/test_cleanup.py`, which the
+root conftest's `_MODULE_ORDER` already sorts last for every wallet — no marker needed (gataca has one
+only because its DID grouping would otherwise reorder the suite). The other six wallets accumulate
+credentials across runs forever, which inflates counts and changes what verifiers match against.
 
 **Detect app error screens** — implemented for six wallets, in varying depth: paradym and toppan run
 staged `check_for_error()` between every step (plus crash/ANR overlay detection and `[no_retry]`
@@ -219,14 +257,16 @@ Provided by the root `conftest.py`, `base/conftest_helpers.py` and `base/android
 
 ## Gaps, in the order they cost us most
 
-1. **Counting: procivis has none, authbound returns a hard-coded 0.** Until these exist, "did the
-   credential arrive?" is unanswerable for two wallets.
-2. **Assertion strength: 4 log-only + 1 nothing.** Unifying this will turn currently-green cases red.
-   That's the point — those greens are not evidence of anything today.
+1. **Assertion strength: 4 log-only (gataca, heidi, hovi, paradym) + 1 nothing (procivis).** Five of
+   eight wallets pass an issuance test with no evidence a credential landed. Unifying this will turn
+   currently-green cases red. That's the point — those greens are not evidence of anything today.
+2. **Counting: procivis has none.** Until it exists, "did the credential arrive?" is unanswerable
+   there. authbound closed this on 2026-08-13.
 3. **Reviewing a credential — only gataca.** No wallet except gataca can check *what* landed. If the
    unified scenario is to assert on issued content (claims/issuer), this needs a detail page per wallet.
-4. **Delete / cleanup — only gataca.** Without it, wallet state drifts monotonically across runs, and
-   verification results depend on accumulated history rather than the credential just issued.
+4. **Delete / cleanup — gataca and authbound (the latter pending its first run).** For the other six,
+   wallet state drifts monotonically across runs, and verification results depend on accumulated
+   history rather than the credential just issued.
 5. **Error detection missing in unime and hovi.** Both fail as timeouts with no diagnostic, so triage
    means watching the recording.
 6. **Onboarding blocked for authbound and gataca** (server-side registration). Not a code gap — tracked
