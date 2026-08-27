@@ -5,6 +5,7 @@ import pytest
 from pathlib import Path
 
 from providers.factory import get_provider
+from wallets.hovi.flows import outcome
 from wallets.hovi.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
@@ -55,4 +56,14 @@ def test_credential_issuance(app, issuer_name, test_case):
     logger.info(
         f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
         f"(wallet: {count_before} → {count_after}, +{added})"
+    )
+    # The card count is the only evidence the credential landed; reaching the home screen only
+    # proves the flow did not crash. The count was probed before this assertion was added
+    # (2026-08-19): the locator matched exactly the cards present and did not grow when the list
+    # was scrolled, so a flat count means nothing arrived, not that counting saturated.
+    #
+    # Tagged so the report can tell "accepted but not stored" from "never saw the offer".
+    assert count_after > count_before, (
+        f"[{outcome.NOT_STORED}] Credential '{test_case}' from '{issuer_name}' did not reach the "
+        f"wallet: hovi accepted the offer but the card count stayed at {count_after}"
     )
