@@ -46,3 +46,18 @@ class HomePage(BasePage):
             return len(self.driver.find_elements(*_credential_card))
         except Exception as e:
             raise CredentialCountUnavailable(f"hovi: credential card lookup failed: {e}") from e
+
+    def open_credential(self) -> bool:
+        """Open the first credential card on the home screen.
+
+        Returns False when no card is present after waiting, so a caller can stop looping. Tapping
+        a card does not navigate; hovi expands it in place (see pages/credential_detail_page.py).
+
+        Waits rather than sampling, and taps through `BasePage.click` which re-locates on a stale
+        reference: deleting a card re-renders the list underneath us.
+        """
+        if not wait_present(self.driver, _credential_card,
+                            timeout=self._get_timeout("default")):
+            return False
+        self.click(_credential_card)
+        return True
