@@ -32,8 +32,13 @@ def get_app_info(package_name: str, device_serial: str = "") -> dict:
         device_serial:  ADB device serial (e.g. "emulator-5554").
                         When empty, adb targets the only connected device.
 
-    Returns a dict with keys: package, version_name, version_code.
-    All values fall back to "unknown" on any adb failure.
+    Returns a dict with keys: package, version_name, version_code, schemes.
+    All values fall back to "unknown" (schemes: an empty list) on any adb failure.
+
+    `schemes` is every URL scheme the package declares an intent filter for, from the same dump.
+    It explains a failed case: a deeplink whose scheme is absent could never have reached the
+    wallet, which is a finding about the provider. Evidence only, since nothing consults it to
+    decide whether to fire a deeplink.
     """
     cmd = ["adb"]
     if device_serial:
@@ -42,6 +47,7 @@ def get_app_info(package_name: str, device_serial: str = "") -> dict:
 
     version_name = "unknown"
     version_code = "unknown"
+    schemes: set[str] = set()
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         for line in result.stdout.splitlines():
@@ -53,6 +59,11 @@ def get_app_info(package_name: str, device_serial: str = "") -> dict:
                     if part.startswith("versionCode="):
                         version_code = part.split("=", 1)[1]
                         break
+            elif line.startswith("Scheme:"):
+                # Intent-filter dumps render one scheme per line as: Scheme: "openid4vp"
+                match = re.search(r'Scheme:\s*"([^"]+)"', line)
+                if match:
+                    schemes.add(match.group(1).lower())
     except Exception:
         pass
 
@@ -60,6 +71,7 @@ def get_app_info(package_name: str, device_serial: str = "") -> dict:
         "package": package_name,
         "version_name": version_name,
         "version_code": version_code,
+        "schemes": sorted(schemes),
     }
 
 
