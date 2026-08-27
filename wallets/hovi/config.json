@@ -15,6 +15,9 @@
     "onboarding": {
         "skip_if_done": true
     },
+    "cleanup": {
+        "max_credentials": 0
+    },
     "test_cases": {
         "authbound_issuer": {
             "type": "authbound",

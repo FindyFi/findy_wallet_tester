@@ -4,7 +4,10 @@ import logging
 import pytest
 from pathlib import Path
 
+from base.credential_count import CredentialCountUnavailable
 from providers.factory import get_provider
+from wallets.hovi.flows import outcome
+from wallets.hovi.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,21 @@ _verification_cases = [
 def test_credential_verification(app, issuer_name, test_case):
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
+
+    # Runs start from a wiped wallet, so "nothing was shared" has two causes: verifier and wallet
+    # could not agree, or the wallet was empty because issuance failed earlier in this run.
+    # Checking first keeps the second from reading as the verifier's fault.
+    try:
+        held = HomePage(app.driver, **app.page_args).count_credentials()
+    except CredentialCountUnavailable as e:
+        logger.warning(f"[test] Could not count credentials before verification: {e}")
+    else:
+        if held == 0:
+            pytest.fail(
+                f"[{outcome.NOTHING_TO_PRESENT}] Cannot verify '{test_case}' against "
+                f"'{issuer_name}': the wallet holds no credentials, so nothing could be shared. "
+                "Issuance failed earlier in this run."
+            )
 
     provider = get_provider(app.config, issuer_name)
     verification_flow.run(

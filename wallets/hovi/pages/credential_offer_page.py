@@ -3,15 +3,15 @@ from appium.webdriver.common.appiumby import AppiumBy
 from base.base_page import BasePage
 from base.utils import wait_present
 
-# Credential offer screen — "Accept" and "Decline" buttons always present.
-SCREEN_ID = (AppiumBy.XPATH, '//*[@text="Accept" and @clickable="true"] | //*[@text="Decline" and @clickable="true"]')
-
+# Credential offer screen: "Accept" and "Decline" are always present. hovi is React Native, so the
+# clickable ViewGroup carries the content-desc while the visible label is a `text` on its child
+# TextView. A locator must not require both on one node. Clicking the TextView taps through.
 _ACCEPT = (AppiumBy.XPATH, '//*[@text="Accept"]')
 _DECLINE = (AppiumBy.XPATH, '//*[@text="Decline"]')
 
 
 def on_screen(driver, timeout: float = 2) -> bool:
-    return wait_present(driver, (AppiumBy.XPATH, '//*[@text="Accept"]'), timeout=timeout)
+    return wait_present(driver, _ACCEPT, timeout=timeout)
 
 
 class CredentialOfferPage(BasePage):
