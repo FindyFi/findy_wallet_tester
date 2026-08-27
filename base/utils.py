@@ -108,6 +108,35 @@ def fingerprint_enrolled(device_serial: str = "") -> Optional[bool]:
     return any(int(c) > 0 for c in counts)
 
 
+def device_locale(device_serial: str = "") -> Optional[str]:
+    """Return the device's UI locale (e.g. "en-US"), or None when it cannot be read.
+
+    Most of the suite's locators match on the words a wallet puts on screen: 102 of ~197 are bare
+    text, because six of the eight wallets expose no resource-id on any widget. A device running in
+    another language therefore does not fail one test, it fails every wallet at once, and the
+    published matrix would show a fleet-wide outage that is really a device setting.
+
+    Reads ``persist.sys.locale`` first, which is what a user's language choice sets, and falls back
+    to ``ro.product.locale`` for the image default.
+
+    Returns None for "don't know" (no adb, unreadable properties). Callers must not treat that as
+    a wrong locale.
+    """
+    for prop in ("persist.sys.locale", "ro.product.locale"):
+        cmd = ["adb"]
+        if device_serial:
+            cmd += ["-s", device_serial]
+        cmd += ["shell", "getprop", prop]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        except Exception:
+            return None
+        value = (result.stdout or "").strip()
+        if value:
+            return value
+    return None
+
+
 def check_provider_reachable(base_url: str, timeout: float = 10) -> Tuple[bool, str]:
     """Return (True, "") if base_url responds with a non-5xx status, else (False, reason)."""
     try:

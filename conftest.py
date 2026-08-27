@@ -8,6 +8,7 @@ import time
 import pytest
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 
 def _load_dotenv():
@@ -35,7 +36,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from base.android import handle_biometric_if_present, handle_permission_if_present
 from base.base_test import BaseTest, UpdateNotFinished
-from base.utils import list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable, sanitize_test_name
+from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
+                        sanitize_test_name, device_locale)
 
 logger = logging.getLogger(__name__)
 
@@ -205,22 +207,102 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
 
 _ENV_PLACEHOLDER = re.compile(r"\$\{(\w+)\}")
 
+# ${VAR:-default}: the whole value is one placeholder carrying its own fallback.
+_ENV_DEFAULTED = re.compile(r"^\$\{(\w+):-([^}]*)\}$")
 
-def _expand_env(value, missing: list, where: str = ""):
-    """Substitute ${VAR} from the environment throughout a config structure.
+_TRUE = {"true", "yes", "on"}
+_FALSE = {"false", "no", "off"}
 
-    Any string value in any config file can reference an environment variable, so
-    machine-specific settings (device serials, PINs) live in the gitignored `.env` instead of in
-    committed JSON. Variables that are not set are collected in `missing` rather than left as a
-    literal "${VAR}" — that used to surface as a device named "${DEVICE_NAME}" and an Appium
-    error three steps later.
+
+def _coerce(text: str):
+    """Turn an environment string into the JSON type it is standing in for.
+
+    Environment variables are always strings, but the settings they now replace are booleans and
+    numbers. Without this, `SKIP_IF_DONE=false` arrives as the string "false", which is **truthy**,
+    so a wipe would be permanently on while looking configured.
+
+    Numbers are parsed before the boolean words on purpose. "0" and "1" are both plausible numbers
+    and plausible booleans, and reading them as booleans breaks the numeric settings:
+    `${MAX_CREDENTIALS:-0}` would yield False, which then prints as "False" in every log line about
+    the cleanup target. Left as ints they still behave correctly where a boolean is wanted, since
+    Python already treats 0 as false and 1 as true.
+    """
+    stripped = text.strip()
+    try:
+        return int(stripped)
+    except ValueError:
+        pass
+    try:
+        return float(stripped)
+    except ValueError:
+        pass
+    lowered = stripped.lower()
+    if lowered in _TRUE:
+        return True
+    if lowered in _FALSE:
+        return False
+    return text
+
+
+_SHARED_PREFIX = "DEFAULT_"
+
+
+def _lookup(name: str, wallet: str = "") -> Optional[str]:
+    """Resolve one placeholder name against the environment, wallet override first.
+
+    A setting written in the JSON as ``${DEFAULT_RESET:-true}`` can be set three ways, in
+    descending precedence:
+
+        HOVI_RESET=false     per-wallet override; the wallet prefix marks it as wallet-specific
+        DEFAULT_RESET=false  the shared default, applying to every wallet
+        (neither set)        the literal default committed in the JSON
+
+    Naming is the whole point of the convention: anything beginning `DEFAULT_` is fleet-wide,
+    anything beginning with a wallet name applies to that wallet alone, and you can tell which is
+    which from `.env` without reading any code.
+    """
+    if wallet and name.startswith(_SHARED_PREFIX):
+        override = f"{wallet.upper()}_{name[len(_SHARED_PREFIX):]}"
+        if os.environ.get(override):
+            return os.environ[override]
+    return os.environ.get(name)
+
+
+def _expand_env(value, missing: list, where: str = "", wallet: str = ""):
+    """Substitute ${VAR} and ${VAR:-default} from the environment through a config structure.
+
+    Any value in any config file can reference an environment variable, so machine-specific
+    settings live in the gitignored `.env` instead of in committed JSON.
+
+    Two forms, and the difference matters:
+
+    - ``${VAR}`` is **required**. Unset variables are collected in `missing` and reported together,
+      rather than left as a literal "${VAR}" — that used to surface as a device named
+      "${DEVICE_NAME}" and an Appium error three steps later. No wallet override is applied here:
+      heidi already writes `${HEIDI_DEVICE_NAME}` explicitly, and silently falling back to the
+      shared `DEVICE_NAME` would run heidi on the phone instead of its emulator.
+    - ``${DEFAULT_X:-default}`` is **optional** and takes a per-wallet override (see `_lookup`).
+      Unset means use the literal committed in the JSON, so the file stays meaningful and a machine
+      opts in to a setting rather than every machine having to declare one. The result is
+      type-coerced, so booleans and numbers survive the trip through the environment.
     """
     if isinstance(value, dict):
-        return {k: _expand_env(v, missing, f"{where}.{k}" if where else k)
+        return {k: _expand_env(v, missing, f"{where}.{k}" if where else k, wallet)
                 for k, v in value.items()}
     if isinstance(value, list):
-        return [_expand_env(v, missing, f"{where}[{i}]") for i, v in enumerate(value)]
+        return [_expand_env(v, missing, f"{where}[{i}]", wallet) for i, v in enumerate(value)]
     if isinstance(value, str):
+        defaulted = _ENV_DEFAULTED.match(value.strip())
+        if defaulted:
+            name, fallback = defaulted.group(1), defaulted.group(2)
+            # A quoted default declares "this setting is text, never coerce it". PINs are the
+            # reason: "123456" must stay a string, because the pin pages type it digit by digit
+            # and an int cannot be iterated (and "0123" would lose its leading zero).
+            is_text = len(fallback) >= 2 and fallback[0] == fallback[-1] and fallback[0] in "\"'"
+            override = _lookup(name, wallet)
+            if override:
+                return override if is_text else _coerce(override)
+            return fallback[1:-1] if is_text else _coerce(fallback)
         expanded = os.path.expandvars(value)
         for name in _ENV_PLACEHOLDER.findall(expanded):
             missing.append(f"{name} (used by {where})")
@@ -233,14 +315,29 @@ def load_config(wallet_name):
     wallet = json.loads((Path("wallets") / wallet_name / "config.json").read_text())
     merged = {**device, **wallet}
 
+    onboarding = merged.get("onboarding", {})
+    if "skip_if_done" in onboarding:
+        raise pytest.UsageError(
+            f"wallets/{wallet_name}/config.json: 'onboarding.skip_if_done' has been replaced by "
+            "'onboarding.reset', which reads the way an operator thinks about it: reset=true means "
+            "wipe the wallet and onboard again. Rename the key and invert the value "
+            "(skip_if_done: true becomes reset: false)."
+        )
+
     missing = []
-    merged = _expand_env(merged, missing)
+    merged = _expand_env(merged, missing, wallet=wallet_name)
     if missing:
         raise pytest.UsageError(
             f"Unset environment variable(s) referenced by the {wallet_name} config:\n  "
             + "\n  ".join(sorted(set(missing)))
             + "\nSet them in the project's .env file (see env.example) or export them."
         )
+
+    # `reset` is the operator-facing spelling: true means "wipe and onboard again". The flows still
+    # take `skip_if_done`, which is the same switch seen from the other side, so it is derived here
+    # once rather than inverted at nine call sites. When the test bodies move into base/, the
+    # internal name can follow and this line goes away.
+    merged.setdefault("onboarding", {})["skip_if_done"] = not merged["onboarding"].get("reset", False)
     return merged
 
 
@@ -395,6 +492,46 @@ def pytest_runtest_makereport(item):
     setattr(item, f"rep_{rep.when}", rep)
 
 
+def _validate_locale(device: dict, config: dict, pytest_config) -> None:
+    """Fail fast if the device is not running in the expected language.
+
+    The suite reads what wallets write on screen: six of the eight wallets expose no resource-id on
+    any widget, so most locators match on English copy. A device in another language does not fail
+    one case, it fails every wallet, and the published matrix would report a fleet-wide outage that
+    is really a phone setting.
+
+    Asserting rather than setting it. Appium can change a device's locale, but that restarts the app
+    under test and is the kind of interception this suite avoids: what we publish should describe
+    the device as an operator actually configured it. Same shape as the `requires_fingerprint`
+    precondition in the authbound conftest.
+
+    Checked once per session. Reading nothing is "don't know" and only warns; the run continues.
+    """
+    if getattr(pytest_config, "_locale_checked", False):
+        return
+    pytest_config._locale_checked = True
+
+    expected = config.get("android", {}).get("expected_locale", "en")
+    if not expected:
+        return
+
+    actual = device_locale(device.get("udid") or device.get("device_name") or "")
+    if actual is None:
+        logger.warning("[locale] Could not read the device locale — continuing")
+        return
+
+    if not actual.lower().startswith(expected.lower()):
+        raise pytest.UsageError(
+            f"Device locale is {actual!r} but the suite's locators expect {expected!r}.\n"
+            "  Most wallets expose no resource-id, so their screens are matched on English text; "
+            "in another language every wallet fails at once for reasons that have nothing to do "
+            "with the wallets.\n"
+            "  Set the device language to English, or override 'android.expected_locale' in "
+            "config/device.json if you really mean to run in another language."
+        )
+    logger.info(f"[locale] Device locale {actual} matches expected {expected!r}")
+
+
 @pytest.fixture
 def driver(request):
     app_name = request.param
@@ -402,6 +539,7 @@ def driver(request):
     worker_id = getattr(request.config, "workerinput", {}).get("workerid", "master")
     device = _resolve_device(config, worker_id)
     _validate_device(device)
+    _validate_locale(device, config, request.config)
 
     opts = UiAutomator2Options()
     opts.platform_name = config["android"]["platform_name"]

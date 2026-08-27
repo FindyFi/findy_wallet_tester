@@ -2,7 +2,7 @@
     "application": {
         "package": "io.authbound.wallet",
         "activity": "eu.europa.ec.assemblylogic.ui.MainActivity",
-        "pin": "123456"
+        "pin": "${AUTHBOUND_APP_PIN:-'123456'}"
     },
     "timeouts": {
         "default": 10,
@@ -10,13 +10,16 @@
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": true,
-        "xml_on_failure": true
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-true}",
+        "xml_on_failure": "${DEFAULT_XML_ON_FAILURE:-true}"
     },
     "onboarding": {
-        "skip_if_done": true
+        "reset": "${AUTHBOUND_RESET:-false}"
     },
     "requires_fingerprint": true,
+    "cleanup": {
+        "max_credentials": "${DEFAULT_MAX_CREDENTIALS:-0}"
+    },
     "test_cases": {
         "authbound_issuer": {
             "type": "authbound",

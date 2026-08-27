@@ -3,7 +3,7 @@
         "package": "com.gataca.identity",
         "activity": ".MainActivity",
         "email": "your.gataca.test@example.com",
-        "pin": "123456"
+        "pin": "${GATACA_APP_PIN:-'123456'}"
     },
     "timeouts": {
         "default": 10,
@@ -11,14 +11,17 @@
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": true,
-        "xml_on_failure": true
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-true}",
+        "xml_on_failure": "${DEFAULT_XML_ON_FAILURE:-true}"
 
     },
     "onboarding": {
-        "skip_if_done": true
+        "reset": "${GATACA_RESET:-false}"
     },
     "did_method": ["jwk", "ebsi"],
+    "cleanup": {
+        "max_credentials": "${DEFAULT_MAX_CREDENTIALS:-0}"
+    },
     "test_cases": {
         "authbound_issuer": {
             "type": "authbound",

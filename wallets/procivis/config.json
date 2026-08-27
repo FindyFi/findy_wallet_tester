@@ -2,7 +2,7 @@
     "application": {
         "package": "ch.procivis.one.wallet.trial",
         "activity": ".MainActivity",
-        "pin": "123456"
+        "pin": "${PROCIVIS_APP_PIN:-'123456'}"
     },
     "timeouts": {
         "default": 10,
@@ -10,11 +10,11 @@
         "credential_offer": 15
     },
     "reporting": {
-        "screenshot_on_failure": true,
-        "xml_on_failure": true
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-true}",
+        "xml_on_failure": "${DEFAULT_XML_ON_FAILURE:-true}"
     },
     "onboarding": {
-        "skip_if_done": true
+        "reset": "${DEFAULT_RESET:-false}"
     },
     "test_cases": {
         "authbound_issuer": {

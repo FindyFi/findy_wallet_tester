@@ -2,18 +2,18 @@
     "application": {
         "package": "com.impierce.identity_wallet",
         "activity": ".MainActivity",
-        "pin": "Findy123"
+        "pin": "${UNIME_APP_PIN:-'Findy123'}"
     },
     "timeouts": {
         "default": 10,
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": true,
-        "xml_on_failure": true
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-true}",
+        "xml_on_failure": "${DEFAULT_XML_ON_FAILURE:-true}"
     },
     "onboarding": {
-        "skip_if_done": true
+        "reset": "${DEFAULT_RESET:-false}"
     },
     "test_cases": {
         "authbound_issuer": {

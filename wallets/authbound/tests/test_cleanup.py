@@ -10,7 +10,6 @@ to 0 (delete everything). Set it higher to leave a credential behind for a flow 
 wallet to be non-empty.
 """
 import importlib
-import json
 import logging
 from pathlib import Path
 
@@ -24,12 +23,14 @@ logger = logging.getLogger(__name__)
 APP_NAME = Path(__file__).parents[1].name
 cleanup_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.cleanup_flow")
 HomePage = importlib.import_module(f"wallets.{APP_NAME}.pages.home_page").HomePage
-_config = json.loads((Path(__file__).parents[1] / "config.json").read_text())
 
 
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
 def test_reset_credentials(app):
-    keep = _config.get("cleanup", {}).get("max_credentials", 0)
+    # From app.config, not the raw config.json: settings are expanded from the environment
+    # at load time, so reading the file directly yields the literal "${DEFAULT_MAX_CREDENTIALS:-0}"
+    # placeholder instead of a number.
+    keep = app.config.get("cleanup", {}).get("max_credentials", 0)
 
     deleted = cleanup_flow.prune_credentials(app.driver, max_count=keep, **app.page_args)
     logger.info(f"[cleanup] Deleted {deleted} credential(s); target is at most {keep}")

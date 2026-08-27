@@ -17,11 +17,11 @@
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": false,
-        "xml_on_failure": true
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-false}",
+        "xml_on_failure": "${DEFAULT_XML_ON_FAILURE:-true}"
     },
     "onboarding": {
-        "skip_if_done": true
+        "reset": "${DEFAULT_RESET:-false}"
     },
     "test_cases": {
         "authbound_issuer": {

@@ -32,11 +32,14 @@ def _configured_methods():
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
 def test_reset_credentials(app, request):
     app_package = app.config["application"]["package"]
+    # From app.config, not the raw config.json: settings are expanded from the environment at load
+    # time, so reading the file directly yields the literal placeholder instead of a number.
+    keep = app.config.get("cleanup", {}).get("max_credentials", 0)
     total = 0
     for method in _configured_methods():
         setup_flow.ensure_did(app.driver, app_package=app_package, did_method=method, **app.page_args)
         navigate_to_home(app, request, init_flow)
-        deleted = cleanup_flow.prune_credentials(app.driver, max_count=0, **app.page_args)
+        deleted = cleanup_flow.prune_credentials(app.driver, max_count=keep, **app.page_args)
         logger.info(f"[cleanup] DID '{method}': deleted {deleted} credential(s)")
         total += deleted
     logger.info(f"[cleanup] Reset complete — deleted {total} credential(s) across {_configured_methods()}")

@@ -2,21 +2,21 @@
     "application": {
         "package": "droidwallet.hovi.id",
         "activity": ".MainActivity",
-        "pin": ""
+        "pin": "${HOVI_APP_PIN:-''}"
     },
     "timeouts": {
         "default": 10,
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": true,
-        "xml_on_failure": true
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-true}",
+        "xml_on_failure": "${DEFAULT_XML_ON_FAILURE:-true}"
     },
     "onboarding": {
-        "skip_if_done": true
+        "reset": "${DEFAULT_RESET:-false}"
     },
     "cleanup": {
-        "max_credentials": 0
+        "max_credentials": "${DEFAULT_MAX_CREDENTIALS:-0}"
     },
     "test_cases": {
         "authbound_issuer": {
