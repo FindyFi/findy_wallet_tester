@@ -2,7 +2,7 @@
     "application": {
         "package": "com.example.wallet",
         "activity": ".MainActivity",
-        "pin": "123456"
+        "pin": "${EXAMPLE_APP_PIN:-'123456'}"
     },
     "timeouts": {
         "default": 10,
@@ -10,10 +10,10 @@
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": true
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-true}"
     },
     "onboarding": {
-        "skip_if_done": true
+        "reset": "${DEFAULT_RESET:-false}"
     },
     "updates": {
         "enabled": true,

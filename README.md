@@ -128,6 +128,8 @@ python runners/run_tests.py example
 ├── base/
 │   ├── base_page.py            # Core interactions
 │   ├── base_test.py            # Test setup and Play Store install
+│   ├── config.py               # Loads the JSON configs and resolves ${VAR} against .env
+│   ├── test_cases.py           # Builds the issuance/verification case list every wallet shares
 │   ├── play_store_analyzer.py  # Play Store state detection
 │   └── android.py              # Android system overlay detection (biometric prompt, etc.)
 ├── providers/
@@ -140,12 +142,13 @@ python runners/run_tests.py example
 │   ├── README.md               # Wallet layout + capability matrix (keep it up to date)
 │   ├── example/                # Template wallet — copy this to start a new wallet
 │   └── <wallet>/
-│       ├── config.json         # Wallet-specific config (package name, test cases, timeouts)
+│       ├── config.json         # Wallet-specific config (package name, PIN, timeouts)
 │       ├── pages/              # Page Object Model classes
 │       ├── flows/              # Multi-step user flows
 │       └── tests/              # Test files
 ├── config/
-│   └── device.json             # Shared infrastructure config (${VAR} placeholders, filled from .env)
+│   ├── device.json             # Shared infrastructure config (${VAR} placeholders, filled from .env)
+│   └── providers.json          # The issuers and verifiers every wallet is tested against
 ├── env.example                 # Every environment variable the configs expect — copy to .env
 ├── .env                        # Your real device serials, PINs and credentials (gitignored)
 ├── runners/
@@ -216,17 +219,31 @@ Either block may be overridden per wallet in `wallets/<wallet>/config.json`; the
         "screenshot_on_failure": true
     },
     "onboarding": {
-        "skip_if_done": true
-    },
-    "test_cases": {
-        "<issuer_name>": {
+        "reset": false
+    }
+}
+```
+
+Note there is no `test_cases` here: the issuers and verifiers are shared by every wallet and live in
+`config/providers.json`. At runtime `load_config()` merges the device file, the wallet file and the
+selected providers, so all code reads device and wallet settings from one dict.
+
+**`config/providers.json`** — the issuers and verifiers every wallet is tested against. They
+describe the interop matrix, not any one wallet, so they are defined once:
+
+```json
+{
+    "issuers": {
+        "<name>": {
             "base_url": "https://issuer.example.com",
             "credentials": {
                 "<credential_name>": { "type": "issuance", "path": "endpoint.json" }
             }
-        },
-        "<verifier_name>": {
-            "base_url": "https://issuer.example.com",
+        }
+    },
+    "verifiers": {
+        "<name>": {
+            "base_url": "https://verifier.example.com",
             "credentials": {
                 "<credential_name>": { "type": "verification", "path": "/" }
             }
@@ -235,11 +252,39 @@ Either block may be overridden per wallet in `wallets/<wallet>/config.json`; the
 }
 ```
 
-At runtime `load_config()` merges both files so all code can access device and wallet settings from one dict.
+Each entry becomes a test case named `<name>_issuer` / `<name>_verifier` — the names the compact
+report charts as matrix rows, so renaming one breaks continuity with previously published runs.
+
+A wallet that declares its own `test_cases` block opts out of the registry entirely. That is how
+`wallets/example/` stays a self-contained illustration; no real wallet does it.
+
+### Choosing which providers a run exercises
+
+`DEFAULT_ISSUERS` and `DEFAULT_VERIFIERS` in `.env` take the bare names from the registry, and
+`<WALLET>_ISSUERS` / `<WALLET>_VERIFIERS` override them for one wallet:
+
+```
+DEFAULT_ISSUERS=hovi,waltid     # every wallet runs just these two issuers
+HOVI_ISSUERS=procivis           # ...except hovi, which runs only procivis
+HEIDI_VERIFIERS=none            # heidi runs no verification cases at all
+```
+
+- Blank or unset runs **every** provider in the registry, which is what published runs do.
+- `none` runs none of that kind.
+- A name that isn't in the registry **stops the run**, naming the valid ones. A typo would
+  otherwise publish a matrix with a row quietly missing and nothing to explain it.
+- The list selects, it does not order — results always follow registry order, so two runs stay
+  comparable.
+
+These lists only choose *which* providers run. Everything else about a provider, above all where it
+is deployed, is configured in `config/providers.json` and nowhere else — to test the suite against
+your own instance, change that entry's `base_url`.
 
 ### ITB issuer
 
-To test against the [FIDES Interoperability Test Bed](https://itb.ilabs.ai), use `type: itb` in the issuer config. The provider authenticates to ITB, starts a test session, and retrieves the credential offer deeplink over WebSocket.
+To test against the [FIDES Interoperability Test Bed](https://itb.ilabs.ai), add an entry with
+`type: itb` to `config/providers.json`. The provider authenticates to ITB, starts a test session,
+and retrieves the credential offer deeplink over WebSocket.
 
 ```json
 "itb_diipv5": {
@@ -260,7 +305,12 @@ To test against the [FIDES Interoperability Test Bed](https://itb.ilabs.ai), use
 }
 ```
 
-`system_id`, `test_case_id`, `spec_id`, `actor_id`, and `provide_step` are organisation-specific values from your ITB registration. The wallet directories in this repo already have the correct values set for the FindyNet organisation. External users need to register their own wallet system in ITB to obtain their own IDs.
+`system_id`, `test_case_id`, `spec_id`, `actor_id`, and `provide_step` are organisation-specific values from your ITB registration. External users need to register their own wallet system in ITB to obtain their own IDs.
+
+**Known limitation.** `system_id` identifies the *wallet* to ITB, so one shared registry entry
+cannot serve every wallet the way the demo issuers do. Until the registry can express a per-wallet
+value, an ITB case needs the wallet to declare its own `test_cases` block — which opts that wallet
+out of the shared registry entirely. No wallet does this today.
 
 ITB credentials go in the same `.env` as everything else (see
 [Machine-specific values come from `.env`](#machine-specific-values-come-from-env)):

@@ -2,32 +2,14 @@ import base64
 import json
 import logging
 import os
-import re
 import subprocess
 import time
 import pytest
 from datetime import datetime
 from pathlib import Path
 
-
-def _load_dotenv():
-    """Load KEY=VALUE pairs from .env at the project root into os.environ.
-
-    Values already set in the environment are not overwritten, so shell exports
-    and CI/CD environment injection always take precedence over the .env file.
-    """
-    env_path = Path(__file__).parent / ".env"
-    try:
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-    except FileNotFoundError:
-        pass
-
-
-_load_dotenv()
+# First, and before anything that reads the environment: importing this loads .env.
+from base.config import load_config, provider_matrix
 
 from appium import webdriver
 from appium.options.android.uiautomator2.base import UiAutomator2Options
@@ -35,7 +17,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from base.android import handle_biometric_if_present, handle_permission_if_present
 from base.base_test import BaseTest, UpdateNotFinished
-from base.utils import list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable, sanitize_test_name
+from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
+                        sanitize_test_name, device_locale)
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +102,11 @@ def _detect_wallet_name(config) -> str:
     for arg in config.args:
         parts = Path(arg).parts
         if "wallets" in parts:
-            candidate = parts[parts.index("wallets") + 1]
-            if candidate in known:
-                return candidate
+            # A bare "wallets/" has nothing after it. Guard the index rather than assuming:
+            # without this, collecting the whole suite dies here with an IndexError.
+            index = parts.index("wallets") + 1
+            if index < len(parts) and parts[index] in known:
+                return parts[index]
     return "unknown"
 
 
@@ -203,47 +188,6 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
         logcat_file.close()
 
 
-_ENV_PLACEHOLDER = re.compile(r"\$\{(\w+)\}")
-
-
-def _expand_env(value, missing: list, where: str = ""):
-    """Substitute ${VAR} from the environment throughout a config structure.
-
-    Any string value in any config file can reference an environment variable, so
-    machine-specific settings (device serials, PINs) live in the gitignored `.env` instead of in
-    committed JSON. Variables that are not set are collected in `missing` rather than left as a
-    literal "${VAR}" — that used to surface as a device named "${DEVICE_NAME}" and an Appium
-    error three steps later.
-    """
-    if isinstance(value, dict):
-        return {k: _expand_env(v, missing, f"{where}.{k}" if where else k)
-                for k, v in value.items()}
-    if isinstance(value, list):
-        return [_expand_env(v, missing, f"{where}[{i}]") for i, v in enumerate(value)]
-    if isinstance(value, str):
-        expanded = os.path.expandvars(value)
-        for name in _ENV_PLACEHOLDER.findall(expanded):
-            missing.append(f"{name} (used by {where})")
-        return expanded
-    return value
-
-
-def load_config(wallet_name):
-    device = json.loads((Path("config") / "device.json").read_text())
-    wallet = json.loads((Path("wallets") / wallet_name / "config.json").read_text())
-    merged = {**device, **wallet}
-
-    missing = []
-    merged = _expand_env(merged, missing)
-    if missing:
-        raise pytest.UsageError(
-            f"Unset environment variable(s) referenced by the {wallet_name} config:\n  "
-            + "\n  ".join(sorted(set(missing)))
-            + "\nSet them in the project's .env file (see env.example) or export them."
-        )
-    return merged
-
-
 def _resolve_device(config: dict, worker_id: str) -> dict:
     """Return {server, device_name, udid} for the given xdist worker.
 
@@ -303,17 +247,20 @@ def pytest_runtest_setup(item):
 
     Applies only to tests parametrized with ``issuer_name``.  Each base_url is
     probed at most once; results are cached on ``item.config._provider_health``.
+
+    The URL comes from `provider_matrix` rather than the test module, which no longer holds a
+    config of its own: which providers a wallet runs is decided in one place, so the probe has to
+    ask that same place. The wallet name is already on the callspec, from the indirect `driver`
+    param every one of these tests carries.
     """
     callspec = getattr(item, "callspec", None)
-    issuer_name = getattr(callspec, "params", {}).get("issuer_name")
-    if not issuer_name:
+    params = getattr(callspec, "params", {})
+    issuer_name = params.get("issuer_name")
+    wallet = params.get("driver")
+    if not issuer_name or not wallet:
         return
 
-    wallet_config = getattr(item.module, "_config", None)
-    if not wallet_config:
-        return
-
-    issuer_cfg = wallet_config.get("test_cases", {}).get(issuer_name, {})
+    issuer_cfg = provider_matrix(wallet).get(issuer_name, {})
     base_url = issuer_cfg.get("base_url")
     if not base_url:
         return  # Static config provider — no URL to check
@@ -395,6 +342,46 @@ def pytest_runtest_makereport(item):
     setattr(item, f"rep_{rep.when}", rep)
 
 
+def _validate_locale(device: dict, config: dict, pytest_config) -> None:
+    """Fail fast if the device is not running in the expected language.
+
+    The suite reads what wallets write on screen: six of the eight wallets expose no resource-id on
+    any widget, so most locators match on English copy. A device in another language does not fail
+    one case, it fails every wallet, and the published matrix would report a fleet-wide outage that
+    is really a phone setting.
+
+    Asserting rather than setting it. Appium can change a device's locale, but that restarts the app
+    under test and is the kind of interception this suite avoids: what we publish should describe
+    the device as an operator actually configured it. Same shape as the `requires_fingerprint`
+    precondition in the authbound conftest.
+
+    Checked once per session. Reading nothing is "don't know" and only warns; the run continues.
+    """
+    if getattr(pytest_config, "_locale_checked", False):
+        return
+    pytest_config._locale_checked = True
+
+    expected = config.get("android", {}).get("expected_locale", "en")
+    if not expected:
+        return
+
+    actual = device_locale(device.get("udid") or device.get("device_name") or "")
+    if actual is None:
+        logger.warning("[locale] Could not read the device locale — continuing")
+        return
+
+    if not actual.lower().startswith(expected.lower()):
+        raise pytest.UsageError(
+            f"Device locale is {actual!r} but the suite's locators expect {expected!r}.\n"
+            "  Most wallets expose no resource-id, so their screens are matched on English text; "
+            "in another language every wallet fails at once for reasons that have nothing to do "
+            "with the wallets.\n"
+            "  Set the device language to English, or override 'android.expected_locale' in "
+            "config/device.json if you really mean to run in another language."
+        )
+    logger.info(f"[locale] Device locale {actual} matches expected {expected!r}")
+
+
 @pytest.fixture
 def driver(request):
     app_name = request.param
@@ -402,6 +389,7 @@ def driver(request):
     worker_id = getattr(request.config, "workerinput", {}).get("workerid", "master")
     device = _resolve_device(config, worker_id)
     _validate_device(device)
+    _validate_locale(device, config, request.config)
 
     opts = UiAutomator2Options()
     opts.platform_name = config["android"]["platform_name"]

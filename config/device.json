@@ -4,13 +4,14 @@
         "platform_name": "Android",
         "device_name": "${DEVICE_NAME}",
         "automation_name": "UiAutomator2",
+        "expected_locale": "en",
         "device_pin": "${DEVICE_PIN}"
     },
     "recording": {
         "enabled": true
     },
     "updates": {
-        "enabled": true,
+        "enabled": "${DEFAULT_UPDATES:-true}",
         "timeout": 900
     }
 }
