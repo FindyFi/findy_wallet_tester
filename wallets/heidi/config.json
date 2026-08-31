@@ -1,11 +1,4 @@
 {
-    "server": "http://localhost:4723",
-    "android": {
-        "platform_name": "Android",
-        "device_name": "${HEIDI_DEVICE_NAME}",
-        "automation_name": "UiAutomator2",
-        "device_pin": "${HEIDI_DEVICE_PIN}"
-    },
     "application": {
         "package": "ch.ubique.heidi.android",
         "activity": ".MainActivity",
