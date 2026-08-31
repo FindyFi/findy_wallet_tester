@@ -2,33 +2,14 @@ import base64
 import json
 import logging
 import os
-import re
 import subprocess
 import time
 import pytest
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-
-def _load_dotenv():
-    """Load KEY=VALUE pairs from .env at the project root into os.environ.
-
-    Values already set in the environment are not overwritten, so shell exports
-    and CI/CD environment injection always take precedence over the .env file.
-    """
-    env_path = Path(__file__).parent / ".env"
-    try:
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-    except FileNotFoundError:
-        pass
-
-
-_load_dotenv()
+# First, and before anything that reads the environment: importing this loads .env.
+from base.config import load_config, provider_matrix
 
 from appium import webdriver
 from appium.options.android.uiautomator2.base import UiAutomator2Options
@@ -121,9 +102,11 @@ def _detect_wallet_name(config) -> str:
     for arg in config.args:
         parts = Path(arg).parts
         if "wallets" in parts:
-            candidate = parts[parts.index("wallets") + 1]
-            if candidate in known:
-                return candidate
+            # A bare "wallets/" has nothing after it. Guard the index rather than assuming:
+            # without this, collecting the whole suite dies here with an IndexError.
+            index = parts.index("wallets") + 1
+            if index < len(parts) and parts[index] in known:
+                return parts[index]
     return "unknown"
 
 
@@ -205,142 +188,6 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
         logcat_file.close()
 
 
-_ENV_PLACEHOLDER = re.compile(r"\$\{(\w+)\}")
-
-# ${VAR:-default}: the whole value is one placeholder carrying its own fallback.
-_ENV_DEFAULTED = re.compile(r"^\$\{(\w+):-([^}]*)\}$")
-
-_TRUE = {"true", "yes", "on"}
-_FALSE = {"false", "no", "off"}
-
-
-def _coerce(text: str):
-    """Turn an environment string into the JSON type it is standing in for.
-
-    Environment variables are always strings, but the settings they now replace are booleans and
-    numbers. Without this, `SKIP_IF_DONE=false` arrives as the string "false", which is **truthy**,
-    so a wipe would be permanently on while looking configured.
-
-    Numbers are parsed before the boolean words on purpose. "0" and "1" are both plausible numbers
-    and plausible booleans, and reading them as booleans breaks the numeric settings:
-    `${MAX_CREDENTIALS:-0}` would yield False, which then prints as "False" in every log line about
-    the cleanup target. Left as ints they still behave correctly where a boolean is wanted, since
-    Python already treats 0 as false and 1 as true.
-    """
-    stripped = text.strip()
-    try:
-        return int(stripped)
-    except ValueError:
-        pass
-    try:
-        return float(stripped)
-    except ValueError:
-        pass
-    lowered = stripped.lower()
-    if lowered in _TRUE:
-        return True
-    if lowered in _FALSE:
-        return False
-    return text
-
-
-_SHARED_PREFIX = "DEFAULT_"
-
-
-def _lookup(name: str, wallet: str = "") -> Optional[str]:
-    """Resolve one placeholder name against the environment, wallet override first.
-
-    A setting written in the JSON as ``${DEFAULT_RESET:-true}`` can be set three ways, in
-    descending precedence:
-
-        HOVI_RESET=false     per-wallet override; the wallet prefix marks it as wallet-specific
-        DEFAULT_RESET=false  the shared default, applying to every wallet
-        (neither set)        the literal default committed in the JSON
-
-    Naming is the whole point of the convention: anything beginning `DEFAULT_` is fleet-wide,
-    anything beginning with a wallet name applies to that wallet alone, and you can tell which is
-    which from `.env` without reading any code.
-    """
-    if wallet and name.startswith(_SHARED_PREFIX):
-        override = f"{wallet.upper()}_{name[len(_SHARED_PREFIX):]}"
-        if os.environ.get(override):
-            return os.environ[override]
-    return os.environ.get(name)
-
-
-def _expand_env(value, missing: list, where: str = "", wallet: str = ""):
-    """Substitute ${VAR} and ${VAR:-default} from the environment through a config structure.
-
-    Any value in any config file can reference an environment variable, so machine-specific
-    settings live in the gitignored `.env` instead of in committed JSON.
-
-    Two forms, and the difference matters:
-
-    - ``${VAR}`` is **required**. Unset variables are collected in `missing` and reported together,
-      rather than left as a literal "${VAR}" — that used to surface as a device named
-      "${DEVICE_NAME}" and an Appium error three steps later. No wallet override is applied here:
-      heidi already writes `${HEIDI_DEVICE_NAME}` explicitly, and silently falling back to the
-      shared `DEVICE_NAME` would run heidi on the phone instead of its emulator.
-    - ``${DEFAULT_X:-default}`` is **optional** and takes a per-wallet override (see `_lookup`).
-      Unset means use the literal committed in the JSON, so the file stays meaningful and a machine
-      opts in to a setting rather than every machine having to declare one. The result is
-      type-coerced, so booleans and numbers survive the trip through the environment.
-    """
-    if isinstance(value, dict):
-        return {k: _expand_env(v, missing, f"{where}.{k}" if where else k, wallet)
-                for k, v in value.items()}
-    if isinstance(value, list):
-        return [_expand_env(v, missing, f"{where}[{i}]", wallet) for i, v in enumerate(value)]
-    if isinstance(value, str):
-        defaulted = _ENV_DEFAULTED.match(value.strip())
-        if defaulted:
-            name, fallback = defaulted.group(1), defaulted.group(2)
-            # A quoted default declares "this setting is text, never coerce it". PINs are the
-            # reason: "123456" must stay a string, because the pin pages type it digit by digit
-            # and an int cannot be iterated (and "0123" would lose its leading zero).
-            is_text = len(fallback) >= 2 and fallback[0] == fallback[-1] and fallback[0] in "\"'"
-            override = _lookup(name, wallet)
-            if override:
-                return override if is_text else _coerce(override)
-            return fallback[1:-1] if is_text else _coerce(fallback)
-        expanded = os.path.expandvars(value)
-        for name in _ENV_PLACEHOLDER.findall(expanded):
-            missing.append(f"{name} (used by {where})")
-        return expanded
-    return value
-
-
-def load_config(wallet_name):
-    device = json.loads((Path("config") / "device.json").read_text())
-    wallet = json.loads((Path("wallets") / wallet_name / "config.json").read_text())
-    merged = {**device, **wallet}
-
-    onboarding = merged.get("onboarding", {})
-    if "skip_if_done" in onboarding:
-        raise pytest.UsageError(
-            f"wallets/{wallet_name}/config.json: 'onboarding.skip_if_done' has been replaced by "
-            "'onboarding.reset', which reads the way an operator thinks about it: reset=true means "
-            "wipe the wallet and onboard again. Rename the key and invert the value "
-            "(skip_if_done: true becomes reset: false)."
-        )
-
-    missing = []
-    merged = _expand_env(merged, missing, wallet=wallet_name)
-    if missing:
-        raise pytest.UsageError(
-            f"Unset environment variable(s) referenced by the {wallet_name} config:\n  "
-            + "\n  ".join(sorted(set(missing)))
-            + "\nSet them in the project's .env file (see env.example) or export them."
-        )
-
-    # `reset` is the operator-facing spelling: true means "wipe and onboard again". The flows still
-    # take `skip_if_done`, which is the same switch seen from the other side, so it is derived here
-    # once rather than inverted at nine call sites. When the test bodies move into base/, the
-    # internal name can follow and this line goes away.
-    merged.setdefault("onboarding", {})["skip_if_done"] = not merged["onboarding"].get("reset", False)
-    return merged
-
-
 def _resolve_device(config: dict, worker_id: str) -> dict:
     """Return {server, device_name, udid} for the given xdist worker.
 
@@ -400,17 +247,20 @@ def pytest_runtest_setup(item):
 
     Applies only to tests parametrized with ``issuer_name``.  Each base_url is
     probed at most once; results are cached on ``item.config._provider_health``.
+
+    The URL comes from `provider_matrix` rather than the test module, which no longer holds a
+    config of its own: which providers a wallet runs is decided in one place, so the probe has to
+    ask that same place. The wallet name is already on the callspec, from the indirect `driver`
+    param every one of these tests carries.
     """
     callspec = getattr(item, "callspec", None)
-    issuer_name = getattr(callspec, "params", {}).get("issuer_name")
-    if not issuer_name:
+    params = getattr(callspec, "params", {})
+    issuer_name = params.get("issuer_name")
+    wallet = params.get("driver")
+    if not issuer_name or not wallet:
         return
 
-    wallet_config = getattr(item.module, "_config", None)
-    if not wallet_config:
-        return
-
-    issuer_cfg = wallet_config.get("test_cases", {}).get(issuer_name, {})
+    issuer_cfg = provider_matrix(wallet).get(issuer_name, {})
     base_url = issuer_cfg.get("base_url")
     if not base_url:
         return  # Static config provider — no URL to check
