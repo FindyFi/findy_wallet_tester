@@ -5,12 +5,16 @@ Each wallet directory has the same shape:
 
 ```
 <wallet>/
-├── config.json     # package, activity, PIN, timeouts, test_cases (issuers + verifiers)
+├── config.json     # package, activity, PIN, timeouts — this wallet only
 ├── conftest.py     # per-wallet fixtures (home-screen setup, teardown, wallet-specific hooks)
 ├── pages/          # Page Object Model classes — locators live here
 ├── flows/          # multi-step user flows (init / credential / verification / …)
 └── tests/          # test files, collected by pytest and by runners/run_tests.py
 ```
+
+The issuers and verifiers are **not** here: every wallet is tested against the same set, so they
+live once in [`config/providers.json`](../config/providers.json) and `.env` chooses which of them a
+run exercises. `config.json` holds only what is genuinely specific to this wallet.
 
 **Related docs**
 - [Root `README.md`](../README.md) — setup, running tests, configuration, adding a new wallet
