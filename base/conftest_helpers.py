@@ -45,6 +45,25 @@ def navigate_to_home(app, request, init_flow):
         )
 
 
+def node_failed(node) -> bool:
+    """True when the test failed in its body **or** blew up in fixture setup.
+
+    Checking only ``rep_call`` misses the failure mode that most needs evidence. When a fixture
+    raises, pytest records an **Error** and ``rep_call`` never exists, so a wallet that dies in
+    setup publishes a column of red cells with no screenshot and no XML dump anywhere — which is
+    how toppan's post-wipe language screen went unrecorded across 62 historical dumps and had to
+    be described by hand.
+
+    Both attributes are set by the root conftest's ``pytest_runtest_makereport`` wrapper, and
+    finalizers run in the teardown phase, after the setup report exists.
+    """
+    for phase in ("setup", "call"):
+        report = getattr(node, f"rep_{phase}", None)
+        if report is not None and report.failed:
+            return True
+    return False
+
+
 def capture_failure_artifact(app, request):
     """Save a screenshot or XML dump when a test has failed.
 
@@ -55,8 +74,7 @@ def capture_failure_artifact(app, request):
     Sets ``request.node._artifact_captured`` so the root conftest's ``app``
     fixture doesn't attempt a second capture.
     """
-    failed = hasattr(request.node, "rep_call") and request.node.rep_call.failed
-    if not failed or getattr(request.node, "_artifact_captured", False):
+    if not node_failed(request.node) or getattr(request.node, "_artifact_captured", False):
         return
 
     reporting = app.config.get("reporting", {})
