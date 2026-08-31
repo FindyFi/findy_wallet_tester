@@ -4,6 +4,7 @@ import logging
 import pytest
 from pathlib import Path
 
+from base.test_cases import issuance_cases
 from providers.factory import get_provider
 from wallets.gataca.pages.home_page import HomePage
 
@@ -12,25 +13,17 @@ logger = logging.getLogger(__name__)
 APP_NAME = Path(__file__).parents[1].name
 credential_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.credential_flow")
 setup_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.setup_flow")
-_config = json.loads(
-    (Path(__file__).parents[1] / "config.json").read_text()
-)
-_issuance_cases = [
-    pytest.param(
-        issuer_name, cred_name,
-        id=f"{issuer_name}/{cred_name}",
-        marks=[pytest.mark.xfail(reason=cred_cfg["xfail"], strict=False)]
-        if cred_cfg.get("xfail") else [],
-    )
-    for issuer_name, issuer_cfg in _config.get("test_cases", {}).items()
-    for cred_name, cred_cfg in issuer_cfg.get("credentials", {}).items()
-    if cred_cfg.get("type") == "issuance"
-]
+_issuance_cases = issuance_cases(APP_NAME)
 
 # DID method(s) to run each case under. Config "did_method" is a single value ("jwk") or a list
 # (["jwk","gatc","ebsi"]) to run the matrix across methods; the conftest switches the active DID
 # per method group and the report shows pass/fail per (method × issuer).
-_did_methods = _config.get("did_method", "jwk")
+# Read straight from the file rather than through base.config: did_method shapes the
+# parametrize list at collection time and carries no ${...} placeholder. If it ever moves
+# into .env it needs the same treatment the provider matrix got.
+_did_methods = json.loads(
+    (Path(__file__).parents[1] / "config.json").read_text()
+).get("did_method", "jwk")
 if isinstance(_did_methods, str):
     _did_methods = [_did_methods]
 
@@ -38,9 +31,7 @@ if isinstance(_did_methods, str):
 @pytest.mark.gataca_did
 @pytest.mark.parametrize("did_method", _did_methods)
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
-@pytest.mark.parametrize("issuer_name,test_case", _issuance_cases or [pytest.param(
-    "", "", marks=pytest.mark.skip(reason="No issuance test cases configured in config")
-)])
+@pytest.mark.parametrize("issuer_name,test_case", _issuance_cases)
 def test_credential_issuance(app, issuer_name, test_case, did_method):
     logger.info(f"[test] Issuance '{test_case}' from '{issuer_name}' under DID method '{did_method}'")
     pin = app.config["application"]["pin"]

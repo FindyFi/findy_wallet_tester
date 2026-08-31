@@ -4,6 +4,7 @@ import logging
 import pytest
 from pathlib import Path
 
+from base.test_cases import verification_cases
 from providers.factory import get_provider
 from wallets.gataca.pages.home_page import HomePage
 
@@ -12,23 +13,15 @@ logger = logging.getLogger(__name__)
 APP_NAME = Path(__file__).parents[1].name
 verification_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.verification_flow")
 setup_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.setup_flow")
-_config = json.loads(
-    (Path(__file__).parents[1] / "config.json").read_text()
-)
-_verification_cases = [
-    pytest.param(
-        issuer_name, cred_name,
-        id=f"{issuer_name}/{cred_name}",
-        marks=[pytest.mark.xfail(reason=cred_cfg["xfail"], strict=False)]
-        if cred_cfg.get("xfail") else [],
-    )
-    for issuer_name, issuer_cfg in _config.get("test_cases", {}).items()
-    for cred_name, cred_cfg in issuer_cfg.get("credentials", {}).items()
-    if cred_cfg.get("type") == "verification"
-]
+_verification_cases = verification_cases(APP_NAME)
 
 # DID method(s) to run each case under (see test_credential_issuance for the rationale).
-_did_methods = _config.get("did_method", "jwk")
+# Read straight from the file rather than through base.config: did_method shapes the
+# parametrize list at collection time and carries no ${...} placeholder. If it ever moves
+# into .env it needs the same treatment the provider matrix got.
+_did_methods = json.loads(
+    (Path(__file__).parents[1] / "config.json").read_text()
+).get("did_method", "jwk")
 if isinstance(_did_methods, str):
     _did_methods = [_did_methods]
 
@@ -36,9 +29,7 @@ if isinstance(_did_methods, str):
 @pytest.mark.gataca_did
 @pytest.mark.parametrize("did_method", _did_methods)
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
-@pytest.mark.parametrize("issuer_name,test_case", _verification_cases or [pytest.param(
-    "", "", marks=pytest.mark.skip(reason="No verification test cases configured in config")
-)])
+@pytest.mark.parametrize("issuer_name,test_case", _verification_cases)
 def test_credential_verification(app, issuer_name, test_case, did_method):
     logger.info(f"[test] Verification '{test_case}' from '{issuer_name}' under DID method '{did_method}'")
     pin = app.config["application"]["pin"]
