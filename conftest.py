@@ -17,6 +17,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from base.android import handle_biometric_if_present, handle_permission_if_present
 from base.base_test import BaseTest, UpdateNotFinished
+from base.conftest_helpers import node_failed
 from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
                         sanitize_test_name, device_locale)
 
@@ -139,11 +140,16 @@ def pytest_configure(config):
         (run_dir / "screenshots").mkdir(exist_ok=True)
         os.environ[_ENV_RUN_DIR] = str(run_dir)
 
-        # File log
+        # File log. Kept on `config` so pytest_sessionfinish can detach it again: runners/
+        # run_tests.py calls pytest.main() in a loop inside one process, so this hook runs once
+        # per wallet, and a handler left attached goes on receiving the next wallet's records.
+        # Every wallet's test.log then contains every wallet that ran after it, which makes a log
+        # line unusable as evidence about the wallet whose directory it sits in.
         handler = logging.FileHandler(str(run_dir / "test.log"))
         handler.setLevel(logging.DEBUG)
         handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
         logging.getLogger().addHandler(handler)
+        config._log_handler = handler
 
         # HTML report — only if pytest-html is present and --html wasn't passed
         if hasattr(config.option, "htmlpath") and not config.option.htmlpath:
@@ -172,7 +178,7 @@ def pytest_configure(config):
 
 
 def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest hookspec
-    """Stop logcat capture after all tests complete."""
+    """Release this wallet's per-session resources: the logcat process and the file log."""
     config = session.config
     if hasattr(config, "workerinput"):
         return  # xdist workers don't own the logcat process
@@ -186,6 +192,14 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
     logcat_file = getattr(config, "_logcat_file", None)
     if logcat_file is not None:
         logcat_file.close()
+
+    # Detach this wallet's file log, so the next pytest.main() in the same process starts with
+    # only its own handler. Last, so anything logged above still reaches the file.
+    log_handler = getattr(config, "_log_handler", None)
+    if log_handler is not None:
+        logging.getLogger().removeHandler(log_handler)
+        log_handler.close()
+        config._log_handler = None
 
 
 def _resolve_device(config: dict, worker_id: str) -> dict:
@@ -538,8 +552,10 @@ def app(driver, request):
     request.node._artifact_captured = False
     yield base_test
 
-    if (hasattr(request.node, "rep_call") and request.node.rep_call.failed
-            and not getattr(request.node, "_artifact_captured", False)):
+    # `node_failed`, not `rep_call`, because this is the only capture point a setup error ever
+    # reaches: a wallet's `_ensure_home` raises before its own yield, so its teardown — and the
+    # `capture_failure_artifact` inside it — never runs, while this one does.
+    if node_failed(request.node) and not getattr(request.node, "_artifact_captured", False):
         reporting = config.get("reporting", {})
         test_name = sanitize_test_name(request.node.name)
         if reporting.get("screenshot_on_failure", True):
