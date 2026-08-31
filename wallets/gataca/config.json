@@ -18,7 +18,7 @@
     "onboarding": {
         "reset": "${GATACA_RESET:-false}"
     },
-    "did_method": ["jwk", "ebsi"],
+    "did_method": "${DID_METHODS:-jwk}",
     "cleanup": {
         "max_credentials": "${DEFAULT_MAX_CREDENTIALS:-0}"
     }
