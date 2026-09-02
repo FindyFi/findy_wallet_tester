@@ -4,6 +4,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
+from base.cleanup import DeleteRefused  # noqa: F401  (re-exported for this wallet's flow)
+# Defined in base/cleanup.py so the shared prune loop can catch it. It used to be declared
+# here, which meant the loop caught a different class of the same name and hovi's
+# restart-and-retry never ran.
 from base.utils import wait_present
 
 # hovi's expanded credential view and its delete path.
@@ -38,12 +42,6 @@ _DELETE_FAILED = (AppiumBy.XPATH,
 _CANCEL_DELETE = (AppiumBy.XPATH, '//*[@content-desc="Cancel"]')
 
 
-class DeleteRefused(RuntimeError):
-    """hovi accepted the confirmation and then declined to remove the credential.
-
-    A distinct type rather than a message to match on, because the caller's response is specific:
-    restarting the app and trying again clears it.
-    """
 
 
 def on_screen(driver, timeout: float = 2) -> bool:

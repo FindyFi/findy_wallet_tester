@@ -1,24 +1,19 @@
-"""Credential cleanup for Gataca — keeps the wallet from filling up over many test runs.
+"""Credential cleanup for Gataca: the gestures. The loop lives in base/cleanup.py.
 
-Issuance tests keep adding credentials; once the wallet is crowded the home credential count
-becomes unreliable and the UI sluggish. `prune_credentials` deletes credentials (newest-first as
-the list presents them) down to a target count, always preserving the self-attested device
-credential. Each delete goes through the wallet's confirm dialog + a system biometric prompt.
+    Home -> open a deletable card -> Credential details -> trash button ->
+    "Yes, delete" -> system biometric prompt (PIN) -> back on Home.
 
-Delete flow per credential:
-    Home → open a deletable card → Credential details → trash button →
-    "Yes, delete" → system biometric prompt (PIN) → back on Home.
+Gataca always keeps its self-attested device credential, so `open_deletable_credential()` does the
+filtering that other wallets do with a `can_delete()` gate on the detail screen.
 """
-import logging
-
-from base.android import authenticate_with_pin
-from wallets.gataca.pages.home_page import HomePage
+from base import cleanup, interstitials
 from wallets.gataca.pages.credential_detail_page import CredentialDetailPage
+from wallets.gataca.pages.home_page import HomePage
 
-logger = logging.getLogger(__name__)
-
-# Hard cap on delete iterations so a misbehaving delete can never loop forever.
-_MAX_DELETIONS = 50
+# Deleting is confirmed on the system auth sheet. Declaring it as an interstitial rather than
+# calling authenticate_with_pin inline means the prune loop services it wherever it appears, which
+# matters because gataca does not always raise it at the same point.
+_INTERSTITIALS = (interstitials.device_pin_prompt(),)
 
 
 def prune_credentials(driver, max_count: int, **page_args) -> int:
@@ -26,28 +21,18 @@ def prune_credentials(driver, max_count: int, **page_args) -> int:
 
     Returns the number of credentials deleted.
     """
-    device_pin = page_args.get("device_pin", "")
     home = HomePage(driver, **page_args)
-    home.wait_until_loaded()
+    detail = CredentialDetailPage(driver, **page_args)
 
-    deleted = 0
-    for _ in range(_MAX_DELETIONS):
-        count = home.count_credentials()
-        if count <= max_count:
-            break
+    def open_detail() -> bool:
         if not home.open_deletable_credential():
-            logger.info("[cleanup_flow] No deletable credential left — stopping prune")
-            break
-
-        detail = CredentialDetailPage(driver, **page_args)
+            return False
         detail.wait_until_loaded()
-        detail.delete()
-        # Deletion is confirmed on a system biometric prompt; authenticate via PIN.
-        authenticate_with_pin(driver, device_pin)
-        home.wait_until_loaded()
-        deleted += 1
-        logger.info(f"[cleanup_flow] Deleted credential {deleted} (was {count})")
+        return True
 
-    if deleted:
-        logger.info(f"[cleanup_flow] Pruned {deleted} credential(s); now {home.count_credentials()}")
-    return deleted
+    return cleanup.prune_credentials(
+        driver, wallet="gataca", home=home,
+        open_detail=open_detail,
+        delete=detail.delete,
+        max_count=max_count, interstitials=_INTERSTITIALS, page_args=page_args,
+    )
