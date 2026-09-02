@@ -115,17 +115,35 @@ def detect_system_overlay(driver) -> Optional[SystemOverlay]:
     return None
 
 
-def handle_biometric_if_present(driver, dismiss_timeout=10) -> bool:
+def detect_crash_or_anr(driver, timeout: float = 0.3) -> Optional[SystemOverlay]:
+    """Just the two overlays that mean the app itself died. None if neither is showing.
+
+    Narrower than `detect_system_overlay` on purpose: that one probes four locators in sequence, so
+    at 0.5s each it costs more than a whole poll tick. A wait loop needs to ask this often, and the
+    other two overlays it checks (biometric, permission) are things a flow *answers* rather than
+    reports — they belong to the interstitial handlers, not to a crash scan.
+    """
+    if wait_present(driver, _APP_CRASH, timeout=timeout):
+        return SystemOverlay.APP_CRASH
+    if wait_present(driver, _ANR, timeout=timeout):
+        return SystemOverlay.ANR
+    return None
+
+
+def handle_biometric_if_present(driver, dismiss_timeout=10, detect_timeout=2) -> bool:
     """If the Android biometric prompt is on screen, simulate a fingerprint and wait for it to dismiss.
 
     Args:
         dismiss_timeout: How long to wait (seconds) for the biometric dialog to disappear
-                         after simulating the fingerprint. Does not affect the 2s detection probe.
+                         after simulating the fingerprint.
+        detect_timeout: How long to look for the prompt. The 2s default suits a one-shot
+                        speculative call; a polling loop that calls this every tick should pass
+                        something short, or this single probe costs more than the whole tick.
 
     Returns True if the prompt was detected and handled, False if it was not present.
     Safe to call speculatively — does nothing if the prompt is not showing.
     """
-    if not wait_present(driver, BIOMETRIC_PROMPT, timeout=2):
+    if not wait_present(driver, BIOMETRIC_PROMPT, timeout=detect_timeout):
         return False
 
     logger.info("[android] Biometric prompt detected — simulating fingerprint")
@@ -259,12 +277,12 @@ def handle_anr_if_present(driver) -> bool:
     return True
 
 
-def handle_permission_if_present(driver, allow: bool = True) -> bool:
+def handle_permission_if_present(driver, allow: bool = True, detect_timeout: float = 0.5) -> bool:
     """If an Android permission dialog is on screen, click Allow or Deny.
 
     Returns True if handled, False if not present.
     """
-    if not wait_present(driver, _PERMISSION_ALLOW_BTN, timeout=0.5):
+    if not wait_present(driver, _PERMISSION_ALLOW_BTN, timeout=detect_timeout):
         return False
 
     if allow:
