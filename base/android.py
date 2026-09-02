@@ -17,6 +17,8 @@ Typical usage in a flow:
         handle_anr_if_present(driver)
 """
 import logging
+import re
+import subprocess
 from enum import Enum
 from typing import Optional
 
@@ -113,6 +115,91 @@ def detect_system_overlay(driver) -> Optional[SystemOverlay]:
     if wait_present(driver, _PERMISSION_ALLOW_BTN, timeout=0.5):
         return SystemOverlay.PERMISSION
     return None
+
+
+# Whether the keyguard is up, asked of the window manager. The exact key differs by Android
+# build, so several spellings are tried; the first that matches wins.
+_KEYGUARD_FLAGS = (
+    re.compile(r"\bisKeyguardShowing=(true|false)\b"),
+    re.compile(r"\bmKeyguardShowing=(true|false)\b"),
+    re.compile(r"\bmShowingLockscreen=(true|false)\b"),
+    re.compile(r"KeyguardServiceDelegate[\s\S]{0,400}?\bshowing=(true|false)\b"),
+    re.compile(r"\bmIsShowing=(true|false)\b"),
+)
+
+
+def keyguard_showing(device_serial: str = "") -> Optional[bool]:
+    """True if the lock screen is genuinely in front. None when it cannot be determined.
+
+    Exists because a PIN typed at the wrong moment does not fail, it goes *somewhere*. On
+    2026-09-02 Appium believed the phone was locked, typed the device PIN, and the keystrokes
+    landed in a focused Google search box, which then submitted the PIN as a web query. The
+    device was fine; the belief was wrong.
+
+    `mobile: isLocked` is Appium's answer to the same question and is what was wrong, so this
+    asks the window manager directly and callers require both to agree before typing anything.
+    Returning None for "cannot tell" matters: callers must treat that as "do not type", never as
+    "not locked" — a missed unlock is a clean timeout, a mistyped PIN is a leaked secret.
+    """
+    cmd = ["adb"]
+    if device_serial:
+        cmd += ["-s", device_serial]
+    cmd += ["shell", "dumpsys", "window"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except Exception:
+        return None
+    out = result.stdout or ""
+    for pattern in _KEYGUARD_FLAGS:
+        match = pattern.search(out)
+        if match:
+            return match.group(1) == "true"
+    return None
+
+
+def unlock_if_locked(driver, pin: str, device_serial: str = "") -> bool:
+    """Unlock the device by typing `pin` on the keyguard — but only if the keyguard is really up.
+
+    Returns True if an unlock was attempted. Never raises: a device that will not unlock should
+    surface as the wallet failing to come forward, not as a fixture explosion.
+
+    Two independent confirmations are required before the PIN is sent, because the cost of being
+    wrong is asymmetric — Appium's own view (`mobile: isLocked`) and the window manager's
+    (`keyguard_showing`). Historically only the first was consulted, and when it was wrong the PIN
+    was typed into whatever had focus.
+
+    The `uiautomator` strategy is not a detail: Appium's default `locksettings` strategy unlocks by
+    *deleting* the device lock and re-creating it, and clearing the lock credential wipes every
+    enrolled fingerprint. Wallets holding credentials behind a biometric-backed key then land in
+    Android's fingerprint enrollment wizard, which no test can complete.
+    """
+    if not pin:
+        return False
+    try:
+        if not driver.execute_script("mobile: isLocked"):
+            return False
+    except Exception as exc:
+        logger.warning(f"[android] Could not ask Appium whether the device is locked: {exc}")
+        return False
+
+    showing = keyguard_showing(device_serial)
+    if showing is not True:
+        logger.warning(
+            "[android] Appium reports the device locked, but the window manager "
+            f"{'disagrees' if showing is False else 'could not be read'} — NOT typing the device "
+            "PIN. Typing it now would send it to whatever window has focus; on 2026-09-02 that "
+            "was a search box, which submitted the PIN as a web query."
+        )
+        return False
+
+    logger.info("[android] Keyguard is up — unlocking with the device PIN")
+    try:
+        driver.execute_script("mobile: unlock", {
+            "key": pin, "type": "pin", "strategy": "uiautomator",
+        })
+    except Exception as exc:
+        logger.warning(f"[android] Unlock attempt failed: {exc}")
+    return True
 
 
 def detect_crash_or_anr(driver, timeout: float = 0.3) -> Optional[SystemOverlay]:

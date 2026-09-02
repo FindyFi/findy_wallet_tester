@@ -15,7 +15,8 @@ from appium import webdriver
 from appium.options.android.uiautomator2.base import UiAutomator2Options
 from selenium.webdriver.support.ui import WebDriverWait
 
-from base.android import handle_biometric_if_present, handle_permission_if_present
+from base.android import (handle_biometric_if_present, handle_permission_if_present,
+                          unlock_if_locked)
 from base.base_test import BaseTest, UpdateNotFinished
 from base.conftest_helpers import node_failed
 from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
@@ -413,27 +414,30 @@ def driver(request):
     opts.no_reset = True
 
     device_pin = config["android"].get("device_pin", "")
-    if device_pin:
-        opts.set_capability("appium:unlockType", "pin")
-        opts.set_capability("appium:unlockKey", device_pin)
-        # Unlock by typing the PIN on the keyguard, NOT via adb.
-        #
-        # Appium's default unlock strategy is "locksettings", which unlocks by *deleting* the
-        # device lock and re-creating it:
-        #     locksettings clear --old <pin>
-        #     locksettings set-pin <pin>
-        # Clearing the lock credential wipes every enrolled fingerprint (Android guarantees
-        # that), and set-pin restores only the PIN. Any wallet that stores credentials behind a
-        # biometric-backed key then finds no biometric enrolled and sends the run into Android's
-        # fingerprint *enrollment* wizard, which no test can complete — see
-        # wallets/authbound/flows/credential_flow.py.
-        #
-        # It only bites when a session starts with the screen locked, which is why it looked
-        # intermittent: the log says "Screen already unlocked, doing nothing" on the runs that
-        # were unaffected. Diagnosed 2026-08-10 from appium.log.
-        opts.set_capability("appium:unlockStrategy", "uiautomator")
+
+    # Deliberately NOT setting appium:unlockKey / appium:unlockType.
+    #
+    # Those make Appium unlock during session creation, before any of our code runs, so there is
+    # no way to check first whether the keyguard is actually up. On 2026-09-02 it decided the
+    # phone was locked when it was not, typed the device PIN, and the keystrokes went into a
+    # focused Google search box — which submitted the PIN as a web query. The failure surfaced
+    # only as "The device has failed to be unlocked"; the leak was silent.
+    #
+    # `base.android.unlock_if_locked` does the same job after the session exists, and requires
+    # both Appium and the window manager to agree the keyguard is up before typing anything.
+    # It also keeps the `uiautomator` strategy, which is load-bearing: Appium's default
+    # "locksettings" strategy unlocks by *deleting* the device lock and re-creating it
+    # (`locksettings clear --old <pin>` then `set-pin`), and clearing the lock credential wipes
+    # every enrolled fingerprint. Wallets holding credentials behind a biometric-backed key then
+    # land in Android's fingerprint enrollment wizard, which no test can complete — see
+    # wallets/authbound/flows/credential_flow.py. Diagnosed 2026-08-10 from appium.log.
 
     driver = webdriver.Remote(device["server"], options=opts)  # type: ignore
+
+    # Unlock immediately, so everything downstream can assume a usable screen — this is the job
+    # the unlockKey capability used to do, now under a guard we control.
+    unlock_if_locked(driver, device_pin, device.get("udid", ""))
+
     yield driver
     driver.quit()
 
@@ -475,12 +479,8 @@ def app(driver, request):
     # wipes enrolled fingerprints (see the driver capabilities above).
     try:
         driver.press_keycode(_KEYCODE_WAKEUP)
-        if device_pin_for(config) and driver.execute_script("mobile: isLocked"):
-            driver.execute_script("mobile: unlock", {
-                "key": device_pin_for(config),
-                "type": "pin",
-                "strategy": "uiautomator",
-            })
+        unlock_if_locked(driver, device_pin_for(config),
+                         driver.capabilities.get("udid", ""))
     except Exception as e:
         logger.warning(f"[app] Could not wake/unlock the screen: {e}")
 
