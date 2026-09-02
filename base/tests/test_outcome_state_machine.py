@@ -229,3 +229,15 @@ def test_prompt_loop_names_the_prompt_that_looped():
         outcome.raise_for(state, FakeDriver(), screens(), c, expected="credential offer",
                           timeout=30, interstitials=(forever,))
     assert "device-pin" in str(exc.value)
+
+
+@pytest.mark.parametrize("expected,article", [
+    ("credential offer", "a credential offer"),
+    ("information request", "an information request"),
+])
+def test_messages_use_the_right_article(expected, article):
+    """These strings are published verbatim; "a information request" is not good enough."""
+    with pytest.raises(outcome.FlowFailure) as exc:
+        outcome.raise_for(outcome.DISMISSED, FakeDriver(), screens(), ctx(),
+                          expected=expected, timeout=30)
+    assert article in str(exc.value)

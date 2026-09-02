@@ -79,6 +79,11 @@ class FlowFailure(RuntimeError):
         self.category = category
 
 
+def _a(noun: str) -> str:
+    """"a credential offer" but "an information request" — these strings get published."""
+    return "an" if noun[:1].lower() in "aeiou" else "a"
+
+
 def _foreground(driver) -> str:
     try:
         return driver.current_package or "unknown"
@@ -194,7 +199,7 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
 
     if state == LOST_SESSION:
         raise FlowFailure(LOST_SESSION, (
-            f"[{flow}] The Appium session died while waiting for a {expected} for '{what}'. "
+            f"[{flow}] The Appium session died while waiting for {_a(expected)} {expected} for '{what}'. "
             f"This is a harness failure, not a verdict about {wallet} or the provider"
         ))
 
@@ -221,8 +226,8 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
     if state == PROMPT_LOOP:
         names = ", ".join(_interstitials.over_budget(interstitials, ctx.fired)) or "a prompt"
         raise FlowFailure(PROMPT_LOOP, (
-            f"[{flow}] {wallet} kept re-showing {names} for '{what}' instead of progressing to a "
-            f"{expected}. Every prompt was answered and a fresh one appeared immediately"
+            f"[{flow}] {wallet} kept re-showing {names} for '{what}' instead of progressing to "
+            f"{_a(expected)} {expected}. Every prompt was answered and a fresh one appeared immediately"
         ))
 
     if state == PROCESSING:
@@ -233,7 +238,7 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
 
     if state == DISMISSED:
         raise FlowFailure(DISMISSED, (
-            f"[{flow}] {wallet} returned to its home screen without showing a {expected} for "
+            f"[{flow}] {wallet} returned to its home screen without showing {_a(expected)} {expected} for "
             f"'{what}'. The deeplink was accepted by the app but produced nothing"
         ))
 
