@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import time
 import pytest
 from datetime import datetime
@@ -127,6 +128,15 @@ def pytest_configure(config):
         run_dir = Path(os.environ[_ENV_RUN_DIR])
     else:
         app_name = _detect_wallet_name(config)
+
+        if app_name == "unknown":
+            # Not a wallet session — `pytest base/tests/` and the like. Publishing a run directory,
+            # an HTML report and a logcat capture for it would put a wallet-shaped result in
+            # reports/ for something that never touched a wallet, and those stray dirs then invite
+            # cleanup that can delete a live run (which is exactly how a real heidi run was
+            # destroyed on 2026-09-02). Use a scratch directory and start no logcat.
+            config._run_dir = Path(tempfile.mkdtemp(prefix="pytest-nonwallet-"))
+            return
 
         # run_tests.py pre-creates a shared session dir and advertises it via
         # PYTEST_SESSION_DIR.  A direct pytest call creates its own directory.
