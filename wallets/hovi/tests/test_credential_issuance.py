@@ -5,7 +5,7 @@ from pathlib import Path
 
 from base.test_cases import issuance_cases
 from providers.factory import get_provider
-from wallets.hovi.flows import outcome
+from base import outcome
 from wallets.hovi.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
