@@ -1,60 +1,61 @@
 import logging
 import time
 
-from base.android import handle_permission_if_present
-from base.utils import wait_present
+from selenium.common.exceptions import WebDriverException
+
+from base import interstitials, outcome
+from base.flow_context import FlowContext
 from providers.base import DeeplinkProvider
 from wallets.unime.pages import pin_page as pin_screen
 from wallets.unime.pages.pin_page import PinPage
-from wallets.unime.pages.home_page import SCREEN_ID as _home_id
-from wallets.unime.pages.verification_request_page import (
-    VerificationRequestPage,
-    SCREEN_ID as _request_id,
-    on_screen as request_on_screen,
-)
+from wallets.unime.pages.verification_request_page import VerificationRequestPage
+from wallets.unime.pages.verification_request_page import on_screen as _request_on_screen
+from wallets.unime.screens import SCREENS
 
 logger = logging.getLogger(__name__)
-_KEYCODE_HOME = 3
+
+_INTERSTITIALS = (
+    interstitials.permission_dialog(),
+    interstitials.screen_action(
+        "app-password", pin_screen.on_screen,
+        lambda driver, ctx: PinPage(driver, **ctx.page_args).enter_pin(ctx.pin),
+    ),
+)
 
 
 def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: str,
         pin: str = "", **page_args):
-    url = provider.get(credential_name)
-    timeouts = page_args.get("timeouts", {})
-    default_timeout = timeouts.get("credential_offer", timeouts.get("default", 30))
+    """Open a verification request deeplink and share credentials in the unime wallet.
 
-    # logger.info("[verification_flow] Backgrounding app before deeplink")
-    # driver.press_keycode(_KEYCODE_HOME)
-    # time.sleep(2)
+    As in credential_flow, the app is not backgrounded first and the URL is never rewritten.
+    """
+    ctx = FlowContext(
+        flow="verification_flow", wallet=SCREENS.name, what=credential_name,
+        app_package=app_package, pin=pin,
+        device_pin=page_args.get("device_pin", ""), page_args=page_args,
+    )
+    t = ctx.timeout("credential_offer")
+    ctx.url = provider.get(credential_name)
 
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
-    driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
+    try:
+        driver.execute_script("mobile: deepLink", {"url": ctx.url, "package": app_package})
+    except WebDriverException as exc:
+        logger.info(f"[verification_flow] Android would not route the deeplink: {exc.msg}")
+        outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="information request",
+                          timeout=t)
 
     time.sleep(3)
 
-    handle_permission_if_present(driver)
+    logger.info("[verification_flow] Waiting for verification request screen")
+    state = outcome.wait_for(driver, SCREENS, ctx, target=_request_on_screen, timeout=t,
+                             interstitials=_INTERSTITIALS)
 
-    if pin_screen.on_screen(driver, timeout=3):
-        if not pin:
-            raise RuntimeError(
-                "App showed password screen after deeplink — pass pin= to verification_flow.run()"
-            )
-        logger.info("[verification_flow] Password screen — unlocking")
-        PinPage(driver, **page_args).enter_pin(pin)
+    if state != outcome.SUCCESS:
+        outcome.raise_for(state, driver, SCREENS, ctx, expected="information request", timeout=t,
+                          interstitials=_INTERSTITIALS)
 
-    if request_on_screen(driver, timeout=default_timeout):
-        logger.info("[verification_flow] Verification request screen — sharing credentials")
-        VerificationRequestPage(driver, **page_args).share()
-        logger.info(f"[verification_flow] Credentials shared for '{credential_name}'")
-        return
-
-    if wait_present(driver, _home_id, timeout=3):
-        raise RuntimeError(
-            f"[verification_flow] App returned to home without showing a consent screen for "
-            f"'{credential_name}' — deeplink may not have been processed"
-        )
-
-    raise RuntimeError(
-        f"[verification_flow] No recognisable screen appeared after deeplink "
-        f"for '{credential_name}' (timed out after {default_timeout}s)"
-    )
+    logger.info("[verification_flow] Verification request screen — sharing credentials")
+    VerificationRequestPage(driver, **page_args).share()
+    outcome.raise_if_rejected(driver, SCREENS, ctx, action="shared for")
+    logger.info(f"[verification_flow] Credentials shared for '{credential_name}'")
