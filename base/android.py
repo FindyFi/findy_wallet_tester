@@ -117,27 +117,30 @@ def detect_system_overlay(driver) -> Optional[SystemOverlay]:
     return None
 
 
-# Whether the keyguard is up, asked of the window manager. The exact key differs by Android
-# build, so several spellings are tried; the first that matches wins.
-_KEYGUARD_FLAGS = (
-    re.compile(r"\bisKeyguardShowing=(true|false)\b"),
-    re.compile(r"\bmKeyguardShowing=(true|false)\b"),
-    re.compile(r"\bmShowingLockscreen=(true|false)\b"),
-    re.compile(r"KeyguardServiceDelegate[\s\S]{0,400}?\bshowing=(true|false)\b"),
-    re.compile(r"\bmIsShowing=(true|false)\b"),
-)
+# Whether the keyguard is up, asked of the window manager.
+#
+# `mInputRestricted` is the flag, and it is the ONLY one measured to work. On the test phone
+# (moto g24, Android 14) `isKeyguardShowing` is permanently `true` — it reads true while the Play
+# Store is in the foreground and interactive — and `mDreamingLockscreen` is equally stuck.
+# Believing either of those is what let the device PIN be typed into a focused app twice.
+#
+# Measured 2026-09-02 on the same phone, screen on both times:
+#     unlocked, Play Store in front : isKeyguardShowing=true   mInputRestricted=false
+#     locked, keyguard up           : isKeyguardShowing=true   mInputRestricted=true
+#
+# `mInputRestricted` is WindowManager's own "input is restricted because the keyguard is up", so
+# it answers the question we actually care about: can this device receive keystrokes meant for a
+# lock screen, or will they land in an app?
+_INPUT_RESTRICTED = re.compile(r"\bmInputRestricted=(true|false)\b")
 
 
 def keyguard_showing(device_serial: str = "") -> Optional[bool]:
-    """True if the lock screen is genuinely in front. None when it cannot be determined.
+    """True if the lock screen is genuinely up. None when it cannot be determined.
 
     Exists because a PIN typed at the wrong moment does not fail, it goes *somewhere*. On
     2026-09-02 Appium believed the phone was locked, typed the device PIN, and the keystrokes
-    landed in a focused Google search box, which then submitted the PIN as a web query. The
-    device was fine; the belief was wrong.
+    landed in a focused Google search box, which submitted the PIN as a web query.
 
-    `mobile: isLocked` is Appium's answer to the same question and is what was wrong, so this
-    asks the window manager directly and callers require both to agree before typing anything.
     Returning None for "cannot tell" matters: callers must treat that as "do not type", never as
     "not locked" — a missed unlock is a clean timeout, a mistyped PIN is a leaked secret.
     """
@@ -149,12 +152,12 @@ def keyguard_showing(device_serial: str = "") -> Optional[bool]:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     except Exception:
         return None
-    out = result.stdout or ""
-    for pattern in _KEYGUARD_FLAGS:
-        match = pattern.search(out)
-        if match:
-            return match.group(1) == "true"
-    return None
+    match = _INPUT_RESTRICTED.search(result.stdout or "")
+    if not match:
+        # No opinion rather than a guess. The other keyguard flags were tried and are unreliable
+        # (see above), so there is nothing safe to fall back to.
+        return None
+    return match.group(1) == "true"
 
 
 def unlock_if_locked(driver, pin: str, device_serial: str = "") -> bool:

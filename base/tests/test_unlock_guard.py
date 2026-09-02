@@ -88,3 +88,42 @@ def test_a_failing_unlock_does_not_raise(monkeypatch):
             raise RuntimeError("unlock exploded")
 
     assert android.unlock_if_locked(Boom(), "1234", "serial") is True
+
+
+# --- reading the keyguard state off the device -------------------------------------------------
+
+def _dumpsys(monkeypatch, text):
+    import subprocess
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: type("R", (), {"stdout": text, "returncode": 0})())
+
+
+# Real fragments, captured from the moto g24 test phone on 2026-09-02 in both states. Note
+# isKeyguardShowing reads `true` in BOTH — it is stuck on this device, and trusting it is what
+# leaked the PIN. Only mInputRestricted tells the two apart.
+_UNLOCKED = "  isKeyguardShowing=true\n  mInputRestricted=false\n  mDreamingLockscreen=true\n"
+_LOCKED = "  isKeyguardShowing=true\n  mInputRestricted=true\n  mDreamingLockscreen=true\n"
+
+
+def test_unlocked_device_is_reported_unlocked_despite_a_stuck_keyguard_flag(monkeypatch):
+    _dumpsys(monkeypatch, _UNLOCKED)
+    assert android.keyguard_showing("serial") is False
+
+
+def test_locked_device_is_reported_locked(monkeypatch):
+    _dumpsys(monkeypatch, _LOCKED)
+    assert android.keyguard_showing("serial") is True
+
+
+def test_a_device_without_the_flag_gives_no_opinion(monkeypatch):
+    """No safe fallback exists — the other keyguard flags were measured unreliable."""
+    _dumpsys(monkeypatch, "  isKeyguardShowing=true\n  mDreamingLockscreen=true\n")
+    assert android.keyguard_showing("serial") is None
+
+
+def test_unreadable_dumpsys_gives_no_opinion(monkeypatch):
+    import subprocess
+    def boom(*a, **k):
+        raise OSError("adb not found")
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert android.keyguard_showing("serial") is None
