@@ -69,7 +69,7 @@ a difference to justify. Status as of 2026-08-20, branch `fix/hovi_general`.
 | Update app to a newer release         |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
 | Record app version                    |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
 | Launch app                            |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Onboard from fresh install            |    ❌     |   ❌   |  ✅   |  ✅  |   ✅    |    ✅    |   ⚠️    |  ✅   |
+| Onboard from fresh install            |    ❌     |   ❌   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Open / unlock returning wallet        |    ✅     |   ✅   |  ✅   |  –   |   ✅    |    ✅    |   –    |  ✅   |
 | Reset wallet (wipe + re-onboard)      |    ⚠️      |   ⚠️    |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Clean-slate strategy                  |  delete   | delete |  wipe | wipe |  wipe   |   wipe   |  wipe  | wipe  |
@@ -77,10 +77,10 @@ a difference to justify. Status as of 2026-08-20, branch `fix/hovi_general`.
 | Issue credential (deeplink -> accept) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Verify credential (deeplink -> share) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Count credentials                     |    ✅     |   ⚠️    |  ✅   |  ✅  |   ✅    |    ⚠️     |   ✅   |  ✅   |
-| **Assert** the count changed          |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ⚠️     |   ✅   |  ✅   |
-| Open / review a credential's detail   |    ⚠️      |   ✅   |  ⚠️    |  ⚠️   |   ❌    |    ❌    |   ❌   |  ❌   |
-| Delete a single credential            |    ✅     |   ✅   |  ❌   |  ✅  |   ❌    |    ❌    |   ❌   |  ❌   |
-| Wipe all credentials (post-suite)     |    ✅     |   ✅   |  ❌   |  ✅  |   ❌    |    ❌    |   ❌   |  ❌   |
+| **Assert** the count changed          |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
+| Open / review a credential's detail   |    ⚠️      |   ✅   |  ⚠️    |  ⚠️   |   ⚠️     |    ⚠️     |   ⚠️    |  ⚠️    |
+| Delete a single credential            |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   –    |  ✅   |
+| Wipe all credentials (post-suite)     |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   –    |  ✅   |
 | **Support**                           |           |        |       |      |         |          |        |       |
 | Detect app error screens              |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ⚠️    |
 | Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
@@ -213,6 +213,32 @@ because that first tab click never resolved and `BasePage.click` reports every t
 clickable", which reads like an overlay or timing problem. When a locator times out, grep the run's
 `appium.log`: `no such element` on every retry means not-found, not un-clickable.
 
+**toppan has no in-app credential deletion, and that is the wallet's answer, not a gap in ours.**
+Measured 2026-09-03 on version 1.5.0 build 7, every affordance checked: the detail screen (reached
+by tapping a card, behind a device-auth prompt) shows the claims and a back arrow and nothing else;
+long-press on a card does nothing; swipe left and swipe right do nothing; Settings offers only App
+Details and Language. So its rows are `–`, not `❌`. Its only clean slate is the app wipe, which
+works — see below.
+
+**toppan's counting was wrong in the opposite direction to gataca's, and for the opposite reason.**
+The card locator reached the list through `@scrollable="true"`, and **a list that fits on screen does
+not scroll**. Measured 2026-09-03 on a freshly wiped wallet holding 3 credentials: zero scrollable
+nodes anywhere in the tree, count `0`, and a perfectly good issuance published as "not stored". The
+two tree shapes are structurally identical — the scrollable flag is the only difference — so the
+locator worked only because toppan's wallet was permanently dirty (it had reached 14). *Cleaning the
+wallet up is what broke the measurement.* Now unioned with a path anchored on a rendered card, giving
+3 and 14 against the captured dumps.
+
+Put the two findings side by side, because together they are the argument for clean-slate: **gataca
+over-reports a clean wallet's neighbours by saturating, toppan under-reported a clean wallet to
+zero.** Both published wrong cells, both only on wallet states nobody was checking.
+
+**toppan's wipe-and-onboard works** (2026-09-03): `TOPPAN_RESET=true` clears the app, lands on the
+language modal, selects English (UK), reaches home, and then issues `hovi_issuer` on `0 → 1`. Note
+that `DEFAULT_RESET=false`, so **published runs do not wipe toppan** — which is how it reached 14
+credentials. toppan needs `TOPPAN_RESET=true` in `.env` to hold to the clean-slate policy, since it
+has no delete to fall back on.
+
 **Counting rendered cards saturates, and gataca proves it.** Measured 2026-09-03: a gataca prune
 deleted **six** credentials while `count_credentials()` read `3, 3, 3, 3, 3, 2, 1`. It counts card
 elements inside a ScrollView (`home_page.py:59`), and Android only materialises the cards that are
@@ -288,6 +314,79 @@ The five wallets with no cleanup at all (heidi, paradym, procivis, toppan, unime
 captured live: **nothing in the 792 archived XML dumps touches a delete path**, because dumps come
 from issuance and verification, which never open a detail screen. Two of them are visibly paying for
 it — heidi reached 19 credentials and paradym 10 on 2026-09-02, against a clean-slate target of 0.
+
+- **unime**: Home → tap a card → "Credential Information" → the kebab, matched on
+  `content-desc="Open credential menu"` → "Delete credential" → a confirm dialog → "Delete". No
+  authentication, no protected credential. Added 2026-09-03 and proven the same day: **6 → 0**, one
+  credential per iteration with the count falling by exactly one each time, which incidentally
+  exercises the count at many, few, one and zero in a single run — the check gataca and toppan
+  both turned out to be missing.
+
+  Two locator traps here. The kebab's `resource-id` is a generated React Native id (`K6G5r1PDxl`),
+  so it is matched on `content-desc` instead. And the confirmation dialog reuses **"Delete
+  credential"** as its heading, one tap after the menu item of the same text — so the menu item
+  carries `@clickable="true"`, which the heading does not, to tell them apart.
+
+- **paradym**: Home → "All cards" → Cards list → the row's **arrow** (rows are not clickable, the
+  arrow is) → Card details → the header's right-hand icon → "Archive card?" → "Yes, archive". Added
+  2026-09-03, proven 8 → 0 and again 2 → 0.
+
+  **Archive is paradym's delete** — the sheet says the card will be deleted from the wallet, and
+  the wallet's own total drops (12 → 11 measured). There is no separate delete. It lands back on
+  the **Cards list**, not home, so each iteration walks home before the loop re-reads the count.
+
+  The archive icon carries no text, content-desc or resource-id, and neither does the back arrow
+  beside it; they are matched as the only two unlabelled Buttons on the screen, archive being the
+  second. That anchor is weak, and it is acceptable only because the **confirmation sheet is the
+  real gate**: tap the wrong control and "Yes, archive" never appears, so it raises instead of
+  doing something else quietly.
+
+  One behaviour cost three attempts to explain and is worth not re-deriving: **`wait_present`
+  returns while the Cards list is still transitioning in, and a tap that lands then is silently
+  dropped**. Symptom: the open after every delete failed on the first try, all eight iterations,
+  deterministically. A retry masked it; the archive toast was blamed next and also cleared; the
+  actual fix is a short settle after the list appears, isolated by removing the toast wait and
+  re-running clean.
+
+- **procivis**: Wallet → the card's `.card.header.openDetail` (tapping the card itself only
+  **expands it in place**, it does not navigate) → `CredentialDetailScreen` → kebab
+  (`…header.action`) → "Delete credential" → `CredentialDeletePromptScreen` → **hold** the main
+  button. Added 2026-09-03, proven 12 → 0.
+
+  **The confirmation is a press-and-hold, not a tap** — the screen says "Hold for 3 seconds", and a
+  normal click does nothing whatsoever, which looks exactly like a locator that missed. Held for 4 s
+  via `mobile: longClickGesture`.
+
+  Nearly everything here has a stable React Native testID, which makes procivis the easiest wallet
+  in the suite to locate things in. The action sheet's items are the exception — no ids at all — so
+  "Delete credential" is matched on text.
+
+  That prune also settled the open question in `count_credentials`: **it does undercount a long
+  list.** The wallet held 12, the tree showed 11, and the count stayed at 11 across the first
+  deletion before falling monotonically. Same ceiling problem as gataca, at a higher bound.
+
+- **heidi**: Dashboard → "Credentials" tile → list → the card → detail (INFO / METADATA tabs) →
+  the header's **right-hand button**, which opens "Delete Credential?" directly with no menu in
+  between → "DELETE". Added 2026-09-03, proven 2 → 0 and 1 → 0.
+
+  **The hardest wallet in the suite to locate anything in.** Compose with no test tags: the only
+  resource-id on the whole screen is `composeContent`, and none of the three Buttons carries text
+  or a content-desc. Screens are anchored on text ("METADATA", verified absent from both the
+  dashboard and the list) and the delete button on geometry — the rightmost of the two header
+  Buttons, chosen by greatest `x` rather than a fixed index so it survives a different screen size
+  or emission order. The floating action button is excluded by a `y` bound.
+
+  **Screenshots do not work on heidi's credential screens** — they set `FLAG_SECURE`, so Appium
+  raises `ScreenshotException: Does the current view have 'secure' flag set?`. Capture
+  `page_source` instead. This also means heidi failure screenshots are blank by design, not broken.
+
+  The prune exposed a live counting bug and it is fixed here: `_LIST_COUNT_LABEL` matched "the
+  TextView after the 'Credentials' title", and **the dashboard's tile is also that pair**, so on
+  the dashboard it read the tile's subtitle "Your digital credentials" instead of a count. It
+  failed safe — no digits, so the count was reported unavailable rather than invented — but an
+  empty heidi could not be counted at all. Now matched on the label's own text
+  ("<n> DIGITAL CREDENTIALS" / "No credentials"), which exists on the list screen and nowhere else,
+  so waiting for it *is* the screen check.
 
 - **gataca**: detail → trash → "Yes, delete" → system biometric, and it must preserve the
   self-attested device credential.
