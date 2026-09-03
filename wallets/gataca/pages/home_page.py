@@ -74,7 +74,7 @@ class HomePage(BasePage):
         except TimeoutException:
             return ""
 
-    def open_deletable_credential(self) -> bool:
+    def open_credential(self) -> bool:
         """Open the first credential card that is safe to delete (i.e. not the self-attested
         device credential). Returns True if one was opened, False if none remain."""
         for card in self.driver.find_elements(*_credential_card):

@@ -3,7 +3,7 @@
     Home -> open a deletable card -> Credential details -> trash button ->
     "Yes, delete" -> system biometric prompt (PIN) -> back on Home.
 
-Gataca always keeps its self-attested device credential, so `open_deletable_credential()` does the
+Gataca always keeps its self-attested device credential, so `open_credential()` does the
 filtering that other wallets do with a `can_delete()` gate on the detail screen.
 """
 from base import cleanup, interstitials
@@ -16,7 +16,7 @@ from wallets.gataca.pages.home_page import HomePage
 _INTERSTITIALS = (interstitials.device_pin_prompt(),)
 
 
-def prune_credentials(driver, max_count: int, **page_args) -> int:
+def prune_credentials(driver, max_count: int = 0, **page_args) -> int:
     """Delete credentials until at most `max_count` remain. Must start and end on the home screen.
 
     Returns the number of credentials deleted.
@@ -25,7 +25,7 @@ def prune_credentials(driver, max_count: int, **page_args) -> int:
     detail = CredentialDetailPage(driver, **page_args)
 
     def open_detail() -> bool:
-        if not home.open_deletable_credential():
+        if not home.open_credential():
             return False
         detail.wait_until_loaded()
         return True

@@ -15,8 +15,8 @@ No authentication, and no protected card.
 import logging
 
 from base import cleanup
-from wallets.paradym.pages import card_detail_page
-from wallets.paradym.pages.card_detail_page import CardDetailPage
+from wallets.paradym.pages import credential_detail_page
+from wallets.paradym.pages.credential_detail_page import CredentialDetailPage
 from wallets.paradym.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
@@ -35,13 +35,13 @@ def prune_credentials(driver, max_count: int = 0, **page_args) -> int:
     Returns the number of credentials deleted.
     """
     home = HomePage(driver, **page_args)
-    detail = CardDetailPage(driver, **page_args)
+    detail = CredentialDetailPage(driver, **page_args)
 
     def open_detail() -> bool:
         for attempt in range(1, _MAX_OPEN_ATTEMPTS + 1):
             if not home.open_credential():
                 return False
-            if card_detail_page.on_screen(driver, timeout=detail._get_timeout("default")):
+            if credential_detail_page.on_screen(driver, timeout=detail._get_timeout("default")):
                 return True
             logger.warning(
                 f"[cleanup_flow] paradym did not open the card on attempt "

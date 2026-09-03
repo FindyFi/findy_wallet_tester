@@ -1,5 +1,10 @@
 """Paradym's "Card details" screen and its archive action.
 
+Named `credential_detail_page.CredentialDetailPage` like every other wallet's, even though paradym
+calls the thing a *card* throughout its own UI. The suite needs one name per concept so the seven
+cleanup flows read alike; paradym's own vocabulary is kept in the locators and the prose below,
+where it describes what is actually on screen.
+
 Captured live 2026-09-03:
 
     Home -> "All cards" -> Cards list -> the row's arrow -> Card details ->
@@ -48,7 +53,7 @@ def on_screen(driver, timeout: float = 2) -> bool:
     return wait_present(driver, SCREEN_ID, timeout=timeout)
 
 
-class CardDetailPage(BasePage):
+class CredentialDetailPage(BasePage):
     def wait_until_loaded(self):
         try:
             WebDriverWait(self.driver, self._get_timeout("default")).until(
