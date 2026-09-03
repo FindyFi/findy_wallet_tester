@@ -57,6 +57,21 @@ _CAROUSEL_CARD = (AppiumBy.XPATH,
 # The label sits in the app bar, above the screen's Documents/Actions/Health sub-tabs. The cards
 # themselves are android.view.View with NO resource-id inside a scrolling list — which is why
 # counting them was never a workable alternative.
+# A document card in the Wallet tab's list. This is the *complete* enumeration — the dashboard
+# carousel is not, which is why both exist (see `open_credential`).
+#
+# Within the documents root the only clickables are the search field, the search button and the
+# cards, so "a clickable View carrying more than one line of text" separates them exactly:
+# measured 2026-09-03, the search EditText holds 1 TextView (its hint), the search button 0, and
+# the card 6 ("AB", "AUTHBOUND ID", "Issued", "Eläkeläistodiste", "Authbound Digital ID",
+# "Valid until: 10 Sept 2026"). Restricting to `android.view.View` also excludes the EditText.
+#
+# Matching on any of that text would be wrong — it is the credential's own content and changes
+# with the issuer.
+_DOCUMENTS_CARD = (AppiumBy.XPATH,
+    '//*[@resource-id="io.authbound.wallet:id/dashboard_documents_screen_root"]'
+    '//android.view.View[@clickable="true" and count(.//android.widget.TextView) > 1]')
+
 _DOCUMENT_COUNT = (AppiumBy.XPATH,
     '//android.widget.TextView[@text="Wallet"]'
     '/following-sibling::android.widget.TextView[1]'
@@ -92,11 +107,46 @@ class HomePage(BasePage):
 
         `BasePage.click` re-locates and retries on staleness, which covers the recomposition that
         follows the tab switch — so the card must not be cached here.
+
+        **The dashboard carousel is not a complete enumeration**, which cost a cleanup on
+        2026-09-03: with the wallet at 1 the dashboard was *empty* — no carousel, no card, nothing
+        but the app bar and the nav bar — while the Wallet tab still listed the document and its
+        detail screen still offered "Delete document". The prune therefore stopped one short and
+        reported "no deletable credential left", which was false. The earlier 4 → 3 observation
+        that this path was built on had only ever demonstrated a single deletion, so it never
+        showed the gap.
+
+        So the carousel is tried first — it is the proven path and it is already on screen — and
+        the documents list is the fallback that makes the traversal complete.
         """
-        if not wait_present(self.driver, _CAROUSEL_CARD,
+        if wait_present(self.driver, _CAROUSEL_CARD, timeout=self._get_timeout("default")):
+            self.click(_CAROUSEL_CARD)
+            return True
+        return self._open_from_documents_list()
+
+    def _open_from_documents_list(self) -> bool:
+        """Open the first document from the Wallet tab's list. False when the list is empty.
+
+        Leaves the app on the Wallet tab, which is safe for the prune loop: `dashboard_screen_root`
+        is present on both tabs, so `wait_until_loaded()` still passes, and `count_credentials()`
+        navigates from wherever it is and returns to the Home tab itself.
+
+        The list needs its own wait. It renders late enough that a fixed sleep of 2 s saw an empty
+        accessibility tree — no cards, no search box, not even the documents root — which is the
+        same "rendering outside the tree" this wallet is known for. Waiting on the root and then
+        on the card is what makes it reliable.
+        """
+        try:
+            self.click(_WALLET_TAB)
+            self.find(_DOCUMENTS_ROOT)
+        except Exception as e:
+            logger.warning(f"[cleanup] authbound: could not open the documents list: {e}")
+            return False
+
+        if not wait_present(self.driver, _DOCUMENTS_CARD,
                             timeout=self._get_timeout("default")):
             return False
-        self.click(_CAROUSEL_CARD)
+        self.click(_DOCUMENTS_CARD)
         return True
 
     def count_credentials(self) -> int:
