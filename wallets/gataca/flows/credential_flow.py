@@ -16,19 +16,29 @@ _EMAIL_UNAVAILABLE = (AppiumBy.XPATH, '//*[@text="Unavailable"]')
 _GET_CREDENTIALS_BTN = (AppiumBy.XPATH, '//*[@content-desc="Get Credentials"]')
 from wallets.gataca.pages.credential_offer_page import CredentialOfferPage, on_screen as _offer_on_screen
 from wallets.gataca.pages.error_page import ErrorPage, on_screen as _error_on_screen
-from wallets.gataca.pages.success_page import SuccessPage, on_screen as _success_on_screen
+from wallets.gataca.pages.success_page import (
+    SuccessPage,
+    on_screen as _success_on_screen,
+    on_terminal_screen as _issued_on_screen,
+    on_login_screen as _login_on_screen,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _wait_for_result(driver, offer_timeout: float, device_pin: str):
+def _wait_for_result(driver, offer_timeout: float, device_pin: str, page_args: dict):
     """Poll until a credential offer, success, error, or home screen appears.
 
     Some issuers (e.g. procivis, authorization_code grant) raise a system biometric prompt
     *before* showing any offer screen, and then issue the credential directly — landing on the
     "Credentials Shared" success screen without an offer to accept. So we authenticate the prompt
-    via PIN as soon as it appears, and treat the success screen as a terminal result, not just the
+    via PIN as soon as it appears, and treat that success screen as a terminal result, not just the
     offer screen.
+
+    **Only "Credentials Shared" ends the wait.** "Login Successful" wears the same dialog but is
+    the OIDC step, which happens *before* the offer on this very path — so returning "success" for
+    it made `run()` announce a credential that had not been issued, and the count assertion was
+    the only thing standing between that and a green cell. It is confirmed and the poll continues.
     """
     deadline = time.time() + offer_timeout
     while time.time() < deadline:
@@ -36,8 +46,13 @@ def _wait_for_result(driver, offer_timeout: float, device_pin: str):
             logger.info("[credential_flow] Biometric prompt before offer — authenticating with PIN")
             authenticate_with_pin(driver, device_pin)
             continue
-        if _success_on_screen(driver, timeout=1):
+        if _issued_on_screen(driver, timeout=1):
             return "success"
+        if _login_on_screen(driver, timeout=1):
+            logger.info("[credential_flow] Login Successful (OIDC step, not the credential) "
+                        "— confirming and waiting on")
+            SuccessPage(driver, **page_args).confirm()
+            continue
         if _offer_on_screen(driver, timeout=1):
             return "offer"
         if _error_on_screen(driver, timeout=1):
@@ -90,7 +105,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     logger.info(f"[credential_flow] Opening deeplink for '{credential_name}'")
     driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
 
-    result = _wait_for_result(driver, offer_timeout, device_pin)
+    result = _wait_for_result(driver, offer_timeout, device_pin, page_args)
 
     if result == "success":
         # authorization_code issuers (e.g. procivis) issue directly after the pre-offer biometric,
