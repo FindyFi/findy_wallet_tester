@@ -69,20 +69,20 @@ a difference to justify. Status as of 2026-08-20, branch `fix/hovi_general`.
 | Update app to a newer release         |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
 | Record app version                    |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
 | Launch app                            |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Onboard from fresh install            |    ❌     |   ❌   |  ✅   |  ✅  |   ✅    |    ✅    |   –    |  ✅   |
+| Onboard from fresh install            |    ❌     |   ❌   |  ✅   |  ✅  |   ✅    |    ✅    |   ⚠️    |  ✅   |
 | Open / unlock returning wallet        |    ✅     |   ✅   |  ✅   |  –   |   ✅    |    ✅    |   –    |  ✅   |
 | Reset wallet (wipe + re-onboard)      |    ⚠️      |   ⚠️    |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Clean-slate strategy                  |  delete   | delete |  wipe | wipe |  wipe   |   wipe   |  wipe  | wipe  |
 | **Credentials**                       |           |        |       |      |         |          |        |       |
 | Issue credential (deeplink -> accept) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
 | Verify credential (deeplink -> share) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Count credentials                     |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ❌    |   ✅   |  ✅   |
-| **Assert** the count changed          |    ✅     |   ⚠️    |  ⚠️    |  ✅  |   ⚠️     |    ❌    |   ✅   |  ✅   |
+| Count credentials                     |    ✅     |   ⚠️    |  ✅   |  ✅  |   ✅    |    ⚠️     |   ✅   |  ✅   |
+| **Assert** the count changed          |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ⚠️     |   ✅   |  ✅   |
 | Open / review a credential's detail   |    ⚠️      |   ✅   |  ⚠️    |  ⚠️   |   ❌    |    ❌    |   ❌   |  ❌   |
-| Delete a single credential            |    ⚠️      |   ✅   |  ❌   |  ✅  |   ❌    |    ❌    |   ❌   |  ❌   |
-| Wipe all credentials (post-suite)     |    ⚠️      |   ✅   |  ❌   |  ✅  |   ❌    |    ❌    |   ❌   |  ❌   |
+| Delete a single credential            |    ✅     |   ✅   |  ❌   |  ✅  |   ❌    |    ❌    |   ❌   |  ❌   |
+| Wipe all credentials (post-suite)     |    ✅     |   ✅   |  ❌   |  ✅  |   ❌    |    ❌    |   ❌   |  ❌   |
 | **Support**                           |           |        |       |      |         |          |        |       |
-| Detect app error screens              |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ❌   |
+| Detect app error screens              |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ⚠️    |
 | Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
 | Collect in-app debug logs             |    ❌     |   ❌   |  ❌   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
 | Wallet-specific pre-test setup        |     –     |   ✅   |   –   |  –   |    –    |    –     |   –    |   –   |
@@ -213,10 +213,30 @@ because that first tab click never resolved and `BasePage.click` reports every t
 clickable", which reads like an overlay or timing problem. When a locator times out, grep the run's
 `appium.log`: `no such element` on every retry means not-found, not un-clickable.
 
-**Assert the count changed** — the actual pass criterion, and still the most inconsistent thing here.
-Measured 2026-08-17, revised 2026-08-20: authbound, hovi, toppan and unime hard-assert an increase.
-gataca, heidi and paradym compute `count_before`/`count_after` and only log the delta, so a no-op
-issuance passes. procivis asserts nothing at all.
+**Counting rendered cards saturates, and gataca proves it.** Measured 2026-09-03: a gataca prune
+deleted **six** credentials while `count_credentials()` read `3, 3, 3, 3, 3, 2, 1`. It counts card
+elements inside a ScrollView (`home_page.py:59`), and Android only materialises the cards that are
+laid out, so the number is capped by what fits on screen — roughly 3 here.
+
+The prune survives it (the count only saturates upward, so the loop still stops at the right place),
+but **issuance measurement does not**. The same session ran `procivis_issuer → gataca` twice: at 3
+credentials it read `3 → 3, +0` and failed, and immediately after pruning to the floor it read
+`1 → 2, +1` and passed. Same code, same issuer, opposite verdicts — the first was a false red caused
+purely by a dirty wallet. It fails closed, which is the safe direction, but any gataca issuance
+result taken on a non-empty wallet is worthless.
+
+This is a risk for **every wallet that counts card elements** — gataca, hovi, unime and toppan. hovi
+was probed for it (its count did not grow when the list was scrolled) but at only two credentials,
+which cannot show a ceiling of three. The fix is to scroll and accumulate unique cards, or find a
+wallet-reported total; until then, clean-slate is not a tidiness preference for these wallets, it is
+what makes their numbers mean anything.
+
+**Assert the count changed** — the actual pass criterion. Re-measured 2026-09-03: **all eight now
+assert**, where on 2026-08-20 only four did. gataca, heidi and paradym used to compute
+`count_before`/`count_after` and merely log the delta, so a no-op issuance passed; procivis asserted
+nothing at all. heidi, paradym and procivis now go through `base.credential_count.assert_increased`,
+and the run evidence is in the logs (`heidi: 17 → 18, +1`, `paradym: 9 → 10, +1`). procivis is ⚠️
+only because its counting has not yet appeared in a run, not because it does not assert.
 
 hovi is the case that proves why this matters. It passed three issuance tests on `2 → 2, +0` on both
 2026-08-12 and 2026-08-19, green for a week with nothing arriving. A probe confirmed the count was
@@ -227,8 +247,14 @@ The 2026-08-20 runs closed it out. With the wallet wiped, `hovi_issuer` stored a
 run, so hovi can hold what our issuers hand out. The two that still fail were never silent either:
 `authbound_issuer` and `sphereon_issuer` accept the offer and then raise the error banner, which
 nothing was checking. Both now report `rejected`, and `not_stored` no longer fires for hovi at all.
-Re-measure with `grep -l "assert count_after" wallets/*/tests/test_credential_issuance.py` rather
-than trusting this line. It was wrong before (gataca was listed as asserting, and does not).
+Re-measure rather than trusting this line — it has been wrong in both directions, most recently by
+calling gataca unasserted when `assert added > 0` had been sitting in its test all along. The reason
+it keeps going stale is that there are **three spellings** of the same assertion, so a grep for any
+one of them under-reports:
+
+```bash
+grep -lE "assert_increased|assert count_after|assert added" wallets/*/tests/test_credential_issuance.py
+```
 
 **Open / review a credential's detail** — the "check credential" capability. Only gataca has it in
 full (`CredentialDetailPage`, heading "Credential details"). heidi is ⚠️: it navigates to the
@@ -238,11 +264,30 @@ reason — its detail screen is reachable and captured (see below) and does expo
 only uses it to delete; nothing reads a field. So still no wallet can assert *what* was issued
 (claims, issuer, validity), only *how many*.
 
-**Delete a single credential / wipe all** — gataca and hovi, plus authbound as of 2026-08-17.
-authbound is still ⚠️: written, its locators captured live, but not yet exercised by a run. Flip it
-to ✅ after one. hovi was exercised on 2026-08-20, pruning a wallet holding two credentials down to
+**Delete a single credential / wipe all** — gataca, hovi and authbound. authbound closed on
+2026-09-03: pruned 2 → 1 → 0 and, separately, 1 → 0, with the final count asserted each time. hovi was exercised on 2026-08-20, pruning a wallet holding two credentials down to
 empty and re-counting between deletions. Two of its paths have still never occurred in a run, so
 they are not claimed here: `can_delete()` returning False, and the `DeleteRefused` restart-and-retry.
+
+**The loop is shared; only the gestures below are per-wallet.** All three had written the same
+count → open → delete → re-count loop independently and agreed on every structural decision, so it
+now lives once in `base/cleanup.py` and each wallet's `flows/cleanup_flow.py` supplies gestures
+only. Two bounds are stated there rather than in eight places: a delete that reports success while
+leaving the card in place is stopped by `max_deletions` (without it the loop is infinite, because
+the count never falls), and an **unreadable count stops the prune rather than deleting blind** —
+leaving a wallet dirty is recoverable, deleting from a wallet whose contents we cannot see is not.
+`base/tests/test_cleanup_loop.py` pins both with fake gestures and no device.
+
+That sharing also fixed a bug worth remembering when adding the next wallet: hovi had defined its
+own `DeleteRefused(RuntimeError)` with the same name as the shared one, so the exception it raised
+was **never the class the loop catches**, and its restart-and-retry was dead code — on precisely the
+intermittent failure nobody watches closely. Import the exception from `base.cleanup`; do not
+declare another.
+
+The five wallets with no cleanup at all (heidi, paradym, procivis, toppan, unime) need locators
+captured live: **nothing in the 792 archived XML dumps touches a delete path**, because dumps come
+from issuance and verification, which never open a detail screen. Two of them are visibly paying for
+it — heidi reached 19 credentials and paradym 10 on 2026-09-02, against a clean-slate target of 0.
 
 - **gataca**: detail → trash → "Yes, delete" → system biometric, and it must preserve the
   self-attested device credential.
