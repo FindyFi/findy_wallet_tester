@@ -24,6 +24,15 @@ _CREDENTIAL_CARD = (
 )
 
 
+# The card's "open detail" affordance. Tapping the card itself only **expands it in place** on the
+# wallet screen — it does not navigate — so this sibling testID is what opens the detail screen.
+_OPEN_DETAIL = (
+    AppiumBy.XPATH,
+    '//*[starts-with(@resource-id, "WalletScreen.credential.")'
+    ' and substring(@resource-id, string-length(@resource-id) - 10) = ".openDetail"]',
+)
+
+
 class HomePage(BasePage):
     def wait_until_loaded(self, timeout=None):
         self.find(SCREEN_ID, timeout=timeout)
@@ -46,3 +55,15 @@ class HomePage(BasePage):
                 "would describe whatever screen is"
             )
         return len(self.driver.find_elements(*_CREDENTIAL_CARD))
+
+    def open_credential(self) -> bool:
+        """Open the first credential's detail screen. False when the wallet shows no card.
+
+        Deleting returns to the wallet with the next card first, so "open the first, delete,
+        repeat" is a complete traversal. The card is located per call rather than held, because
+        the list recomposes after every delete.
+        """
+        if not wait_present(self.driver, _OPEN_DETAIL, timeout=self._get_timeout("default")):
+            return False
+        self.click(_OPEN_DETAIL)
+        return True
