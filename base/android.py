@@ -24,6 +24,7 @@ from typing import Optional
 
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from base.utils import wait_present
@@ -220,6 +221,53 @@ def detect_crash_or_anr(driver, timeout: float = 0.3) -> Optional[SystemOverlay]
     return None
 
 
+# Whether this device can have a fingerprint injected at all, cached per serial — this is
+# consulted inside polling loops, so it must not shell out on every tick.
+_FINGERPRINT_EMULATION: dict = {}
+
+
+def fingerprint_emulation_available(driver) -> bool:
+    """True only on an emulator, where `mobile: fingerprint` can actually inject a touch.
+
+    Appium implements fingerprint injection through the emulator console; **a physical device has
+    no equivalent**, so the call cannot succeed there however many fingers are enrolled. Measured
+    2026-09-04: `ro.kernel.qemu=1` / `ro.build.characteristics=emulator` on the emulator, empty and
+    `default` on the phone (moto g24).
+
+    This matters because the failure is not merely useless. On a physical device the injection
+    raises `WebDriverException`, and the polling loops in authbound's flows catch that class and
+    report "Appium/UiAutomator2 connection lost (app may have crashed)" — a wrong diagnosis
+    published as a result. Wallets on the phone are expected to use `authenticate_with_pin`.
+
+    Unknown (no adb, no serial) is treated as **available**, so a device we cannot inspect keeps
+    today's behaviour rather than silently losing its fingerprint path.
+    """
+    serial = (driver.capabilities or {}).get("deviceUDID", "") if hasattr(driver, "capabilities") else ""
+    if serial in _FINGERPRINT_EMULATION:
+        return _FINGERPRINT_EMULATION[serial]
+
+    available = True
+    if serial:
+        if serial.startswith("emulator-"):
+            available = True
+        else:
+            try:
+                out = subprocess.run(
+                    ["adb", "-s", serial, "shell", "getprop", "ro.build.characteristics"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout
+                qemu = subprocess.run(
+                    ["adb", "-s", serial, "shell", "getprop", "ro.kernel.qemu"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout
+                if out.strip() or qemu.strip():
+                    available = "emulator" in out or qemu.strip() == "1"
+            except Exception:
+                available = True   # could not tell — do not remove a working path
+    _FINGERPRINT_EMULATION[serial] = available
+    return available
+
+
 def handle_biometric_if_present(driver, dismiss_timeout=10, detect_timeout=2) -> bool:
     """If the Android biometric prompt is on screen, simulate a fingerprint and wait for it to dismiss.
 
@@ -236,11 +284,39 @@ def handle_biometric_if_present(driver, dismiss_timeout=10, detect_timeout=2) ->
     if not wait_present(driver, BIOMETRIC_PROMPT, timeout=detect_timeout):
         return False
 
+    if not fingerprint_emulation_available(driver):
+        # Not a failure of this call — the wallet is simply on a device where fingerprint
+        # injection cannot work. Report "not handled" so a caller with a PIN branch takes it.
+        logger.warning(
+            "[android] Biometric prompt detected, but fingerprint injection only works on an "
+            "emulator — this is a physical device. Use authenticate_with_pin() for this wallet"
+        )
+        return False
+
     logger.info("[android] Biometric prompt detected — simulating fingerprint")
     driver.execute_script("mobile: fingerprint", {"fingerprintId": 1})
-    WebDriverWait(driver, dismiss_timeout).until(
-        lambda d: d.current_package != SYSTEMUI_PKG
-    )
+
+    # Wait for the PROMPT to go, not for the foreground package to change.
+    #
+    # The prompt is a systemui *window* drawn over the app, so `current_package` keeps reporting
+    # the app underneath it — measured on heidi 2026-09-03: `current_package` is
+    # 'ch.ubique.heidi.android' while the prompt is up, so `!= SYSTEMUI_PKG` was already true
+    # before the injection and this wait returned instantly. The handler then reported success
+    # with the prompt still on screen, and every polling caller re-detected it and injected
+    # again — five fingerprints in a second and a half, for one prompt that needed ~1.2s to
+    # clear on its own.
+    try:
+        WebDriverWait(driver, dismiss_timeout).until_not(
+            EC.presence_of_element_located(BIOMETRIC_PROMPT)
+        )
+    except TimeoutException:
+        # The fingerprint did not take. Still report it as handled: every caller polls, so
+        # returning True lets them come round and try again — which is what the old instant
+        # return did by accident. The difference is that it is now visible in the log.
+        logger.warning(
+            f"[android] Biometric prompt still on screen {dismiss_timeout}s after the "
+            "fingerprint — it did not register; the caller may retry"
+        )
     return True
 
 
