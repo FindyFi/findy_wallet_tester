@@ -10,7 +10,7 @@
         "credential_offer": 30
     },
     "reporting": {
-        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-false}",
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-true}",
         "xml_on_failure": "${DEFAULT_XML_ON_FAILURE:-true}"
     },
     "onboarding": {
