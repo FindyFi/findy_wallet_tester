@@ -19,7 +19,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from base.android import (handle_biometric_if_present, handle_permission_if_present,
                           unlock_if_locked)
 from base.base_test import BaseTest, UpdateNotFinished
-from base.conftest_helpers import node_failed
+from base.conftest_helpers import node_failed, save_failure_artifacts, screen_is_protected
 from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
                         sanitize_test_name, device_locale)
 
@@ -566,26 +566,10 @@ def app(driver, request):
     # reaches: a wallet's `_ensure_home` raises before its own yield, so its teardown — and the
     # `capture_failure_artifact` inside it — never runs, while this one does.
     if node_failed(request.node) and not getattr(request.node, "_artifact_captured", False):
-        reporting = config.get("reporting", {})
-        test_name = sanitize_test_name(request.node.name)
-        if reporting.get("screenshot_on_failure", True):
-            screenshot_dir = request.config._run_dir / "screenshots"
-            screenshot_dir.mkdir(parents=True, exist_ok=True)
-            path = screenshot_dir / f"{test_name}.png"
-            try:
-                driver.save_screenshot(str(path))
-                logger.info(f"[screenshot] Saved: {path}")
-            except Exception as e:
-                logger.warning(f"[screenshot] Failed to save screenshot: {e}")
-        if reporting.get("xml_on_failure", False):
-            xml_dir = request.config._run_dir / "xml_dumps"
-            xml_dir.mkdir(parents=True, exist_ok=True)
-            path = xml_dir / f"{test_name}.xml"
-            try:
-                path.write_text(driver.page_source, encoding="utf-8")
-                logger.info(f"[xml] Saved: {path}")
-            except Exception as e:
-                logger.warning(f"[xml] Failed to save XML dump: {e}")
+        # One implementation, shared with the per-wallet teardown path. The copy that used to
+        # live here took the screenshot *before* the XML dump — the wrong order on a screen with
+        # FLAG_SECURE, where the dump is the only evidence that can be captured at all.
+        save_failure_artifacts(driver, request, config, wallet=app_name)
 
     if _is_anr_present(driver):
         logger.warning(f"[app] ANR detected for {app_package} — clearing app cache before retry")
@@ -600,7 +584,18 @@ def app(driver, request):
                 test_name = sanitize_test_name(request.node.name)
                 path = recordings_dir / f"{test_name}.mp4"
                 path.write_bytes(base64.b64decode(video_b64))
-                logger.info(f"[recording] Saved: {path}")
+                if screen_is_protected(request, app_name):
+                    # FLAG_SECURE blanks the video as well as screenshots — confirmed 2026-09-04
+                    # by extracting frames from a heidi recording: the wallet's own screens are
+                    # solid black, only the launcher and systemui render. The file is kept because
+                    # those non-app segments are real evidence (an unroutable deeplink lands on the
+                    # launcher), but it must not be read as a recording of the wallet.
+                    logger.info(
+                        f"[recording] Saved: {path} — NOTE: {app_name} sets FLAG_SECURE, so the "
+                        "wallet's own screens are blank in this video; only non-app screens render"
+                    )
+                else:
+                    logger.info(f"[recording] Saved: {path}")
         except Exception as e:
             logger.warning(f"[recording] Failed to save recording: {e}")
 
