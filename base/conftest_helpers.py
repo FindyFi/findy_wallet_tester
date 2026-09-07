@@ -8,6 +8,7 @@ wallet conftest to avoid repeating the same ~40 lines.
 import logging
 from datetime import datetime, timezone
 
+from base.android import is_secure_screen_refusal
 from base.utils import sanitize_test_name
 
 logger = logging.getLogger(__name__)
@@ -64,30 +65,58 @@ def node_failed(node) -> bool:
     return False
 
 
-def capture_failure_artifact(app, request):
-    """Save a screenshot or XML dump when a test has failed.
+def wallet_of(request) -> str:
+    """The wallet under test, from the parametrised `driver` fixture — the config carries no name."""
+    try:
+        return request.node.callspec.params["driver"]
+    except Exception:
+        return ""
 
-    Respects the wallet's ``reporting`` config:
-    - ``xml_on_failure: true``  → saves page XML
-    - ``screenshot_on_failure: true`` (default) → saves screenshot
 
-    Sets ``request.node._artifact_captured`` so the root conftest's ``app``
-    fixture doesn't attempt a second capture.
+def mark_screen_protected(request, wallet: str) -> None:
+    """Record that this wallet refused a capture because its screen sets FLAG_SECURE.
+
+    Kept on the pytest config so it survives across tests in the run, and on the node so the
+    report can show it per test. It is a wallet **property**, not a failure — nothing here fails
+    a test, by decision (2026-09-04).
     """
-    if not node_failed(request.node) or getattr(request.node, "_artifact_captured", False):
-        return
+    protected = getattr(request.config, "_protected_wallets", None)
+    if protected is None:
+        protected = set()
+        request.config._protected_wallets = protected
+    protected.add(wallet)
+    request.node.user_properties.append(("screen_protected", wallet))
 
-    reporting = app.config.get("reporting", {})
+
+def screen_is_protected(request, wallet: str) -> bool:
+    """True if this wallet has refused a capture at any point in this run."""
+    return wallet in getattr(request.config, "_protected_wallets", set())
+
+
+def save_failure_artifacts(driver, request, config, *, wallet: str = "") -> bool:
+    """Dump the page XML and try a screenshot for a failed test. Returns True if anything saved.
+
+    **XML first, always.** On a screen with FLAG_SECURE the screenshot cannot be taken at all, so
+    the dump is the only evidence that survives — it must not be contingent on the screenshot, nor
+    ordered after it. (The two copies of this logic that this function replaces disagreed on that
+    order.)
+
+    A secure-screen refusal is logged as one line and recorded as a wallet property. Previously it
+    surfaced as a generic "Could not save screenshot" plus the full Java stacktrace — 363 lines of
+    it per heidi run — indistinguishable from the screenshot machinery breaking.
+    """
+    reporting = config.get("reporting", {})
     test_name = sanitize_test_name(request.node.name)
+    saved = False
 
-    if reporting.get("xml_on_failure", False):
+    if reporting.get("xml_on_failure", True):
         try:
             xml_dir = request.config._run_dir / "xml_dumps"
             xml_dir.mkdir(parents=True, exist_ok=True)
             path = xml_dir / f"{test_name}.xml"
-            path.write_text(app.driver.page_source, encoding="utf-8")
+            path.write_text(driver.page_source, encoding="utf-8")
             logger.info(f"[conftest] XML dump saved: {path}")
-            request.node._artifact_captured = True
+            saved = True
         except Exception as e:
             logger.warning(f"[conftest] Could not save XML dump: {e}")
 
@@ -96,11 +125,34 @@ def capture_failure_artifact(app, request):
             screenshot_dir = request.config._run_dir / "screenshots"
             screenshot_dir.mkdir(parents=True, exist_ok=True)
             path = screenshot_dir / f"{test_name}.png"
-            app.driver.save_screenshot(str(path))
+            driver.save_screenshot(str(path))
             logger.info(f"[conftest] Screenshot saved: {path}")
-            request.node._artifact_captured = True
+            saved = True
         except Exception as e:
-            logger.warning(f"[conftest] Could not save screenshot: {e}")
+            if is_secure_screen_refusal(e):
+                logger.info(
+                    f"[conftest] No screenshot: {wallet or 'this wallet'} sets FLAG_SECURE on "
+                    "this screen. The XML dump is the evidence for this test"
+                )
+                if wallet:
+                    mark_screen_protected(request, wallet)
+            else:
+                logger.warning(f"[conftest] Could not save screenshot: {e}")
+
+    return saved
+
+
+def capture_failure_artifact(app, request):
+    """Save failure artifacts for a failed test, once.
+
+    Sets ``request.node._artifact_captured`` so the root conftest's ``app`` fixture doesn't
+    attempt a second capture.
+    """
+    if not node_failed(request.node) or getattr(request.node, "_artifact_captured", False):
+        return
+
+    if save_failure_artifacts(app.driver, request, app.config, wallet=wallet_of(request)):
+        request.node._artifact_captured = True
 
 
 def capture_appium_logs(driver, run_dir, test_name):
