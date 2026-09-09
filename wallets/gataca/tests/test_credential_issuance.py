@@ -1,9 +1,9 @@
 import importlib
-import json
 import logging
 import pytest
 from pathlib import Path
 
+from base.config import as_list, wallet_config
 from base.test_cases import issuance_cases
 from providers.factory import get_provider
 from wallets.gataca.pages.home_page import HomePage
@@ -15,17 +15,20 @@ credential_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.credential_
 setup_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.setup_flow")
 _issuance_cases = issuance_cases(APP_NAME)
 
-# DID method(s) to run each case under. Config "did_method" is a single value ("jwk") or a list
-# (["jwk","gatc","ebsi"]) to run the matrix across methods; the conftest switches the active DID
-# per method group and the report shows pass/fail per (method × issuer).
-# Read straight from the file rather than through base.config: did_method shapes the
-# parametrize list at collection time and carries no ${...} placeholder. If it ever moves
-# into .env it needs the same treatment the provider matrix got.
-_did_methods = json.loads(
-    (Path(__file__).parents[1] / "config.json").read_text()
-).get("did_method", "jwk")
-if isinstance(_did_methods, str):
-    _did_methods = [_did_methods]
+# DID method(s) to run each case under: one ("jwk") or several ("jwk,ebsi") to run the matrix
+# across methods. The conftest switches the active DID per method group, and the report shows
+# pass/fail per (method × issuer). Set GATACA_DID_METHODS in .env to choose; the committed
+# default is in wallets/gataca/config.json.
+_did_methods = as_list(wallet_config(APP_NAME).get("did_method", setup_flow.DEFAULT_DID_METHOD))
+_unknown = [m for m in _did_methods if m not in setup_flow.DID_METHODS]
+if _unknown:
+    # Loudly, not by quietly dropping the row: results are published, and a matrix missing a DID
+    # method with nothing to say why is worse than a run that refuses to start.
+    raise pytest.UsageError(
+        f"GATACA_DID_METHODS names {'a DID method' if len(_unknown) == 1 else 'DID methods'} the "
+        f"gataca wallet does not support: {', '.join(sorted(_unknown))}.\n"
+        f"  Known methods: {', '.join(setup_flow.DID_METHODS)}"
+    )
 
 
 @pytest.mark.gataca_did

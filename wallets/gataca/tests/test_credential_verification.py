@@ -1,9 +1,9 @@
 import importlib
-import json
 import logging
 import pytest
 from pathlib import Path
 
+from base.config import as_list, wallet_config
 from base.test_cases import verification_cases
 from providers.factory import get_provider
 from wallets.gataca.pages.home_page import HomePage
@@ -16,14 +16,8 @@ setup_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.setup_flow")
 _verification_cases = verification_cases(APP_NAME)
 
 # DID method(s) to run each case under (see test_credential_issuance for the rationale).
-# Read straight from the file rather than through base.config: did_method shapes the
-# parametrize list at collection time and carries no ${...} placeholder. If it ever moves
-# into .env it needs the same treatment the provider matrix got.
-_did_methods = json.loads(
-    (Path(__file__).parents[1] / "config.json").read_text()
-).get("did_method", "jwk")
-if isinstance(_did_methods, str):
-    _did_methods = [_did_methods]
+# Chosen with GATACA_DID_METHODS in .env.
+_did_methods = as_list(wallet_config(APP_NAME).get("did_method", setup_flow.DEFAULT_DID_METHOD))
 
 
 @pytest.mark.gataca_did

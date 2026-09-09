@@ -2,13 +2,35 @@ from appium.webdriver.common.appiumby import AppiumBy
 
 from base.base_page import BasePage
 from base.credential_count import CredentialCountUnavailable
+from base.utils import wait_present
 
 SCREEN_ID = (AppiumBy.XPATH, '//*[@resource-id="WalletScreen.header"]')
 
-# TODO: capture the per-credential locator on WalletScreen from a live dump with a credential
-# present, then implement count_credentials() below. Procivis uses stable React Native test
-# IDs (e.g. "CredentialOfferScreen.accept"), so the wallet list almost certainly exposes one
-# per credential — it just hasn't been read off a device yet.
+# Procivis is React Native and gives every credential card a stable testID:
+#
+#     WalletScreen.credential.<uuid>.card
+#
+# with a family of children under it (.card.header, .card.header.name, .card.header.openDetail, …).
+# Matching the exact ".card" suffix counts each credential once and avoids the ~9 child ids per
+# card, which also keeps this to a single round trip instead of one per element.
+#
+# Read off 23 historical WalletScreen dumps on 2026-09-02: distinct card ids tracked the wallet's
+# real contents across runs (4 → 6 → 7 → 9 → 10 → 11, then 2 once clean-slate wipes began), and in
+# every dump the number of ".card" ids equalled the number of distinct credential uuids.
+_CREDENTIAL_CARD = (
+    AppiumBy.XPATH,
+    '//*[starts-with(@resource-id, "WalletScreen.credential.")'
+    ' and substring(@resource-id, string-length(@resource-id) - 4) = ".card"]',
+)
+
+
+# The card's "open detail" affordance. Tapping the card itself only **expands it in place** on the
+# wallet screen — it does not navigate — so this sibling testID is what opens the detail screen.
+_OPEN_DETAIL = (
+    AppiumBy.XPATH,
+    '//*[starts-with(@resource-id, "WalletScreen.credential.")'
+    ' and substring(@resource-id, string-length(@resource-id) - 10) = ".openDetail"]',
+)
 
 
 class HomePage(BasePage):
@@ -16,13 +38,32 @@ class HomePage(BasePage):
         self.find(SCREEN_ID, timeout=timeout)
 
     def count_credentials(self) -> int:
-        """Not implemented yet — procivis cannot report a credential count.
+        """How many credential cards the wallet list is showing.
 
-        This is the only wallet that never had a `count_credentials()` at all. It exists now so
-        that callers get the same explicit "count unavailable" answer as every other wallet
-        rather than an AttributeError.
+        Raises `CredentialCountUnavailable` rather than returning 0 when the wallet screen is not
+        in front, because an empty accessibility tree on the wrong screen counts as zero just as
+        convincingly as an empty wallet does.
+
+        Known limit: this counts what is in the accessibility tree. The list scrolls
+        (`WalletScreen.scroll`), and no dump has yet shown more than 11 cards at once, so whether
+        a long list is virtualised is untested. The clean-slate policy keeps wallets at 0 between
+        runs, so it has not mattered; a wallet allowed to accumulate could undercount.
         """
-        raise CredentialCountUnavailable(
-            "procivis: no credential-list locator has been captured yet, so the wallet cannot "
-            "report a count (needs a live dump of WalletScreen with a credential)"
-        )
+        if not wait_present(self.driver, SCREEN_ID, timeout=self._get_timeout("default")):
+            raise CredentialCountUnavailable(
+                "procivis: the wallet screen (WalletScreen.header) is not in front, so any count "
+                "would describe whatever screen is"
+            )
+        return len(self.driver.find_elements(*_CREDENTIAL_CARD))
+
+    def open_credential(self) -> bool:
+        """Open the first credential's detail screen. False when the wallet shows no card.
+
+        Deleting returns to the wallet with the next card first, so "open the first, delete,
+        repeat" is a complete traversal. The card is located per call rather than held, because
+        the list recomposes after every delete.
+        """
+        if not wait_present(self.driver, _OPEN_DETAIL, timeout=self._get_timeout("default")):
+            return False
+        self.click(_OPEN_DETAIL)
+        return True

@@ -8,6 +8,7 @@ from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
 from base.credential_count import CredentialCountUnavailable
+from base.utils import wait_present
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +30,34 @@ _CREDENTIALS_TILE = (AppiumBy.XPATH,
     'and .//android.widget.TextView[@text="Your digital credentials"]]'
 )
 
-# On the credential-list screen the subtitle below the "Credentials" title is the
-# count label: "No credentials" when empty, "<n> credentials" otherwise.
+# The credential list's count label — "<n> DIGITAL CREDENTIALS" (upper case), or "No credentials"
+# when empty.
+#
+# **Matched on the label's own text, not as the sibling of the "Credentials" title.** The sibling
+# form was ambiguous across two screens: the dashboard's tile is also a "Credentials" TextView
+# followed by a subtitle, so on the dashboard it read "Your digital credentials" — the tile's
+# subtitle — instead of a count. Measured 2026-09-03 at the end of a prune, when the tile tap had
+# not navigated yet and the read happened on the dashboard. It failed safe (no digits, so the
+# count was reported unavailable rather than invented), but it made the count unavailable for a
+# wallet that was simply empty.
+#
+# This form exists on the list screen and nowhere else, so waiting for it *is* the screen check.
 _LIST_COUNT_LABEL = (AppiumBy.XPATH,
-    '//android.widget.TextView[@text="Credentials"]'
-    '/following-sibling::android.widget.TextView[1]'
+    '//android.widget.TextView[contains(@text, "DIGITAL CREDENTIALS")'
+    ' or @text="No credentials"]'
 )
 
 # Count-label texts that mean zero without containing a digit. Anything else without a number
 # in it is treated as unreadable rather than as an empty wallet.
 _EMPTY_LIST_TEXTS = ("No credentials",)
+
+
+# A credential card on the list screen. Heidi has no test tags, so this is structural: the card is
+# the only clickable View there that carries a TextView (the credential's name). The list's other
+# clickable View is a header button with no text at all.
+_CREDENTIAL_CARD = (AppiumBy.XPATH,
+    '//android.view.View[@clickable="true" and .//android.widget.TextView]'
+)
 
 
 class HomePage(BasePage):
@@ -87,6 +106,39 @@ class HomePage(BasePage):
                 f"known empty-state text {list(_EMPTY_LIST_TEXTS)}"
             )
         return int(match.group())
+
+    def open_credential(self) -> bool:
+        """Open the first credential's detail screen, via the credential list.
+
+        Must start on the dashboard, since the tile is what navigates. Returns False when the list
+        presents no card, which is how an empty wallet ends a prune.
+        """
+        try:
+            self.click(_CREDENTIALS_TILE)
+        except Exception as e:
+            logger.warning(f"[cleanup] heidi: could not open the credential list: {e}")
+            return False
+        if not wait_present(self.driver, _CREDENTIAL_CARD,
+                            timeout=self._get_timeout("default")):
+            return False
+        self.click(_CREDENTIAL_CARD)
+        return True
+
+    def return_to_dashboard(self, tries: int = 4) -> bool:
+        """Walk back until the dashboard tile is showing.
+
+        Needed after a delete, which lands on the credential list — and `count_credentials()`
+        navigates *from* the dashboard, so an iteration that ended on the list would stall the
+        prune. Bounded, because pressing back past the dashboard leaves the app.
+
+        `SCREEN_ID` cannot serve here: it matches `contains(@text, "Credentials")`, which is true
+        on the list screen too. The tile is what actually distinguishes the dashboard.
+        """
+        for _ in range(tries):
+            if wait_present(self.driver, _CREDENTIALS_TILE, timeout=2):
+                return True
+            self.driver.back()
+        return wait_present(self.driver, _CREDENTIALS_TILE, timeout=2)
 
     def wait_until_loaded(self):
         try:

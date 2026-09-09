@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import time
 import pytest
 from datetime import datetime
@@ -15,8 +16,10 @@ from appium import webdriver
 from appium.options.android.uiautomator2.base import UiAutomator2Options
 from selenium.webdriver.support.ui import WebDriverWait
 
-from base.android import handle_biometric_if_present, handle_permission_if_present
+from base.android import (handle_biometric_if_present, handle_permission_if_present,
+                          unlock_if_locked)
 from base.base_test import BaseTest, UpdateNotFinished
+from base.conftest_helpers import node_failed, save_failure_artifacts, screen_is_protected
 from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
                         sanitize_test_name, device_locale)
 
@@ -126,6 +129,15 @@ def pytest_configure(config):
     else:
         app_name = _detect_wallet_name(config)
 
+        if app_name == "unknown":
+            # Not a wallet session — `pytest base/tests/` and the like. Publishing a run directory,
+            # an HTML report and a logcat capture for it would put a wallet-shaped result in
+            # reports/ for something that never touched a wallet, and those stray dirs then invite
+            # cleanup that can delete a live run (which is exactly how a real heidi run was
+            # destroyed on 2026-09-02). Use a scratch directory and start no logcat.
+            config._run_dir = Path(tempfile.mkdtemp(prefix="pytest-nonwallet-"))
+            return
+
         # run_tests.py pre-creates a shared session dir and advertises it via
         # PYTEST_SESSION_DIR.  A direct pytest call creates its own directory.
         session_dir = os.environ.get(_ENV_SESSION_DIR)
@@ -139,11 +151,16 @@ def pytest_configure(config):
         (run_dir / "screenshots").mkdir(exist_ok=True)
         os.environ[_ENV_RUN_DIR] = str(run_dir)
 
-        # File log
+        # File log. Kept on `config` so pytest_sessionfinish can detach it again: runners/
+        # run_tests.py calls pytest.main() in a loop inside one process, so this hook runs once
+        # per wallet, and a handler left attached goes on receiving the next wallet's records.
+        # Every wallet's test.log then contains every wallet that ran after it, which makes a log
+        # line unusable as evidence about the wallet whose directory it sits in.
         handler = logging.FileHandler(str(run_dir / "test.log"))
         handler.setLevel(logging.DEBUG)
         handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
         logging.getLogger().addHandler(handler)
+        config._log_handler = handler
 
         # HTML report — only if pytest-html is present and --html wasn't passed
         if hasattr(config.option, "htmlpath") and not config.option.htmlpath:
@@ -172,7 +189,7 @@ def pytest_configure(config):
 
 
 def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest hookspec
-    """Stop logcat capture after all tests complete."""
+    """Release this wallet's per-session resources: the logcat process and the file log."""
     config = session.config
     if hasattr(config, "workerinput"):
         return  # xdist workers don't own the logcat process
@@ -186,6 +203,14 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
     logcat_file = getattr(config, "_logcat_file", None)
     if logcat_file is not None:
         logcat_file.close()
+
+    # Detach this wallet's file log, so the next pytest.main() in the same process starts with
+    # only its own handler. Last, so anything logged above still reaches the file.
+    log_handler = getattr(config, "_log_handler", None)
+    if log_handler is not None:
+        logging.getLogger().removeHandler(log_handler)
+        log_handler.close()
+        config._log_handler = None
 
 
 def _resolve_device(config: dict, worker_id: str) -> dict:
@@ -399,27 +424,30 @@ def driver(request):
     opts.no_reset = True
 
     device_pin = config["android"].get("device_pin", "")
-    if device_pin:
-        opts.set_capability("appium:unlockType", "pin")
-        opts.set_capability("appium:unlockKey", device_pin)
-        # Unlock by typing the PIN on the keyguard, NOT via adb.
-        #
-        # Appium's default unlock strategy is "locksettings", which unlocks by *deleting* the
-        # device lock and re-creating it:
-        #     locksettings clear --old <pin>
-        #     locksettings set-pin <pin>
-        # Clearing the lock credential wipes every enrolled fingerprint (Android guarantees
-        # that), and set-pin restores only the PIN. Any wallet that stores credentials behind a
-        # biometric-backed key then finds no biometric enrolled and sends the run into Android's
-        # fingerprint *enrollment* wizard, which no test can complete — see
-        # wallets/authbound/flows/credential_flow.py.
-        #
-        # It only bites when a session starts with the screen locked, which is why it looked
-        # intermittent: the log says "Screen already unlocked, doing nothing" on the runs that
-        # were unaffected. Diagnosed 2026-08-10 from appium.log.
-        opts.set_capability("appium:unlockStrategy", "uiautomator")
+
+    # Deliberately NOT setting appium:unlockKey / appium:unlockType.
+    #
+    # Those make Appium unlock during session creation, before any of our code runs, so there is
+    # no way to check first whether the keyguard is actually up. On 2026-09-02 it decided the
+    # phone was locked when it was not, typed the device PIN, and the keystrokes went into a
+    # focused Google search box — which submitted the PIN as a web query. The failure surfaced
+    # only as "The device has failed to be unlocked"; the leak was silent.
+    #
+    # `base.android.unlock_if_locked` does the same job after the session exists, and requires
+    # both Appium and the window manager to agree the keyguard is up before typing anything.
+    # It also keeps the `uiautomator` strategy, which is load-bearing: Appium's default
+    # "locksettings" strategy unlocks by *deleting* the device lock and re-creating it
+    # (`locksettings clear --old <pin>` then `set-pin`), and clearing the lock credential wipes
+    # every enrolled fingerprint. Wallets holding credentials behind a biometric-backed key then
+    # land in Android's fingerprint enrollment wizard, which no test can complete — see
+    # wallets/authbound/flows/credential_flow.py. Diagnosed 2026-08-10 from appium.log.
 
     driver = webdriver.Remote(device["server"], options=opts)  # type: ignore
+
+    # Unlock immediately, so everything downstream can assume a usable screen — this is the job
+    # the unlockKey capability used to do, now under a guard we control.
+    unlock_if_locked(driver, device_pin, device.get("udid", ""))
+
     yield driver
     driver.quit()
 
@@ -461,12 +489,8 @@ def app(driver, request):
     # wipes enrolled fingerprints (see the driver capabilities above).
     try:
         driver.press_keycode(_KEYCODE_WAKEUP)
-        if device_pin_for(config) and driver.execute_script("mobile: isLocked"):
-            driver.execute_script("mobile: unlock", {
-                "key": device_pin_for(config),
-                "type": "pin",
-                "strategy": "uiautomator",
-            })
+        unlock_if_locked(driver, device_pin_for(config),
+                         driver.capabilities.get("udid", ""))
     except Exception as e:
         logger.warning(f"[app] Could not wake/unlock the screen: {e}")
 
@@ -538,28 +562,14 @@ def app(driver, request):
     request.node._artifact_captured = False
     yield base_test
 
-    if (hasattr(request.node, "rep_call") and request.node.rep_call.failed
-            and not getattr(request.node, "_artifact_captured", False)):
-        reporting = config.get("reporting", {})
-        test_name = sanitize_test_name(request.node.name)
-        if reporting.get("screenshot_on_failure", True):
-            screenshot_dir = request.config._run_dir / "screenshots"
-            screenshot_dir.mkdir(parents=True, exist_ok=True)
-            path = screenshot_dir / f"{test_name}.png"
-            try:
-                driver.save_screenshot(str(path))
-                logger.info(f"[screenshot] Saved: {path}")
-            except Exception as e:
-                logger.warning(f"[screenshot] Failed to save screenshot: {e}")
-        if reporting.get("xml_on_failure", False):
-            xml_dir = request.config._run_dir / "xml_dumps"
-            xml_dir.mkdir(parents=True, exist_ok=True)
-            path = xml_dir / f"{test_name}.xml"
-            try:
-                path.write_text(driver.page_source, encoding="utf-8")
-                logger.info(f"[xml] Saved: {path}")
-            except Exception as e:
-                logger.warning(f"[xml] Failed to save XML dump: {e}")
+    # `node_failed`, not `rep_call`, because this is the only capture point a setup error ever
+    # reaches: a wallet's `_ensure_home` raises before its own yield, so its teardown — and the
+    # `capture_failure_artifact` inside it — never runs, while this one does.
+    if node_failed(request.node) and not getattr(request.node, "_artifact_captured", False):
+        # One implementation, shared with the per-wallet teardown path. The copy that used to
+        # live here took the screenshot *before* the XML dump — the wrong order on a screen with
+        # FLAG_SECURE, where the dump is the only evidence that can be captured at all.
+        save_failure_artifacts(driver, request, config, wallet=app_name)
 
     if _is_anr_present(driver):
         logger.warning(f"[app] ANR detected for {app_package} — clearing app cache before retry")
@@ -574,7 +584,18 @@ def app(driver, request):
                 test_name = sanitize_test_name(request.node.name)
                 path = recordings_dir / f"{test_name}.mp4"
                 path.write_bytes(base64.b64decode(video_b64))
-                logger.info(f"[recording] Saved: {path}")
+                if screen_is_protected(request, app_name):
+                    # FLAG_SECURE blanks the video as well as screenshots — confirmed 2026-09-04
+                    # by extracting frames from a heidi recording: the wallet's own screens are
+                    # solid black, only the launcher and systemui render. The file is kept because
+                    # those non-app segments are real evidence (an unroutable deeplink lands on the
+                    # launcher), but it must not be read as a recording of the wallet.
+                    logger.info(
+                        f"[recording] Saved: {path} — NOTE: {app_name} sets FLAG_SECURE, so the "
+                        "wallet's own screens are blank in this video; only non-app screens render"
+                    )
+                else:
+                    logger.info(f"[recording] Saved: {path}")
         except Exception as e:
             logger.warning(f"[recording] Failed to save recording: {e}")
 

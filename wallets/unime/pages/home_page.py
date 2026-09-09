@@ -27,6 +27,22 @@ class HomePage(BasePage):
         except TimeoutException:
             raise RuntimeError("UniMe home screen did not load within timeout")
 
+    def open_credential(self) -> bool:
+        """Open the first credential card. False when the wallet presents none.
+
+        Deleting returns to home with the next card first, so "open the first, delete, repeat" is
+        a complete traversal — no indexing into a list that shifts underneath us.
+
+        The card must not be cached: the list recomposes after a delete, and a held reference goes
+        stale. `BasePage.click` re-locates, so locating by locator rather than by element is what
+        makes the repeat safe.
+        """
+        if not wait_present(self.driver, _credential_card,
+                            timeout=self._get_timeout("default")):
+            return False
+        self.click(_credential_card)
+        return True
+
     def count_credentials(self) -> int:
         """Return the number of credential cards in the wallet.
 

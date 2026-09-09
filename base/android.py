@@ -17,11 +17,14 @@ Typical usage in a flow:
         handle_anr_if_present(driver)
 """
 import logging
+import re
+import subprocess
 from enum import Enum
 from typing import Optional
 
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from base.utils import wait_present
@@ -115,24 +118,229 @@ def detect_system_overlay(driver) -> Optional[SystemOverlay]:
     return None
 
 
-def handle_biometric_if_present(driver, dismiss_timeout=10) -> bool:
+# Whether the keyguard is up, asked of the window manager.
+#
+# `mInputRestricted` is the flag, and it is the ONLY one measured to work. On the test phone
+# (moto g24, Android 14) `isKeyguardShowing` is permanently `true` — it reads true while the Play
+# Store is in the foreground and interactive — and `mDreamingLockscreen` is equally stuck.
+# Believing either of those is what let the device PIN be typed into a focused app twice.
+#
+# Measured 2026-09-02 on the same phone, screen on both times:
+#     unlocked, Play Store in front : isKeyguardShowing=true   mInputRestricted=false
+#     locked, keyguard up           : isKeyguardShowing=true   mInputRestricted=true
+#
+# `mInputRestricted` is WindowManager's own "input is restricted because the keyguard is up", so
+# it answers the question we actually care about: can this device receive keystrokes meant for a
+# lock screen, or will they land in an app?
+_INPUT_RESTRICTED = re.compile(r"\bmInputRestricted=(true|false)\b")
+
+
+def keyguard_showing(device_serial: str = "") -> Optional[bool]:
+    """True if the lock screen is genuinely up. None when it cannot be determined.
+
+    Exists because a PIN typed at the wrong moment does not fail, it goes *somewhere*. On
+    2026-09-02 Appium believed the phone was locked, typed the device PIN, and the keystrokes
+    landed in a focused Google search box, which submitted the PIN as a web query.
+
+    Returning None for "cannot tell" matters: callers must treat that as "do not type", never as
+    "not locked" — a missed unlock is a clean timeout, a mistyped PIN is a leaked secret.
+    """
+    cmd = ["adb"]
+    if device_serial:
+        cmd += ["-s", device_serial]
+    cmd += ["shell", "dumpsys", "window"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except Exception:
+        return None
+    match = _INPUT_RESTRICTED.search(result.stdout or "")
+    if not match:
+        # No opinion rather than a guess. The other keyguard flags were tried and are unreliable
+        # (see above), so there is nothing safe to fall back to.
+        return None
+    return match.group(1) == "true"
+
+
+def unlock_if_locked(driver, pin: str, device_serial: str = "") -> bool:
+    """Unlock the device by typing `pin` on the keyguard — but only if the keyguard is really up.
+
+    Returns True if an unlock was attempted. Never raises: a device that will not unlock should
+    surface as the wallet failing to come forward, not as a fixture explosion.
+
+    Two independent confirmations are required before the PIN is sent, because the cost of being
+    wrong is asymmetric — Appium's own view (`mobile: isLocked`) and the window manager's
+    (`keyguard_showing`). Historically only the first was consulted, and when it was wrong the PIN
+    was typed into whatever had focus.
+
+    The `uiautomator` strategy is not a detail: Appium's default `locksettings` strategy unlocks by
+    *deleting* the device lock and re-creating it, and clearing the lock credential wipes every
+    enrolled fingerprint. Wallets holding credentials behind a biometric-backed key then land in
+    Android's fingerprint enrollment wizard, which no test can complete.
+    """
+    if not pin:
+        return False
+    try:
+        if not driver.execute_script("mobile: isLocked"):
+            return False
+    except Exception as exc:
+        logger.warning(f"[android] Could not ask Appium whether the device is locked: {exc}")
+        return False
+
+    showing = keyguard_showing(device_serial)
+    if showing is not True:
+        logger.warning(
+            "[android] Appium reports the device locked, but the window manager "
+            f"{'disagrees' if showing is False else 'could not be read'} — NOT typing the device "
+            "PIN. Typing it now would send it to whatever window has focus; on 2026-09-02 that "
+            "was a search box, which submitted the PIN as a web query."
+        )
+        return False
+
+    logger.info("[android] Keyguard is up — unlocking with the device PIN")
+    try:
+        driver.execute_script("mobile: unlock", {
+            "key": pin, "type": "pin", "strategy": "uiautomator",
+        })
+    except Exception as exc:
+        logger.warning(f"[android] Unlock attempt failed: {exc}")
+    return True
+
+
+def detect_crash_or_anr(driver, timeout: float = 0.3) -> Optional[SystemOverlay]:
+    """Just the two overlays that mean the app itself died. None if neither is showing.
+
+    Narrower than `detect_system_overlay` on purpose: that one probes four locators in sequence, so
+    at 0.5s each it costs more than a whole poll tick. A wait loop needs to ask this often, and the
+    other two overlays it checks (biometric, permission) are things a flow *answers* rather than
+    reports — they belong to the interstitial handlers, not to a crash scan.
+    """
+    if wait_present(driver, _APP_CRASH, timeout=timeout):
+        return SystemOverlay.APP_CRASH
+    if wait_present(driver, _ANR, timeout=timeout):
+        return SystemOverlay.ANR
+    return None
+
+
+# Whether this device can have a fingerprint injected at all, cached per serial — this is
+# consulted inside polling loops, so it must not shell out on every tick.
+_FINGERPRINT_EMULATION: dict = {}
+
+
+# FLAG_SECURE: the platform's own words when it refuses a capture.
+#
+# A wallet that sets FLAG_SECURE on its credential screens is protecting the holder — the refusal
+# is a property of the wallet, not a malfunction of ours. Matching the refusal is preferred over
+# probing `dumpsys SurfaceFlinger` first: the refusal is generated by the platform for the screen
+# actually in front of us, needs no parsing, and does not depend on a dump format with no
+# documented stability. (In that dump the neighbouring `isSecure` always reads 1 — it means the
+# device *supports* secure surfaces, not that this screen is one. Easy to grep by mistake.)
+#
+# The flag is per-SCREEN, not per-wallet: heidi refuses on its own screens while the launcher and
+# the systemui biometric prompt capture normally. So this never becomes a reason to stop trying.
+_SECURE_REFUSAL_MARKERS = ("secure' flag", "TakeScreenshotException")
+
+
+def is_secure_screen_refusal(exc: BaseException) -> bool:
+    """True when a capture failed because the current screen sets FLAG_SECURE.
+
+    Distinguishes "the wallet protects this screen" from "the screenshot machinery broke", which
+    are the same generic warning today.
+    """
+    text = f"{getattr(exc, 'msg', '') or ''} {exc}"
+    return any(marker in text for marker in _SECURE_REFUSAL_MARKERS)
+
+
+def fingerprint_emulation_available(driver) -> bool:
+    """True only on an emulator, where `mobile: fingerprint` can actually inject a touch.
+
+    Appium implements fingerprint injection through the emulator console; **a physical device has
+    no equivalent**, so the call cannot succeed there however many fingers are enrolled. Measured
+    2026-09-04: `ro.kernel.qemu=1` / `ro.build.characteristics=emulator` on the emulator, empty and
+    `default` on the phone (moto g24).
+
+    This matters because the failure is not merely useless. On a physical device the injection
+    raises `WebDriverException`, and the polling loops in authbound's flows catch that class and
+    report "Appium/UiAutomator2 connection lost (app may have crashed)" — a wrong diagnosis
+    published as a result. Wallets on the phone are expected to use `authenticate_with_pin`.
+
+    Unknown (no adb, no serial) is treated as **available**, so a device we cannot inspect keeps
+    today's behaviour rather than silently losing its fingerprint path.
+    """
+    serial = (driver.capabilities or {}).get("deviceUDID", "") if hasattr(driver, "capabilities") else ""
+    if serial in _FINGERPRINT_EMULATION:
+        return _FINGERPRINT_EMULATION[serial]
+
+    available = True
+    if serial:
+        if serial.startswith("emulator-"):
+            available = True
+        else:
+            try:
+                out = subprocess.run(
+                    ["adb", "-s", serial, "shell", "getprop", "ro.build.characteristics"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout
+                qemu = subprocess.run(
+                    ["adb", "-s", serial, "shell", "getprop", "ro.kernel.qemu"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout
+                if out.strip() or qemu.strip():
+                    available = "emulator" in out or qemu.strip() == "1"
+            except Exception:
+                available = True   # could not tell — do not remove a working path
+    _FINGERPRINT_EMULATION[serial] = available
+    return available
+
+
+def handle_biometric_if_present(driver, dismiss_timeout=10, detect_timeout=2) -> bool:
     """If the Android biometric prompt is on screen, simulate a fingerprint and wait for it to dismiss.
 
     Args:
         dismiss_timeout: How long to wait (seconds) for the biometric dialog to disappear
-                         after simulating the fingerprint. Does not affect the 2s detection probe.
+                         after simulating the fingerprint.
+        detect_timeout: How long to look for the prompt. The 2s default suits a one-shot
+                        speculative call; a polling loop that calls this every tick should pass
+                        something short, or this single probe costs more than the whole tick.
 
     Returns True if the prompt was detected and handled, False if it was not present.
     Safe to call speculatively — does nothing if the prompt is not showing.
     """
-    if not wait_present(driver, BIOMETRIC_PROMPT, timeout=2):
+    if not wait_present(driver, BIOMETRIC_PROMPT, timeout=detect_timeout):
+        return False
+
+    if not fingerprint_emulation_available(driver):
+        # Not a failure of this call — the wallet is simply on a device where fingerprint
+        # injection cannot work. Report "not handled" so a caller with a PIN branch takes it.
+        logger.warning(
+            "[android] Biometric prompt detected, but fingerprint injection only works on an "
+            "emulator — this is a physical device. Use authenticate_with_pin() for this wallet"
+        )
         return False
 
     logger.info("[android] Biometric prompt detected — simulating fingerprint")
     driver.execute_script("mobile: fingerprint", {"fingerprintId": 1})
-    WebDriverWait(driver, dismiss_timeout).until(
-        lambda d: d.current_package != SYSTEMUI_PKG
-    )
+
+    # Wait for the PROMPT to go, not for the foreground package to change.
+    #
+    # The prompt is a systemui *window* drawn over the app, so `current_package` keeps reporting
+    # the app underneath it — measured on heidi 2026-09-03: `current_package` is
+    # 'ch.ubique.heidi.android' while the prompt is up, so `!= SYSTEMUI_PKG` was already true
+    # before the injection and this wait returned instantly. The handler then reported success
+    # with the prompt still on screen, and every polling caller re-detected it and injected
+    # again — five fingerprints in a second and a half, for one prompt that needed ~1.2s to
+    # clear on its own.
+    try:
+        WebDriverWait(driver, dismiss_timeout).until_not(
+            EC.presence_of_element_located(BIOMETRIC_PROMPT)
+        )
+    except TimeoutException:
+        # The fingerprint did not take. Still report it as handled: every caller polls, so
+        # returning True lets them come round and try again — which is what the old instant
+        # return did by accident. The difference is that it is now visible in the log.
+        logger.warning(
+            f"[android] Biometric prompt still on screen {dismiss_timeout}s after the "
+            "fingerprint — it did not register; the caller may retry"
+        )
     return True
 
 
@@ -259,12 +467,12 @@ def handle_anr_if_present(driver) -> bool:
     return True
 
 
-def handle_permission_if_present(driver, allow: bool = True) -> bool:
+def handle_permission_if_present(driver, allow: bool = True, detect_timeout: float = 0.5) -> bool:
     """If an Android permission dialog is on screen, click Allow or Deny.
 
     Returns True if handled, False if not present.
     """
-    if not wait_present(driver, _PERMISSION_ALLOW_BTN, timeout=0.5):
+    if not wait_present(driver, _PERMISSION_ALLOW_BTN, timeout=detect_timeout):
         return False
 
     if allow:

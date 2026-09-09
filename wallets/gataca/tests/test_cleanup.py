@@ -6,7 +6,6 @@ to each configured DID method and deletes every credential it can (the self-atte
 credential is always kept), so the wallet starts the next run clean.
 """
 import importlib
-import json
 import logging
 from pathlib import Path
 
@@ -18,14 +17,13 @@ APP_NAME = Path(__file__).parents[1].name
 setup_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.setup_flow")
 cleanup_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.cleanup_flow")
 init_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.init_flow")
-_config = json.loads((Path(__file__).parents[1] / "config.json").read_text())
-
+from base.config import as_list, wallet_config
 from base.conftest_helpers import navigate_to_home
 
 
 def _configured_methods():
-    methods = _config.get("did_method", setup_flow.DEFAULT_DID_METHOD)
-    return [methods] if isinstance(methods, str) else methods
+    """Every DID method this run exercised, so cleanup empties the wallet under each of them."""
+    return as_list(wallet_config(APP_NAME).get("did_method", setup_flow.DEFAULT_DID_METHOD))
 
 
 @pytest.mark.gataca_cleanup

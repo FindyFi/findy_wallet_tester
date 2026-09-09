@@ -6,7 +6,7 @@ from pathlib import Path
 from base.credential_count import CredentialCountUnavailable
 from base.test_cases import verification_cases
 from providers.factory import get_provider
-from wallets.hovi.flows import outcome
+from base import outcome
 from wallets.hovi.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)

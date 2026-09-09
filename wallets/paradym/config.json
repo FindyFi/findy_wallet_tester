@@ -15,5 +15,8 @@
     },
     "onboarding": {
         "reset": "${DEFAULT_RESET:-false}"
-        }
+        },
+    "cleanup": {
+        "max_credentials": "${DEFAULT_MAX_CREDENTIALS:-0}"
+    }
 }

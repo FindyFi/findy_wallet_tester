@@ -4,6 +4,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
+from base.cleanup import DeleteRefused  # noqa: F401  (re-exported for this wallet's flow)
+# Defined in base/cleanup.py so the shared prune loop can catch it. It used to be declared
+# here, which meant the loop caught a different class of the same name and hovi's
+# restart-and-retry never ran.
 from base.utils import wait_present
 
 # hovi's expanded credential view and its delete path.
@@ -19,7 +23,12 @@ SCREEN_ID = (AppiumBy.XPATH, '//*[@text="Credential Details"]')
 # The delete control has no label, only this private-use glyph from hovi's icon font. If an update
 # changes the font this stops matching and `can_delete()` reports False rather than tapping the
 # wrong control; re-capture it from the row it shares with `Done`.
-_DELETE_ICON_GLYPH = ""
+#
+# That is not hypothetical: build 34 moved it from U+EEF7 to U+F5F6, and because a missing glyph
+# reads as "this credential offers no delete", the prune loop logged "Credential cannot be deleted.
+# Stopping prune" and left the wallet full — a broken locator published as a wallet property.
+# Re-captured on the device 2026-09-09 and confirmed by tapping it: it opens "Delete Credential?".
+_DELETE_ICON_GLYPH = "\uf5f6"
 _DELETE = (AppiumBy.XPATH, f'//*[@content-desc="{_DELETE_ICON_GLYPH}"]')
 
 _DONE = (AppiumBy.XPATH, '//*[@content-desc="Done"]')
@@ -38,12 +47,6 @@ _DELETE_FAILED = (AppiumBy.XPATH,
 _CANCEL_DELETE = (AppiumBy.XPATH, '//*[@content-desc="Cancel"]')
 
 
-class DeleteRefused(RuntimeError):
-    """hovi accepted the confirmation and then declined to remove the credential.
-
-    A distinct type rather than a message to match on, because the caller's response is specific:
-    restarting the app and trying again clears it.
-    """
 
 
 def on_screen(driver, timeout: float = 2) -> bool:

@@ -9,15 +9,36 @@ from base.utils import wait_present
 
 SCREEN_ID = (AppiumBy.XPATH, '//*[@text="TOPPAN Wallet"]')
 
-# One card View per credential, inside the scrollable list. Toppan is a WebView app, and
-# Chrome prunes the *descendants* of cards below the scroll viewport while keeping the card
-# node itself — so counting anything inside a card under-reports a long list. Measured on
+# One card View per credential. Toppan is a WebView app, and this locator has now been wrong in
+# both directions, so both halves of it are load-bearing.
+#
+# **Long lists** — Chrome prunes the *descendants* of cards below the scroll viewport while
+# keeping the card node itself, so counting anything *inside* a card under-reports. Measured
 # 2026-08-05: a wallet showing 13+ cards had 14 card containers in the tree but only 11 still
-# carried their "Issued on" line, which is what the old count read. That pins the number and
-# makes every issuance look like it stored nothing.
+# carried their "Issued on" line, which is what the count read then. Counting containers fixed it.
+#
+# **Short lists** — the container was reached via `@scrollable="true"`, and a list that fits on
+# screen **does not scroll**, so that flag is absent and the count read **0**. Measured 2026-09-03
+# on a freshly wiped wallet holding 3 credentials: zero scrollable nodes in the whole tree, count
+# 0, and a perfectly good issuance published as "not stored". The two tree shapes are otherwise
+# byte-for-byte identical in structure — the scrollable flag is the only thing that differs — so
+# the old locator worked only because toppan's wallet was always dirty. Cleaning it up broke the
+# measurement.
+#
+# So: the scrollable path stays (it needs no text and handles the long case), unioned with a path
+# anchored on a rendered card. At least one card is always rendered when the wallet is non-empty,
+# and its 2nd `android.view.View` ancestor is the list container in both shapes. An XPath union
+# returns each node once, and on a long list both halves select exactly the same nodes — verified
+# against the captured dumps: 3 and 14, never 6 or 28.
+#
 # The [*] predicate skips the empty placeholder View the list keeps after the last card.
+#
+# The anchor text is English because onboarding always selects English (UK) — see
+# `pages/language_page.DEFAULT_LANGUAGE`. Change one and this must change with it.
 _credential_card = (AppiumBy.XPATH,
-    '//android.view.View[@scrollable="true"]/android.view.View/android.view.View[*]')
+    '//android.view.View[@scrollable="true"]/android.view.View/android.view.View[*]'
+    ' | (//*[starts-with(@text,"Issued on")])[1]/ancestor::android.view.View[2]'
+    '/android.view.View[*]')
 
 
 
@@ -38,9 +59,10 @@ class HomePage(BasePage):
         but home has to be showing or zero cards would mean "could not look" rather than
         "wallet is empty".
 
-        Still bounded by what Chrome puts in the accessibility tree: a list long enough that
-        whole cards fall outside it will read low. Keeping toppan's wallet trimmed (it has a
-        working reset) is what keeps this honest.
+        Counts card containers, so it is no longer bounded by what Chrome renders inside them,
+        and no longer depends on the list being scrollable — see `_credential_card` for the two
+        opposite ways this went wrong. toppan has no in-app delete (measured 2026-09-03), so the
+        only way to trim the wallet is the app wipe (`onboarding.reset`).
         """
         if not wait_present(self.driver, SCREEN_ID, timeout=self._get_timeout("default")):
             raise CredentialCountUnavailable(

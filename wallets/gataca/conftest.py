@@ -4,6 +4,7 @@ import time
 import pytest
 
 from base.conftest_helpers import navigate_to_home, teardown_test
+from base.config import as_list
 from wallets.gataca.flows import init_flow
 from wallets.gataca.flows import setup_flow
 
@@ -31,8 +32,8 @@ def _resolve_did_method(app, request):
     callspec = getattr(request.node, "callspec", None)
     if callspec and "did_method" in callspec.params:
         return callspec.params["did_method"]
-    configured = app.config.get("did_method", setup_flow.DEFAULT_DID_METHOD)
-    return configured[0] if isinstance(configured, list) else configured
+    configured = as_list(app.config.get("did_method", setup_flow.DEFAULT_DID_METHOD))
+    return configured[0] if configured else setup_flow.DEFAULT_DID_METHOD
 
 
 @pytest.hookimpl(trylast=True)

@@ -4,6 +4,7 @@ import time
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
+from base import deeplink
 from base.base_page import BasePage
 from base.play_store_analyzer import KeywordPlayStoreAnalyzer, PlayStoreState
 from base.utils import get_app_info
@@ -116,6 +117,10 @@ class BaseTest:
         result["updated"] = result["version_after"] != before
 
         if result["updated"]:
+            # The new build may declare different intent filters, and a cached scheme list is what
+            # the `unroutable` verdict rests on. That verdict blames a provider, so it must never
+            # be argued from the build that was just replaced.
+            deeplink.invalidate(app_package)
             logger.info(
                 f"[update] {app_package} updated: build {before} → {result['version_after']}. "
                 "Locators may have changed — treat failures in this run as suspect."
