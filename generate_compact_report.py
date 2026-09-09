@@ -169,6 +169,7 @@ TESTID_RE = re.compile(
 # description the key entry; written for a reader choosing between providers
 FAILURE_CATEGORIES = {
     "unroutable": {
+        "stage": "deliver",
         "label": "Unroutable",
         "short": "unroutable",
         "description": "The link never reached the wallet. Android had no app registered "
@@ -176,12 +177,14 @@ FAILURE_CATEGORIES = {
                        "saw the offer or request at all.",
     },
     "rejected": {
+        "stage": "accept",
         "label": "Rejected",
         "short": "rejected",
         "description": "The wallet received the offer or request and refused it, showing "
                        "an error of its own.",
     },
     "no_match": {
+        "stage": "match",
         "label": "No match",
         "short": "no match",
         "description": "The wallet showed the request and answered that it holds nothing "
@@ -189,35 +192,42 @@ FAILURE_CATEGORIES = {
                        "credential types.",
     },
     "nothing_to_present": {
+        "stage": "match",
         "label": "Nothing to present",
         "short": "nothing held",
         "description": "Verification ran against a wallet holding no suitable credential, "
                        "so there was nothing to share.",
     },
     "not_stored": {
+        "stage": "keep",
         "label": "Not stored",
         "short": "not stored",
         "description": "The wallet accepted the credential, but its credential count never "
                        "moved — nothing was kept.",
     },
     "dismissed": {
+        "stage": "present",
         "label": "Dismissed",
         "short": "dismissed",
         "description": "The wallet returned to its home screen without ever offering "
                        "anything to accept or share.",
     },
     "absent": {
+        "stage": "open",
         "label": "Absent",
         "short": "absent",
         "description": "The wallet never came to the foreground.",
     },
     "processing": {
+        "stage": "present",
         "label": "Timed out",
         "short": "timed out",
         "description": "The wallet was still working when the wait ran out. No verdict was "
                        "reached either way.",
     },
     "harness": {
+        # No stage: the flow never started, so it cannot have stopped in one.
+        "stage": None,
         "label": "Test setup",
         "short": "setup",
         "description": "The test setup failed before the flow could run. The cell says "
@@ -253,6 +263,40 @@ CHANGES = {
         "key": "No previous run covered this pair, so there is nothing to compare.",
     },
 }
+
+# The flow both suites share, generalised to the steps a wallet must get
+# through. Every failure category names the step it stopped at (see "stage"
+# above), so the diagram and the cell captions cannot disagree — they are the
+# same data read two ways.
+#
+# caption spells out what the step means in each suite where the two differ;
+# the wording is what a reader needs to place a red cell on the line.
+FLOW_STAGES = (
+    ("deliver", {
+        "label": "Link delivered",
+        "caption": "the offer or request URL reaches the wallet",
+    }),
+    ("open", {
+        "label": "Wallet opens",
+        "caption": "the app comes to the foreground",
+    }),
+    ("present", {
+        "label": "Offer or request shown",
+        "caption": "the wallet displays what is on offer, or what is asked of it",
+    }),
+    ("match", {
+        "label": "Match found",
+        "caption": "verification only: the wallet holds a credential that fits",
+    }),
+    ("accept", {
+        "label": "Accepted",
+        "caption": "the wallet goes through with it rather than erroring out",
+    }),
+    ("keep", {
+        "label": "Stored or shared",
+        "caption": "issuance keeps the credential; verification hands over the presentation",
+    }),
+)
 
 # Precedence when several test cases share one matrix cell. Highest wins, in
 # the same spirit as OUTCOME_RANK: prefer the reason that names a concrete
@@ -997,6 +1041,14 @@ th.no-data .icon { opacity: .45; }
   th:last-child { padding-right: 18px; }
   .info-section { grid-template-columns: 1fr; margin: 18px; }
   .info-col > .info-block:last-child { flex: 0 0 auto; }
+  .stages { flex-direction: column; gap: 10px; }
+  .stage { text-align: left; padding: 0 0 0 26px; }
+  .stage::before { top: 0; bottom: 0; left: 6px; right: auto; width: 2px; height: auto; }
+  .stage:first-child::before { left: 6px; top: 7px; }
+  .stage:last-child::before  { right: auto; bottom: 50%; }
+  .stage .dot { top: 1px; left: 0; transform: none; }
+  .stage .s-count { display: inline-block; margin: 0 0 0 8px; }
+  .stage .s-count .unit { display: inline; margin-left: 3px; }
 }
 
 /* ── Info section (about / status key / reading the matrix) ─────── */
@@ -1173,6 +1225,82 @@ th .ver {
 .cell.change-reason::after { border-right-color: var(--err); }
 .cell.change-new::after { border-right-color: var(--line-strong); }
 
+/* ── Where the flow broke down ───────────────────────────────────── */
+/* One horizontal pass through the flow both suites share. The track is drawn
+   by the nodes themselves, so the line cannot fall out of step with them. */
+.flowline { padding: 20px 28px 4px; }
+.stages {
+  display: flex;
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.stage {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  padding: 22px 6px 0;
+  text-align: center;
+}
+/* Track segment: full width behind each node, trimmed at both ends. */
+.stage::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--line-strong);
+}
+.stage:first-child::before { left: 50%; }
+.stage:last-child::before  { right: 50%; }
+.stage .dot {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px solid var(--line-strong);
+  box-sizing: border-box;
+}
+.stage.stopped .dot { background: var(--fail); border-color: var(--fail); }
+.stage.done .dot    { background: var(--ok);   border-color: var(--ok); }
+.stage .s-label {
+  display: block;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  line-height: 1.25;
+}
+.stage .s-count { display: block; margin-top: 5px; line-height: 1.1; }
+.stage .s-count .n {
+  font-size: .95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--fail);
+}
+.stage.done .s-count .n { color: var(--ok); }
+.stage .s-count .n.none { color: var(--line-strong); font-weight: 500; }
+.stage .s-count .unit {
+  display: block;
+  font-size: .6rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.stage .s-reasons {
+  display: block;
+  margin-top: 4px;
+  font-size: .6rem;
+  line-height: 1.3;
+  color: var(--muted);
+}
+.flow-note { margin: 12px 0 0; font-size: .74rem; color: var(--muted); }
+
 /* ── Recent runs ─────────────────────────────────────────────────── */
 .history { padding: 18px 28px 4px; }
 .history table { width: 100%; font-size: .78rem; }
@@ -1246,6 +1374,7 @@ PAGE = """<!doctype html>
     </div>
     <div class="table-wrap">{sections}</div>
     {provenance}
+    {flowline}
     {history}
     {info}
     <div class="footer">Generated {generated}</div>
@@ -1587,6 +1716,98 @@ def render_change_key(matrix: dict) -> str:
     )
 
 
+def stage_breakdown(matrix: dict) -> dict:
+    """How many cells stopped at each step of the flow, split by suite.
+
+    Reads the same per-cell reasons the matrix shows, so the line under the
+    table is a second view of the table rather than a second measurement.
+    """
+    stages = {key: {"issuance": 0, "verification": 0, "reasons": []}
+              for key, _ in FLOW_STAGES}
+    done = {"issuance": 0, "verification": 0}
+    off_flow = 0
+    for section in ("issuance", "verification"):
+        for agents in matrix.get(section, {}).values():
+            for cell in agents.values():
+                outcome = cell.get("outcome")
+                if not outcome:
+                    continue
+                if outcome == "Passed":
+                    done[section] += 1
+                    continue
+                reason = cell.get("reason")
+                stage = FAILURE_CATEGORIES.get(reason, {}).get("stage") if reason else None
+                if stage not in stages:
+                    # No reason, or a reason that is not part of the flow
+                    # (a test-setup failure). Counted, but not placed.
+                    off_flow += 1
+                    continue
+                stages[stage][section] += 1
+                if reason not in stages[stage]["reasons"]:
+                    stages[stage]["reasons"].append(reason)
+    return {"stages": stages, "done": done, "off_flow": off_flow}
+
+
+def render_flow_line(matrix: dict) -> str:
+    """A horizontal walk through the flow, marking where wallets fell out.
+
+    The matrix says which pairs failed; this says *where*. Reading left to
+    right is reading the protocol in order, so a cluster on one node points at
+    one shared problem — fifteen cells stopping at "Link delivered" is a very
+    different finding from fifteen spread along the line.
+    """
+    data = stage_breakdown(matrix)
+    stages, done = data["stages"], data["done"]
+    total_failed = sum(v["issuance"] + v["verification"] for v in stages.values())
+    total_done = done["issuance"] + done["verification"]
+    if not total_failed and not total_done:
+        return ""
+
+    nodes = []
+    for key, meta in FLOW_STAGES:
+        counts = stages[key]
+        n = counts["issuance"] + counts["verification"]
+        reasons = ", ".join(FAILURE_CATEGORIES[r]["short"] for r in counts["reasons"])
+        cls = "stage stopped" if n else "stage clear"
+        tip = [f'{meta["label"]} — {meta["caption"]}.']
+        if n:
+            tip.append(f'{n} cell{"s" if n != 1 else ""} stopped here '
+                       f'({counts["issuance"]} issuance, {counts["verification"]} verification).')
+        else:
+            tip.append("No cell stopped here in this run.")
+        count_html = (f'<span class="n">{n}</span><span class="unit">stopped</span>'
+                      if n else '<span class="n none">&mdash;</span>')
+        nodes.append(
+            f'<li class="{cls}" title="{html.escape(chr(10).join(tip), quote=True)}">'
+            '<span class="dot"></span>'
+            f'<span class="s-label">{html.escape(meta["label"])}</span>'
+            f'<span class="s-count">{count_html}</span>'
+            f'<span class="s-reasons">{html.escape(reasons)}</span>'
+            "</li>"
+        )
+    tip = (f'{total_done} cells completed the flow '
+           f'({done["issuance"]} issuance, {done["verification"]} verification).')
+    nodes.append(
+        f'<li class="stage done" title="{html.escape(tip, quote=True)}">'
+        '<span class="dot"></span>'
+        '<span class="s-label">Complete</span>'
+        f'<span class="s-count"><span class="n">{total_done}</span>'
+        '<span class="unit">passed</span></span>'
+        '<span class="s-reasons"></span></li>'
+    )
+
+    note = ""
+    if data["off_flow"]:
+        n = data["off_flow"]
+        note = (f'<p class="flow-note">{n} failing cell{"s" if n != 1 else ""} '
+                f'{"are" if n != 1 else "is"} not placed on the line — the test setup '
+                'fell over, or the failure could not be attributed to a step.</p>')
+    return (
+        '<div class="flowline"><div class="prov-title">Where the flow broke down</div>'
+        f'<ol class="stages">{"".join(nodes)}</ol>{note}</div>'
+    )
+
+
 def render_provenance(matrix: dict) -> str:
     """What was actually under test: build, package and device per wallet.
 
@@ -1738,6 +1959,7 @@ def render_html(matrix: dict, output_dir: Path, embed: bool,
         pills=_pills_html(matrix["totals"], matrix.get("flaky_cells", 0)),
         sections=sections,
         provenance=render_provenance(matrix),
+        flowline=render_flow_line(matrix),
         history=render_history(history or [], matrix["run_ts"]),
         info=render_info_section(info, generated=(
             ("right", render_reason_key(matrix)),
