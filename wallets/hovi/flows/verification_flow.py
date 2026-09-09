@@ -3,6 +3,7 @@ import logging
 from selenium.common.exceptions import WebDriverException
 
 from base import interstitials, outcome
+from base.android import authenticate_with_pin
 from base.flow_context import FlowContext
 from providers.base import DeeplinkProvider
 from wallets.hovi.flows import clear_stale_error
@@ -16,7 +17,13 @@ logger = logging.getLogger(__name__)
 
 _KEYCODE_HOME = 3
 
-_INTERSTITIALS = (interstitials.permission_dialog(),)
+# hovi locks itself on every activation from build 34 on, and both flows background the app before
+# firing the deeplink — so the lock sheet is waiting on the way back in, not just at session start.
+# It is the system BiometricPrompt whose "Use PIN" fallback takes the *device* credential, which is
+# what `device_pin_prompt` answers; fingerprint injection is emulator-only and hovi runs on the
+# phone. Without it the post-share wait sat behind the sheet until it timed out and the wallet was
+# published as "home screen did not load".
+_INTERSTITIALS = (interstitials.permission_dialog(), interstitials.device_pin_prompt())
 
 
 def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: str,
@@ -70,6 +77,10 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
     VerificationRequestPage(driver, **page_args).share()
     logger.info("[verification_flow] Waiting for home screen after sharing")
+    # Answering the lock before the wait, not only inside the polling loops: this wait is a
+    # plain WebDriverWait on the home locator, so nothing here services interstitials. hovi
+    # re-locks on the activation that follows sharing, and the sheet hides home completely.
+    authenticate_with_pin(driver, ctx.device_pin, detect_timeout=3)
     HomePage(driver, **page_args).wait_until_loaded()
     outcome.raise_if_rejected(driver, SCREENS, ctx, action="shared for",
                               error_before=error_before)
