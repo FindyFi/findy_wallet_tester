@@ -1,6 +1,5 @@
 import logging
 import time as _time
-from urllib.parse import urlsplit
 
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.common.exceptions import WebDriverException
@@ -40,23 +39,6 @@ _ENROLLMENT_REQUIRED = (
     "the sensor, so no test can pass this; enroll one by hand. Note that changing the device "
     "lock PIN wipes existing enrollments [no_retry]"
 )
-
-
-def _native_deeplink(url: str) -> str:
-    """Rebuild a Paradym https invitation under authbound's own scheme.
-
-    Paradym serves an `https://paradym.id/invitation?...` wrapper that is NOT routable to
-    authbound (the app only verifies app-links for `app.authbound.io`, not `paradym.id`), so
-    `mobile: deepLink` would fail. The invitation already carries the real request in its query
-    (`request_uri=...&client_id=...`), so rebuild it as the `openid4vp://` scheme authbound
-    handles, preserving the full query string (dropping `client_id` causes a MissingClientId
-    error). Non-paradym URLs (already a wallet scheme) pass through unchanged.
-    """
-    parts = urlsplit(url)
-    if parts.scheme in ("http", "https") and "paradym.id" in parts.netloc and parts.query:
-        logger.info("[verification_flow] Rebuilding paradym invitation as openid4vp://")
-        return f"openid4vp://?{parts.query}"
-    return url
 
 
 def _wait_for_request(driver, pin: str, page_args: dict, timeout: float) -> str:
@@ -121,7 +103,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     This supersedes two earlier notes: that verification was blocked by an auth/profile gate,
     and that a repeating prompt meant a key requiring BIOMETRIC_STRONG.
     """
-    url = _native_deeplink(provider.get(credential_name))
+    url = provider.get(credential_name)
 
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
     try:

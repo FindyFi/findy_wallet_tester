@@ -1,6 +1,5 @@
 import logging
 import time as _time
-from urllib.parse import urlsplit
 
 from selenium.common.exceptions import WebDriverException
 
@@ -35,23 +34,6 @@ _ENROLLMENT_REQUIRED = (
     "authentication prompt here instead. Note that changing the device lock PIN wipes existing "
     "enrollments [no_retry]"
 )
-
-
-def _native_deeplink(url: str) -> str:
-    """Rebuild a Paradym https invitation under authbound's own scheme.
-
-    Paradym serves an `https://paradym.id/invitation?...` wrapper that is NOT routable to
-    authbound (the app only verifies app-links for `app.authbound.io`, not `paradym.id`), so
-    `mobile: deepLink` would fail. The invitation already carries the real endpoint in its query
-    (`credential_offer_uri=...`), so rebuild it as the `openid-credential-offer://` scheme that
-    authbound exclusively handles, preserving the full query string. Non-paradym URLs (already a
-    wallet scheme) pass through unchanged.
-    """
-    parts = urlsplit(url)
-    if parts.scheme in ("http", "https") and "paradym.id" in parts.netloc and parts.query:
-        logger.info("[credential_flow] Rebuilding paradym invitation as openid-credential-offer://")
-        return f"openid-credential-offer://?{parts.query}"
-    return url
 
 
 def _wait_for_result(driver, pin: str, page_args: dict, timeout: float) -> str:
@@ -110,7 +92,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     gate before any consent screen, and that reaching the enrollment wizard necessarily meant
     the issuance had failed.
     """
-    url = _native_deeplink(provider.get(credential_name))
+    url = provider.get(credential_name)
 
     logger.info(f"[credential_flow] Opening deeplink for '{credential_name}'")
     try:
