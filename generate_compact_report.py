@@ -1844,7 +1844,10 @@ def render_provenance(matrix: dict) -> str:
         return ""
     return (
         '<div class="provenance"><div class="prov-title">Builds under test</div>'
-        "<table><thead><tr><th>Wallet</th><th>Version</th><th>Package</th>"
+        "<table><thead><tr><th>Wallet</th>"
+        '<th title="The app\'s versionName, with its Android versionCode in '
+        'brackets. The code is the build identity Android itself compares.">'
+        "Version (build)</th><th>Package</th>"
         f"<th>Device</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
     )
 
