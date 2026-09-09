@@ -1035,12 +1035,12 @@ th.no-data .icon { opacity: .45; }
 @media (max-width: 640px) {
   body { padding: 12px 6px; }
   .header { flex-wrap: wrap; padding: 16px 18px; }
+  .view-toggle { order: 3; }
   th.row-head, td.row-head { padding-left: 18px; min-width: 130px; }
   tbody tr td:first-child { padding-left: 18px; }
   tbody tr td:last-child  { padding-right: 18px; }
   th:last-child { padding-right: 18px; }
   .info-section { grid-template-columns: 1fr; margin: 18px; }
-  .info-col > .info-block:last-child { flex: 0 0 auto; }
   .stages { flex-direction: column; gap: 10px; }
   .stage { text-align: left; padding: 0 0 0 26px; }
   .stage::before { top: 0; bottom: 0; left: 6px; right: auto; width: 2px; height: auto; }
@@ -1067,13 +1067,13 @@ th.no-data .icon { opacity: .45; }
 .info-col {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  background: var(--line);
+  background: var(--surface);
 }
 .info-section.one-col { grid-template-columns: 1fr; }
 .info-block { background: var(--surface); padding: 22px 24px; }
-/* The shorter column would otherwise end in a strip of the rule colour. */
-.info-col > .info-block:last-child { flex: 1 1 auto; }
+/* Rules between stacked cards. Drawn on the cards rather than as grid gaps so
+   that hiding a card in the summary view hides its rule with it. */
+.info-block + .info-block { border-top: 1px solid var(--line); }
 .info-title {
   font-size: .68rem;
   font-weight: 700;
@@ -1225,6 +1225,77 @@ th .ver {
 .cell.change-reason::after { border-right-color: var(--err); }
 .cell.change-new::after { border-right-color: var(--line-strong); }
 
+/* ── Summary / detailed view ─────────────────────────────────────── */
+/* The page opens on the summary: the matrix as it always read, marks only.
+   Flipping the switch reveals what this run additionally knows — why each
+   cell is red, which build it judged, where the flow broke down, and what
+   moved since last time. Driven entirely by the checkbox's :checked state so
+   the published file needs no script. */
+.view-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .01em;
+}
+.view-toggle .vt-opt { color: var(--muted); transition: color .15s ease; }
+.view-toggle .vt-summary { color: var(--ink); }
+.view-toggle .vt-track {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: #dfe2e6;
+  border: 1px solid var(--line-strong);
+  transition: background .15s ease, border-color .15s ease;
+}
+.view-toggle .vt-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(20,24,32,.25);
+  transition: transform .15s ease;
+}
+.view-input:checked ~ .header .vt-track { background: #3f6ad8; border-color: #3f6ad8; }
+.view-input:checked ~ .header .vt-knob { transform: translateX(16px); }
+.view-input:checked ~ .header .vt-summary { color: var(--muted); }
+.view-input:checked ~ .header .vt-detail { color: var(--ink); }
+/* Keyboard users get the same affordance as a focused control. */
+.view-input:focus-visible ~ .header .vt-track {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+
+/* Detail-only: whole sections, and the extras threaded through the matrix. */
+.detail-only { display: none; }
+.view-input:checked ~ .detail-only { display: block; }
+.cell .reason,
+th .ver,
+.pill.flaky,
+.info-block.generated { display: none; }
+.view-input:checked ~ .table-wrap .cell .reason,
+.view-input:checked ~ .table-wrap th .ver { display: block; }
+.view-input:checked ~ .info-section .info-block.generated { display: block; }
+.view-input:checked ~ .header .pill.flaky { display: inline-flex; }
+/* The change wedge is a pseudo-element, so it is hidden by the same rule. */
+.cell.changed::after { content: none; }
+.view-input:checked ~ .table-wrap .cell.changed::after { content: ""; }
+
 /* ── Where the flow broke down ───────────────────────────────────── */
 /* One horizontal pass through the flow both suites share. The track is drawn
    by the nodes themselves, so the line cannot fall out of step with them. */
@@ -1364,12 +1435,22 @@ PAGE = """<!doctype html>
 </head>
 <body>
   <div class="container">
+    <!-- Drives the summary/detailed switch. It sits here, ahead of every
+         section, so the whole page can be styled from its :checked state with
+         no script: a published report must work as a plain file. -->
+    <input type="checkbox" id="view-detail" class="view-input"
+           aria-label="Show detailed view" />
     <div class="header">
       {logo}
       <div class="titles">
         <h1>Wallet Interop Status</h1>
         <div class="run-ts">Run {run_ts}</div>
       </div>
+      <label class="view-toggle" for="view-detail">
+        <span class="vt-opt vt-summary">Summary</span>
+        <span class="vt-track"><span class="vt-knob"></span></span>
+        <span class="vt-opt vt-detail">Detailed</span>
+      </label>
       <div class="totals">{pills}</div>
     </div>
     <div class="table-wrap">{sections}</div>
@@ -1631,6 +1712,9 @@ def render_info_section(info: Optional[dict], generated=()) -> str:
     # One empty column would render as a blank half-panel — with only the
     # generated keys to show (--no-info), the section becomes a single column.
     cls = "info-section" if len(filled) == 2 else "info-section one-col"
+    if not blocks:
+        # Only generated cards (--no-info): the whole section is detail-only.
+        cls += " detail-only"
     cols = "".join(f'<div class="info-col">{"".join(columns[side])}</div>'
                    for side in filled)
     return f'<div class="{cls}">{cols}</div>'
@@ -1673,7 +1757,7 @@ def render_reason_key(matrix: dict) -> str:
     if not rows:
         return ""
     return (
-        '<div class="info-block">'
+        '<div class="info-block generated">'
         '<div class="info-title">Why a cell is red</div>'
         '<p>Each failing cell carries a short reason under its mark. '
         'It names which side the flow broke down on.</p>'
@@ -1708,7 +1792,7 @@ def render_change_key(matrix: dict) -> str:
     since = (f' since the run of {html.escape(_run_date(previous))}'
              if previous else "")
     return (
-        '<div class="info-block">'
+        '<div class="info-block generated">'
         '<div class="info-title">What moved</div>'
         f'<p>A corner mark flags a cell that reads differently{since}. '
         'Cells without one are unchanged.</p>'
@@ -1803,7 +1887,7 @@ def render_flow_line(matrix: dict) -> str:
                 f'{"are" if n != 1 else "is"} not placed on the line — the test setup '
                 'fell over, or the failure could not be attributed to a step.</p>')
     return (
-        '<div class="flowline"><div class="prov-title">Where the flow broke down</div>'
+        '<div class="flowline detail-only"><div class="prov-title">Where the flow broke down</div>'
         f'<ol class="stages">{"".join(nodes)}</ol>{note}</div>'
     )
 
@@ -1843,7 +1927,7 @@ def render_provenance(matrix: dict) -> str:
     if not rows:
         return ""
     return (
-        '<div class="provenance"><div class="prov-title">Builds under test</div>'
+        '<div class="provenance detail-only"><div class="prov-title">Builds under test</div>'
         "<table><thead><tr><th>Wallet</th>"
         '<th title="The app\'s versionName, with its Android versionCode in '
         'brackets. The code is the build identity Android itself compares.">'
@@ -1916,7 +2000,7 @@ def render_history(history: list, current_ts: str) -> str:
             "</tr>"
         )
     return (
-        '<div class="history"><div class="prov-title">Recent runs</div>'
+        '<div class="history detail-only"><div class="prov-title">Recent runs</div>'
         f'<table><tbody>{"".join(rows)}</tbody></table></div>'
     )
 
