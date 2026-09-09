@@ -23,7 +23,12 @@ SCREEN_ID = (AppiumBy.XPATH, '//*[@text="Credential Details"]')
 # The delete control has no label, only this private-use glyph from hovi's icon font. If an update
 # changes the font this stops matching and `can_delete()` reports False rather than tapping the
 # wrong control; re-capture it from the row it shares with `Done`.
-_DELETE_ICON_GLYPH = ""
+#
+# That is not hypothetical: build 34 moved it from U+EEF7 to U+F5F6, and because a missing glyph
+# reads as "this credential offers no delete", the prune loop logged "Credential cannot be deleted.
+# Stopping prune" and left the wallet full — a broken locator published as a wallet property.
+# Re-captured on the device 2026-09-09 and confirmed by tapping it: it opens "Delete Credential?".
+_DELETE_ICON_GLYPH = "\uf5f6"
 _DELETE = (AppiumBy.XPATH, f'//*[@content-desc="{_DELETE_ICON_GLYPH}"]')
 
 _DONE = (AppiumBy.XPATH, '//*[@content-desc="Done"]')
