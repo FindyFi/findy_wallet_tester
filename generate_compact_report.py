@@ -36,8 +36,20 @@ category the matrix does not show.
 Each run is recorded in .report_history.json in the output directory: a short
 entry with the tallies, the reasons, and the build and device each wallet was
 tested on. The page marks every cell that reads differently from the previous
-recorded run, and lists the recent runs with the wallet versions that changed
-between them — a red column usually turned red because something shipped. The
+recorded run.
+
+Normally one generate adds one entry. --backfill instead scans for past runs
+and records all of them first, which is how a history gets started from an
+archive that predates this file. Runs are judged by what they chart, not by
+what files they hold: --min-cells keeps single-wallet debug runs and half
+runs out, since one of those beside a full run reads as a collapse.
+
+The strip of past runs lists only the runs that changed something — the
+passing count moved, the run covered a wallet or agent the one before it did
+not, or a wallet shipped a new build. Runs that repeated the previous result
+are counted at the foot instead. A build change counts even when the version
+name is unchanged, because it often is: hovi shipped 29 -> 34 as 1.3.0 both
+times. The
 file is dot-prefixed and gitignored like the info file, so it is never pushed
 to the public site; being ignored is also what keeps git checkouts from
 touching it. HISTORY_LIMIT bounds how many runs it keeps.
@@ -54,6 +66,8 @@ Usage:
     python generate_compact_report.py reports/<run> --info other/info.json
     python generate_compact_report.py reports/<run> --no-info
     python generate_compact_report.py reports/<run> --no-history
+    python generate_compact_report.py reports/<run> --backfill
+    python generate_compact_report.py reports/<run> --backfill --scan other/reports
 """
 
 from __future__ import annotations
@@ -243,21 +257,25 @@ FAILURE_CATEGORIES = {
 # key        the key entry's prose, which must not repeat the label
 CHANGES = {
     "broke": {
+        "glyph": "\u2193",  # down: it used to pass
         "label": "Newly failing",
         "tooltip": "Newly failing — this passed in the previous run.",
         "key": "The pair passed in the previous run and does not now.",
     },
     "fixed": {
+        "glyph": "\u2191",  # up: it used to fail
         "label": "Newly passing",
         "tooltip": "Newly passing — this failed in the previous run.",
         "key": "The pair failed in the previous run and passes now.",
     },
     "reason": {
+        "glyph": "\u2192",  # sideways: red either way, but at a different step
         "label": "Different reason",
         "tooltip": "Still failing, but for a different reason than last run.",
         "key": "Red in both runs, but the flow broke down at a different point.",
     },
     "new": {
+        "glyph": "+",  # no direction to show — there is nothing to compare
         "label": "First result",
         "tooltip": "First result for this pair.",
         "key": "No previous run covered this pair, so there is nothing to compare.",
@@ -271,32 +289,64 @@ CHANGES = {
 #
 # caption spells out what the step means in each suite where the two differ;
 # the wording is what a reader needs to place a red cell on the line.
+# label and caption may be one string, or a per-suite dict where the two
+# flows genuinely differ — an issuance link carries an offer, a verification
+# link carries a request, and saying so beats one wording that fits neither.
+# "suites" limits a step to the flows it belongs to; a flow that has no such
+# step simply does not draw it.
 FLOW_STAGES = (
     ("deliver", {
-        "label": "Link delivered",
-        "caption": "the offer or request URL reaches the wallet",
+        "label": {"issuance": "Offer link delivered",
+                  "verification": "Request link delivered"},
+        "caption": {"issuance": "the issuer's URL reaches the wallet",
+                    "verification": "the verifier's URL reaches the wallet"},
     }),
     ("open", {
         "label": "Wallet opens",
         "caption": "the app comes to the foreground",
     }),
     ("present", {
-        "label": "Offer or request shown",
-        "caption": "the wallet displays what is on offer, or what is asked of it",
+        "label": {"issuance": "Offer shown", "verification": "Request shown"},
+        "caption": {"issuance": "the wallet displays what is on offer",
+                    "verification": "the wallet displays what is asked of it"},
     }),
     ("match", {
         "label": "Match found",
-        "caption": "verification only: the wallet holds a credential that fits",
+        "caption": "the wallet holds a credential that satisfies the request",
+        # Issuance has nothing to match against: the credential is inbound.
+        "suites": ("verification",),
     }),
     ("accept", {
         "label": "Accepted",
-        "caption": "the wallet goes through with it rather than erroring out",
+        "caption": {"issuance": "the wallet takes the credential rather than erroring out",
+                    "verification": "the wallet hands the presentation over rather than erroring out"},
     }),
     ("keep", {
-        "label": "Stored or shared",
-        "caption": "issuance keeps the credential; verification hands over the presentation",
+        "label": {"issuance": "Credential stored", "verification": "Presentation shared"},
+        "caption": {"issuance": "the wallet's credential count moves",
+                    "verification": "the presentation reaches the verifier"},
     }),
 )
+
+SUITES = (("issuance", "Issuance"), ("verification", "Verification"))
+
+
+def stage_text(meta: dict, field: str, suite: str) -> str:
+    """One stage's label or caption for a given suite.
+
+    Accepts a plain string for the steps that read the same either way, or a
+    per-suite dict for the ones that do not.
+    """
+    value = meta.get(field, "")
+    if isinstance(value, dict):
+        return value.get(suite, "")
+    return value
+
+
+def stage_applies(meta: dict, suite: str) -> bool:
+    """Whether a step is part of this suite's flow at all."""
+    return suite in meta.get("suites", tuple(k for k, _ in SUITES))
+
 
 # Precedence when several test cases share one matrix cell. Highest wins, in
 # the same spirit as OUTCOME_RANK: prefer the reason that names a concrete
@@ -777,6 +827,63 @@ def write_history(path: Path, runs: list) -> None:
     tmp.replace(path)
 
 
+# A run directory has to chart a real matrix to be worth recording. The
+# archive is mostly single-wallet debug runs, and one of them charting four
+# cells would sit in the history beside a full run as though the suite had
+# collapsed that day.
+DEFAULT_MIN_CELLS = 70
+
+
+def charted_cells(matrix: dict) -> int:
+    """How many wallet x agent cells a run actually produced."""
+    return sum(len(agents)
+               for section in ("issuance", "verification")
+               for agents in matrix.get(section, {}).values())
+
+
+def discover_runs(roots: list, min_cells: int):
+    """Run directories worth recording, oldest first.
+
+    Returns (kept, skipped) where each entry is (name, path, matrix, cells).
+    Runs are judged by what they chart rather than by what files they have:
+    a directory can hold eight report.html files and still contain no
+    issuance or verification results at all.
+    """
+    candidates = {}
+    for root in roots:
+        if not root.is_dir():
+            print(f"note: no such directory to scan: {root}", file=sys.stderr)
+            continue
+        for child in sorted(root.iterdir()):
+            if child.is_dir():
+                # Later roots win, so an explicitly named one overrides the
+                # default when the same run appears in both.
+                candidates[child.name] = child
+    kept, skipped = [], []
+    for name in sorted(candidates):
+        path = candidates[name]
+        try:
+            matrix = collect(path)
+        except Exception as exc:                      # noqa: BLE001 - one bad
+            skipped.append((name, path, None, 0))     # run must not stop the scan
+            print(f"note: could not read {path}: {exc}", file=sys.stderr)
+            continue
+        cells = charted_cells(matrix)
+        (kept if cells >= min_cells else skipped).append((name, path, matrix, cells))
+    return kept, skipped
+
+
+def backfill_history(history: list, runs: list) -> list:
+    """Record every discovered run, oldest first.
+
+    Merged into the existing history rather than replacing it, so entries
+    whose run directories have since been deleted survive a rescan.
+    """
+    for _name, _path, matrix, _cells in runs:
+        history = update_history(history, history_entry(matrix))
+    return history
+
+
 def previous_run(history: list, run_ts: str) -> Optional[dict]:
     """The most recent recorded run before this one, if any."""
     earlier = [r for r in history if str(r.get("run_ts")) < str(run_ts)]
@@ -1160,19 +1267,25 @@ th .ver {
   margin-top: 2px;
 }
 .reasons .count { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* The key swatch is the same wedge the cells draw, at the same scale. */
-.reasons.changes .wedge {
+/* Samples in the run-history key are the strip's own spans, so they need the
+   same right-alignment gutter the table column gives them. */
+.reasons.hkey .hkey-sample {
   flex: none;
-  width: 0;
-  height: 0;
-  margin: 4px 0 0 68px;
-  border-top: 8px solid transparent;
-  border-right: 8px solid var(--muted);
+  min-width: 82px;
+  text-align: right;
+  padding-right: 4px;
+  margin-top: 1px;
 }
-.reasons.changes .wedge-broke  { border-right-color: var(--fail); }
-.reasons.changes .wedge-fixed  { border-right-color: var(--ok); }
-.reasons.changes .wedge-reason { border-right-color: var(--err); }
-.reasons.changes .wedge-new    { border-right-color: var(--line-strong); }
+.reasons.hkey .hkey-sample .hl { margin: 0; }
+.reasons.hkey .hkey-sample .hl-up { color: var(--ok); background: none; border: none; padding: 0; font-weight: 700; }
+/* The key swatch is the same arrow the cells draw, at the same scale. */
+.reasons.changes .chg-key {
+  position: static;
+  flex: none;
+  min-width: 82px;
+  text-align: center;
+  font-size: .95rem;
+}
 
 /* ── Builds under test ───────────────────────────────────────────── */
 .provenance { padding: 20px 28px 4px; }
@@ -1207,23 +1320,25 @@ th .ver {
 .provenance .note.upd { color: var(--err); }
 
 /* ── What moved since the previous run ───────────────────────────── */
-/* A corner wedge rather than another word in the cell: the reason caption
-   already owns the text, and the eye should catch movement by shape. */
+/* A corner arrow rather than another word in the cell: the reason caption
+   already owns the text, and the eye should catch movement by direction. */
 .cell.changed { position: relative; }
-.cell.changed::after {
-  content: "";
+/* Direction, not decoration: up means this pair started passing since the
+   previous run, down means it stopped. Sat in the corner so it never
+   displaces the outcome mark. */
+.cell .chg {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 0;
-  height: 0;
-  border-top: 7px solid transparent;
-  border-right: 7px solid var(--muted);
+  top: 3px;
+  right: 5px;
+  font-size: .8rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--muted);
 }
-.cell.change-broke::after { border-right-color: var(--fail); }
-.cell.change-fixed::after { border-right-color: var(--ok); }
-.cell.change-reason::after { border-right-color: var(--err); }
-.cell.change-new::after { border-right-color: var(--line-strong); }
+.cell .chg-broke  { color: var(--fail); }
+.cell .chg-fixed  { color: var(--ok); }
+.cell .chg-reason { color: var(--err); }
+.cell .chg-new    { color: var(--line-strong); }
 
 /* ── Summary / detailed view ─────────────────────────────────────── */
 /* The page opens on the summary: the matrix as it always read, marks only.
@@ -1292,18 +1407,27 @@ th .ver,
 .view-input:checked ~ .table-wrap th .ver { display: block; }
 .view-input:checked ~ .info-section .info-block.generated { display: block; }
 .view-input:checked ~ .header .pill.flaky { display: inline-flex; }
-/* The change wedge is a pseudo-element, so it is hidden by the same rule. */
-.cell.changed::after { content: none; }
-.view-input:checked ~ .table-wrap .cell.changed::after { content: ""; }
+.cell .chg { display: none; }
+.view-input:checked ~ .table-wrap .cell .chg { display: block; }
 
 /* ── Where the flow broke down ───────────────────────────────────── */
 /* One horizontal pass through the flow both suites share. The track is drawn
    by the nodes themselves, so the line cannot fall out of step with them. */
 .flowline { padding: 20px 28px 4px; }
+/* One row per suite. They share their columns, so the pair reads down as well
+   as across: the same step sits at the same x on both rails. */
+.flow-row + .flow-row { margin-top: 18px; }
+.flow-suite {
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--ink-2);
+}
 .stages {
   display: flex;
   list-style: none;
-  margin: 14px 0 0;
+  margin: 10px 0 0;
   padding: 0;
 }
 .stage {
@@ -1371,6 +1495,19 @@ th .ver,
   color: var(--muted);
 }
 .flow-note { margin: 12px 0 0; font-size: .74rem; color: var(--muted); }
+/* Cells the lines could not account for. Called out rather than murmured:
+   the rails are only the whole story once this number is zero. */
+.unplaced-note {
+  margin: 16px 0 0;
+  padding: 9px 13px;
+  border-left: 3px solid var(--err);
+  border-radius: 0 6px 6px 0;
+  background: rgba(214,138,23,.09);
+  font-size: .8rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.unplaced-note strong { color: var(--ink); font-weight: 700; }
 
 /* ── Recent runs ─────────────────────────────────────────────────── */
 .history { padding: 18px 28px 4px; }
@@ -1418,8 +1555,54 @@ th .ver,
   max-width: calc(100% - 10px);
 }
 .history td.pct { width: 1%; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.history td.change { width: 1%; white-space: nowrap; text-align: right; padding-right: 14px; }
+/* The swing is not a label but a value, so it sheds the pill and reads as a
+   plain coloured figure — a column of movement rather than prose. */
+.history td.change .hl {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  font-size: .84rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+.history td.change .hl-up   { color: var(--ok); }
+.history td.change .hl-down { color: var(--fail); }
 .history td.delta { color: var(--muted); }
-.history .vchange { font-size: .72rem; }
+.history tr.baseline td { color: var(--muted); }
+.history .tag-base {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef0f3;
+  color: var(--muted);
+  font-size: .62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+/* Why the row is here: passing count moved, coverage grew, or a build shipped. */
+.history .hl {
+  display: inline-block;
+  margin: 1px 6px 1px 0;
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-size: .68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #f1f2f4;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.history .hl-up      { background: rgba(26,168,97,.12);  border-color: rgba(26,168,97,.3);  color: #14764a; }
+.history .hl-down    { background: rgba(212,69,44,.10);  border-color: rgba(212,69,44,.28); color: #a8402c; }
+.history .hl-cover   { background: rgba(63,106,216,.10); border-color: rgba(63,106,216,.28); color: #2f4fa8; }
+/* Coverage lost. Deliberately not red — nothing failed, the matrix shrank. */
+.history .hl-drop    { background: #f1f2f4; border-color: var(--line-strong); color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.history .hl-version { background: rgba(214,138,23,.12); border-color: rgba(214,138,23,.3);  color: #8a5a0d; }
 """
 
 PAGE = """<!doctype html>
@@ -1497,6 +1680,7 @@ def _outcome_td(cell: Optional[dict]) -> str:
                      f'{earlier} earlier attempt{"s" if earlier != 1 else ""} failed.')
 
     change = cell.get("change")
+    mark = ""
     if change in CHANGES:
         cls += f" changed change-{change}"
         note = CHANGES[change]["tooltip"]
@@ -1504,6 +1688,9 @@ def _outcome_td(cell: Optional[dict]) -> str:
             was = FAILURE_CATEGORIES.get(cell["previous_reason"], {})
             note = f'{note} (was: {was.get("label", cell["previous_reason"])})'
         title.append(note)
+        mark = (f'<span class="chg chg-{change}" aria-hidden="true">'
+                f'{CHANGES[change]["glyph"]}</span>')
+    caption = mark + caption
 
     return (
         f'<td class="cell {cls}" title="{html.escape(chr(10).join(title), quote=True)}">'
@@ -1766,7 +1953,7 @@ def render_reason_key(matrix: dict) -> str:
 
 
 def render_change_key(matrix: dict) -> str:
-    """Explain the corner marks, listing only the kinds this run produced.
+    """Explain the corner arrows, listing only the kinds this run produced.
 
     Generated from the same CHANGES table the cells use, for the same reason the
     reason key is generated: a key that can drift from the table is worse than
@@ -1782,7 +1969,7 @@ def render_change_key(matrix: dict) -> str:
         if not n:
             continue
         rows.append(
-            f'<li><span class="wedge wedge-{key}"></span>'
+            f'<li><span class="chg-key chg chg-{key}">{CHANGES[key]["glyph"]}</span>'
             f'<span><strong>{html.escape(CHANGES[key]["label"])}</strong> — '
             f'{html.escape(CHANGES[key]["key"])} '
             f'<span class="count">{n} cell{"s" if n != 1 else ""}</span></span></li>'
@@ -1794,30 +1981,31 @@ def render_change_key(matrix: dict) -> str:
     return (
         '<div class="info-block generated">'
         '<div class="info-title">What moved</div>'
-        f'<p>A corner mark flags a cell that reads differently{since}. '
-        'Cells without one are unchanged.</p>'
+        f'<p>An arrow in a cell\'s corner shows how it moved{since}: up if the '
+        'pair started passing, down if it stopped. Cells without an arrow are '
+        'unchanged.</p>'
         f'<ul class="reasons changes">{"".join(rows)}</ul></div>'
     )
 
 
 def stage_breakdown(matrix: dict) -> dict:
-    """How many cells stopped at each step of the flow, split by suite.
+    """How far each cell got, per suite, keyed by stage.
 
-    Reads the same per-cell reasons the matrix shows, so the line under the
-    table is a second view of the table rather than a second measurement.
+    Reads the same per-cell reasons the matrix shows, so the lines under the
+    table are a second view of the table rather than a second measurement.
     """
-    stages = {key: {"issuance": 0, "verification": 0, "reasons": []}
-              for key, _ in FLOW_STAGES}
-    done = {"issuance": 0, "verification": 0}
-    off_flow = 0
-    for section in ("issuance", "verification"):
-        for agents in matrix.get(section, {}).values():
+    out = {}
+    for suite, _ in SUITES:
+        stages = {key: {"n": 0, "reasons": []} for key, _ in FLOW_STAGES}
+        done = 0
+        off_flow = 0
+        for agents in matrix.get(suite, {}).values():
             for cell in agents.values():
                 outcome = cell.get("outcome")
                 if not outcome:
                     continue
                 if outcome == "Passed":
-                    done[section] += 1
+                    done += 1
                     continue
                 reason = cell.get("reason")
                 stage = FAILURE_CATEGORIES.get(reason, {}).get("stage") if reason else None
@@ -1826,69 +2014,87 @@ def stage_breakdown(matrix: dict) -> dict:
                     # (a test-setup failure). Counted, but not placed.
                     off_flow += 1
                     continue
-                stages[stage][section] += 1
+                stages[stage]["n"] += 1
                 if reason not in stages[stage]["reasons"]:
                     stages[stage]["reasons"].append(reason)
-    return {"stages": stages, "done": done, "off_flow": off_flow}
+        out[suite] = {"stages": stages, "done": done, "off_flow": off_flow}
+    return out
 
 
-def render_flow_line(matrix: dict) -> str:
-    """A horizontal walk through the flow, marking where wallets fell out.
-
-    The matrix says which pairs failed; this says *where*. Reading left to
-    right is reading the protocol in order, so a cluster on one node points at
-    one shared problem — fifteen cells stopping at "Link delivered" is a very
-    different finding from fifteen spread along the line.
-    """
-    data = stage_breakdown(matrix)
+def _flow_row(suite: str, title: str, data: dict) -> str:
+    """One suite's walk through its own flow, left to right."""
     stages, done = data["stages"], data["done"]
-    total_failed = sum(v["issuance"] + v["verification"] for v in stages.values())
-    total_done = done["issuance"] + done["verification"]
-    if not total_failed and not total_done:
-        return ""
-
     nodes = []
     for key, meta in FLOW_STAGES:
+        if not stage_applies(meta, suite):
+            continue
+        label = stage_text(meta, "label", suite)
         counts = stages[key]
-        n = counts["issuance"] + counts["verification"]
+        n = counts["n"]
         reasons = ", ".join(FAILURE_CATEGORIES[r]["short"] for r in counts["reasons"])
-        cls = "stage stopped" if n else "stage clear"
-        tip = [f'{meta["label"]} — {meta["caption"]}.']
-        if n:
-            tip.append(f'{n} cell{"s" if n != 1 else ""} stopped here '
-                       f'({counts["issuance"]} issuance, {counts["verification"]} verification).')
-        else:
-            tip.append("No cell stopped here in this run.")
+        tip = [f'{label} — {stage_text(meta, "caption", suite)}.']
+        tip.append(f'{n} {title.lower()} cell{"s" if n != 1 else ""} stopped here.'
+                   if n else f'No {title.lower()} cell stopped here in this run.')
         count_html = (f'<span class="n">{n}</span><span class="unit">stopped</span>'
                       if n else '<span class="n none">&mdash;</span>')
         nodes.append(
-            f'<li class="{cls}" title="{html.escape(chr(10).join(tip), quote=True)}">'
+            f'<li class="stage {"stopped" if n else "clear"}" '
+            f'title="{html.escape(chr(10).join(tip), quote=True)}">'
             '<span class="dot"></span>'
-            f'<span class="s-label">{html.escape(meta["label"])}</span>'
+            f'<span class="s-label">{html.escape(label)}</span>'
             f'<span class="s-count">{count_html}</span>'
             f'<span class="s-reasons">{html.escape(reasons)}</span>'
             "</li>"
         )
-    tip = (f'{total_done} cells completed the flow '
-           f'({done["issuance"]} issuance, {done["verification"]} verification).')
+    tip = f'{done} {title.lower()} cell{"s" if done != 1 else ""} completed the flow.'
     nodes.append(
         f'<li class="stage done" title="{html.escape(tip, quote=True)}">'
         '<span class="dot"></span>'
         '<span class="s-label">Complete</span>'
-        f'<span class="s-count"><span class="n">{total_done}</span>'
+        f'<span class="s-count"><span class="n">{done}</span>'
         '<span class="unit">passed</span></span>'
         '<span class="s-reasons"></span></li>'
     )
+    return (f'<div class="flow-row"><div class="flow-suite">{html.escape(title)}</div>'
+            f'<ol class="stages">{"".join(nodes)}</ol></div>')
+
+
+def render_flow_line(matrix: dict) -> str:
+    """One horizontal walk per suite, marking where wallets fell out.
+
+    The matrix says which pairs failed; this says *where*. Reading left to
+    right is reading the protocol in order, so a cluster on one node points at
+    one shared problem — fifteen cells stopping at "link delivered" is a very
+    different finding from fifteen spread along the line.
+
+    Issuance and verification get a line each: they break at different points
+    for different reasons, and averaging them hides which of the two is in
+    trouble. Each line shows only the steps its own flow has, so the two are
+    not the same length.
+    """
+    data = stage_breakdown(matrix)
+    active = sum(d["done"] + d["off_flow"] + sum(v["n"] for v in d["stages"].values())
+                 for d in data.values())
+    if not active:
+        return ""
+
+    rows = "".join(_flow_row(suite, title, data[suite]) for suite, title in SUITES)
 
     note = ""
-    if data["off_flow"]:
-        n = data["off_flow"]
-        note = (f'<p class="flow-note">{n} failing cell{"s" if n != 1 else ""} '
-                f'{"are" if n != 1 else "is"} not placed on the line — the test setup '
-                'fell over, or the failure could not be attributed to a step.</p>')
+    off = {suite: data[suite]["off_flow"] for suite, _ in SUITES}
+    total_off = sum(off.values())
+    if total_off:
+        split = ", ".join(f'{off[suite]} {title.lower()}' for suite, title in SUITES)
+        # Its own class, not the quiet .flow-note the history strip uses: this
+        # says part of the run is missing from the picture above it, and a
+        # reader who skims past it has misread the lines.
+        note = (f'<p class="unplaced-note"><strong>{total_off} cell'
+                f'{"s are" if total_off != 1 else " is"} not on the lines above'
+                f'</strong> — {split}. Their failure could not be tied to a step.</p>')
     return (
-        '<div class="flowline detail-only"><div class="prov-title">Where the flow broke down</div>'
-        f'<ol class="stages">{"".join(nodes)}</ol>{note}</div>'
+        '<div class="flowline detail-only">'
+        '<div class="prov-title">Where the flow broke down</div>'
+        f'{rows}{note}</div>'
     )
 
 
@@ -1944,7 +2150,27 @@ def _run_date(run_ts: str) -> str:
         return str(run_ts)
 
 
-def _version_changes(entry: dict, earlier: Optional[dict]) -> str:
+def _coverage(entry: dict):
+    """The column keys and agent names a recorded run covered."""
+    columns, agents = set(), set()
+    for rows in (entry.get("cells") or {}).values():
+        for col, ags in rows.items():
+            columns.add(col)
+            agents.update(ags)
+    return columns, agents
+
+
+def _column_name(key: str) -> str:
+    """Readable name for a stored column key ("gataca-jwk" -> "Gataca (jwk)").
+
+    Wallet directory names carry no hyphen, so the first segment is the
+    wallet and anything after it is the parametrize variant.
+    """
+    wallet, _, variant = key.partition("-")
+    return column_label(wallet, variant or None)
+
+
+def _version_changes(entry: dict, earlier: Optional[dict]) -> list:
     """Wallets whose build differs from the run before it.
 
     This is what makes the history worth keeping rather than a row of tallies:
@@ -1952,56 +2178,202 @@ def _version_changes(entry: dict, earlier: Optional[dict]) -> str:
     something shipped.
     """
     if not earlier:
-        return ""
+        return []
     notes = []
     before = earlier.get("wallets") or {}
     for wallet, info in sorted((entry.get("wallets") or {}).items()):
         was = before.get(wallet)
         if not was:
             continue
-        if str(was.get("version_code")) != str(info.get("version_code")):
-            notes.append(f'{display_name(wallet)} {was.get("version_name") or was.get("version_code")}'
-                         f' \u2192 {info.get("version_name") or info.get("version_code")}')
-    if not notes:
+        was_code, code = str(was.get("version_code")), str(info.get("version_code"))
+        if was_code == code:
+            continue
+        was_name, name = was.get("version_name"), info.get("version_name")
+        if was_name and name and was_name != name:
+            change = f'{was_name} \u2192 {name}'
+        elif name:
+            # Same marketing version, new build — hovi shipped 29 -> 34 as
+            # 1.3.0 both times. Showing "1.3.0 -> 1.3.0" would read as a bug.
+            change = f'{name} ({was_code} \u2192 {code})'
+        else:
+            change = f'build {was_code} \u2192 {code}'
+        notes.append(f'{display_name(wallet)} {change}')
+    return notes
+
+
+def run_highlights(entry: dict, earlier: Optional[dict]) -> list:
+    """Why this run earns a row in the strip, as (kind, text) pairs.
+
+    A run that matched the one before it on every count says nothing a reader
+    needs; listing it only makes the rows that do matter harder to find. Four
+    things qualify: the number of passing cells moved, the run covered ground
+    the previous one did not, it stopped covering ground the previous one did,
+    or a wallet shipped a new build.
+    """
+    if not earlier:
+        return []
+    out = []
+
+    passed = (entry.get("totals") or {}).get("Passed", 0)
+    was_passed = (earlier.get("totals") or {}).get("Passed", 0)
+    if passed != was_passed:
+        delta = passed - was_passed
+        kind = "up" if delta > 0 else "down"
+        arrow = "\u2191" if delta > 0 else "\u2193"
+        word = "more" if delta > 0 else "fewer"
+        out.append((kind, f"{arrow}{abs(delta)}",
+                    f"{abs(delta)} {word} cell{'s' if abs(delta) != 1 else ''} "
+                    f"passing than the previous recorded run."))
+
+    columns, agents = _coverage(entry)
+    was_columns, was_agents = _coverage(earlier)
+    for key in sorted(columns - was_columns):
+        out.append(("cover", f"new wallet: {_column_name(key)}", ""))
+    for agent in sorted(agents - was_agents):
+        out.append(("cover", f"new agent: {display_name(agent)}", ""))
+    # Coverage lost matters as much as coverage gained, and is easier to miss:
+    # a wallet that stops being tested leaves no red cell behind, it simply
+    # stops having cells. Without this the passing count can fall and nothing
+    # on the page says the matrix got smaller.
+    for key in sorted(was_columns - columns):
+        out.append(("drop", f"dropped wallet: {_column_name(key)}", ""))
+    for agent in sorted(was_agents - agents):
+        out.append(("drop", f"dropped agent: {display_name(agent)}", ""))
+
+    for note in _version_changes(entry, earlier):
+        out.append(("version", note, ""))
+    return out
+
+
+def _highlights_html(highlights: list) -> str:
+    """Render (kind, text, tip) tags. The tip carries what the text omits —
+    the swing tag is two characters, so its meaning lives in the tooltip."""
+    if not highlights:
         return ""
-    return f'<span class="vchange">{html.escape("; ".join(notes))}</span>'
+    out = []
+    for kind, text, tip in highlights:
+        attr = f' title="{html.escape(tip, quote=True)}"' if tip else ""
+        out.append(f'<span class="hl hl-{kind}"{attr}>{html.escape(text)}</span>')
+    return "".join(out)
+
+
+def _history_rows(history: list, current_ts: str):
+    """Which recorded runs earn a row, newest first, and how many do not.
+
+    Shared by the strip and by the key that explains it, so the two can never
+    describe different sets of runs.
+    """
+    # The page is a snapshot of one run, so the history stops there: a report
+    # generated for an older run must not list runs that came after it.
+    history = [r for r in history if str(r.get("run_ts")) <= str(current_ts)]
+    if len(history) < 2:
+        return [], 0
+    rows, hidden = [], 0
+    for idx in range(len(history) - 1, -1, -1):
+        entry = history[idx]
+        earlier = history[idx - 1] if idx > 0 else None
+        highlights = run_highlights(entry, earlier)
+        is_current = str(entry.get("run_ts")) == str(current_ts)
+        # The first recorded run is the baseline every later row is measured
+        # against, and the current run is what the page is about; neither is
+        # dropped for being unchanged, though the row cap below can still cut
+        # the baseline when there are more interesting runs than fit.
+        if (not highlights and not is_current and earlier is not None) \
+                or len(rows) >= HISTORY_SHOWN:
+            hidden += 1
+            continue
+        rows.append({"entry": entry, "earlier": earlier,
+                     "highlights": highlights, "current": is_current})
+    return rows, hidden
 
 
 def render_history(history: list, current_ts: str) -> str:
-    """A compact strip of recent runs, newest first.
+    """A compact strip of the runs that changed something, newest first.
 
-    Deliberately terse: each row is one run's tally plus any wallet that
-    changed build since the run before it. The full record stays in the
-    history file for anyone who needs more.
+    Deliberately terse, and deliberately incomplete: runs that repeated the
+    previous result exactly are counted at the foot rather than listed. The
+    full record stays in the history file for anyone who needs it.
     """
-    if len(history) < 2:
+    rows, hidden = _history_rows(history, current_ts)
+    if not rows:
         return ""
-    recent = history[-HISTORY_SHOWN:]
-    rows = []
-    for idx in range(len(recent) - 1, -1, -1):
-        entry = recent[idx]
-        earlier = recent[idx - 1] if idx > 0 else None
+    out = []
+    for row in rows:
+        entry, highlights, is_current = row["entry"], row["highlights"], row["current"]
+        swing = [h for h in highlights if h[0] in ("up", "down")]
+        updates = [h for h in highlights if h[0] not in ("up", "down")]
         totals = entry.get("totals") or {}
         passed = totals.get("Passed", 0)
         failed = totals.get("Failed", 0) + totals.get("Error", 0)
         total = passed + failed
         pct = round(100 * passed / total) if total else 0
-        is_current = str(entry.get("run_ts")) == str(current_ts)
-        row_cls = "current" if is_current else ""
-        now_tag = '<span class="tag-now">this run</span>' if is_current else ""
-        rows.append(
+        row_cls = " ".join(c for c in ("current" if is_current else "",
+                                       "baseline" if row["earlier"] is None else "") if c)
+        tag = '<span class="tag-now">this run</span>' if is_current else (
+            '<span class="tag-base">baseline</span>' if row["earlier"] is None else "")
+        out.append(
             f'<tr class="{row_cls}">'
-            f'<td class="when">{html.escape(_run_date(entry.get("run_ts", "")))}{now_tag}</td>'
+            f'<td class="when">{html.escape(_run_date(entry.get("run_ts", "")))}{tag}</td>'
             f'<td class="tally"><span class="ok">{passed}</span>'
             f'<span class="sep">/</span><span class="fail">{failed}</span></td>'
             f'<td class="bar"><span class="fill" style="width:{pct}%"></span></td>'
             f'<td class="pct">{pct}%</td>'
-            f'<td class="delta">{_version_changes(entry, earlier)}</td>'
+            # The passing delta gets a column of its own, ahead of the list:
+            # it is the thing a reader scans the strip for, and buried among
+            # three build changes it stops being findable.
+            f'<td class="change">{_highlights_html(swing)}</td>'
+            f'<td class="delta">{_highlights_html(updates)}</td>'
             "</tr>"
         )
+    note = ""
+    if hidden:
+        note = (f'<p class="flow-note">{hidden} further recorded run'
+                f'{"s" if hidden != 1 else ""} not shown — same passing count, '
+                'same coverage, same wallet builds as the run before.</p>')
     return (
-        '<div class="history detail-only"><div class="prov-title">Recent runs</div>'
-        f'<table><tbody>{"".join(rows)}</tbody></table></div>'
+        '<div class="history detail-only"><div class="prov-title">History overview</div>'
+        f'<table><tbody>{"".join(out)}</tbody></table>{note}</div>'
+    )
+
+
+def render_history_key(history: list, current_ts: str) -> str:
+    """Explain the run strip, using the strip's own markup for the samples.
+
+    Generated like the other keys: the swatches are the same spans the table
+    renders, so a style or wording change cannot leave the key behind.
+    """
+    rows, hidden = _history_rows(history, current_ts)
+    if not rows:
+        return ""
+    kept = len([r for r in history if str(r.get("run_ts")) <= str(current_ts)])
+    samples = [
+        (_highlights_html([("up", "\u21912", "")]),
+         "Passing cells against the previous recorded run. Green is a gain, "
+         "red a loss; hover it for the wording."),
+        (_highlights_html([("cover", "new agent: walt.id Issuer", "")]),
+         "The run covered a wallet or an agent the one before it did not, so "
+         "the totals are not measuring the same matrix."),
+        (_highlights_html([("drop", "dropped wallet: Gataca (ebsi)", "")]),
+         "The run stopped covering something the one before it tested. No "
+         "cell turns red for this — the matrix simply gets smaller, which "
+         "moves the totals on its own."),
+        (_highlights_html([("version", "Procivis 1.85.2 \u2192 1.85.3", "")]),
+         "A wallet shipped a new build between the two runs — usually the "
+         "reason a column changed colour. A new build under an unchanged "
+         "version name shows its build number instead."),
+    ]
+    items = "".join(f'<li><span class="hkey-sample">{sample}</span>'
+                    f'<span>{html.escape(text)}</span></li>'
+                    for sample, text in samples)
+    tail = (f' {hidden} of the {kept} recorded runs repeated the previous result '
+            'exactly and are counted rather than listed.') if hidden else ""
+    return (
+        '<div class="info-block generated">'
+        '<div class="info-title">Reading the run history</div>'
+        '<p>One row per past run, newest first, and only for runs that changed '
+        'something: the number of passing cells moved, the run covered new '
+        f'ground, or a wallet shipped.{html.escape(tail)}</p>'
+        f'<ul class="reasons hkey">{items}</ul></div>'
     )
 
 
@@ -2049,8 +2421,14 @@ def render_html(matrix: dict, output_dir: Path, embed: bool,
         flowline=render_flow_line(matrix),
         history=render_history(history or [], matrix["run_ts"]),
         info=render_info_section(info, generated=(
-            ("right", render_reason_key(matrix)),
+            # What changed comes before why a cell is red: a returning reader
+            # wants the movement since last time first, the full vocabulary
+            # second.
             ("right", render_change_key(matrix)),
+            ("right", render_reason_key(matrix)),
+            # The run-history key balances the deck from the left column: the
+            # right one already carries the two keys about the matrix itself.
+            ("left", render_history_key(history or [], matrix["run_ts"])),
         )),
         generated=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     )
@@ -2071,6 +2449,17 @@ def main(argv: Optional[list] = None) -> int:
                     help=f"Run history JSON (default: <output>/{HISTORY_FILENAME})")
     ap.add_argument("--no-history", action="store_true",
                     help="Do not read or record run history for this report")
+    ap.add_argument("--backfill", action="store_true",
+                    help="Scan for past runs and record every one of them in the "
+                         "history before rendering (default scan: the run's own "
+                         "reports/ directory)")
+    ap.add_argument("--scan", action="append", metavar="DIR",
+                    help="Directory of run dirs to scan with --backfill. Repeatable; "
+                         "overrides the default")
+    ap.add_argument("--min-cells", type=int, default=DEFAULT_MIN_CELLS, metavar="N",
+                    help=f"With --backfill, skip runs charting fewer than N cells "
+                         f"(default {DEFAULT_MIN_CELLS}); keeps partial and "
+                         f"single-wallet runs out of the history")
     args = ap.parse_args(argv)
 
     run_dir = resolve_run_dir(args.run_dir)
@@ -2090,6 +2479,23 @@ def main(argv: Optional[list] = None) -> int:
     # (this run joins the record).
     history_path = Path(args.history) if args.history else output_dir / HISTORY_FILENAME
     history = [] if args.no_history else load_history(history_path)
+
+    if args.backfill:
+        if args.no_history:
+            sys.exit("--backfill and --no-history contradict each other")
+        roots = [Path(d) for d in args.scan] if args.scan else [run_dir.parent]
+        kept, skipped = discover_runs(roots, args.min_cells)
+        history = backfill_history(history, kept)
+        print(f"backfilled {len(kept)} run{'s' if len(kept) != 1 else ''} from "
+              f"{', '.join(str(r) for r in roots)}")
+        if skipped:
+            print(f"  skipped {len(skipped)} charting fewer than "
+                  f"{args.min_cells} cells: "
+                  + ", ".join(f"{n} ({c})" for n, _p, _m, c in skipped[:6])
+                  + (" ..." if len(skipped) > 6 else ""))
+
+    # Backfill first, so the page compares against the run that really came
+    # before it rather than against whatever happened to be recorded already.
     annotate_changes(matrix, previous_run(history, matrix["run_ts"]))
     if not args.no_history:
         history = update_history(history, history_entry(matrix))
