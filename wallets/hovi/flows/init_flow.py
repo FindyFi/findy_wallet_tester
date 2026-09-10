@@ -155,10 +155,46 @@ def _onboard(driver, pin: str, page_args: dict, default_timeout: float):
     logger.info("[init_flow] Onboarding complete — home screen reached")
 
 
+def _wipe_and_onboard(driver, package: str, pin: str, page_args: dict, default_timeout: float):
+    """Erase all app data and walk onboarding from the landing screen.
+
+    `mobile: clearApp` is an adb-level operation: it needs no UI, no unlock and no known screen,
+    which is what makes it the one recovery that works on an app that cannot be driven at all.
+    """
+    logger.info(f"[init_flow] skip_if_done=false — clearing {package} and re-onboarding")
+    driver.execute_script("mobile: clearApp", {"appId": package})
+    driver.terminate_app(package)
+    driver.activate_app(package)
+    try:
+        WebDriverWait(driver, default_timeout).until(
+            EC.presence_of_element_located(_landing_id)
+        )
+    except TimeoutException:
+        raise RuntimeError(
+            f"Landing page not found after reset for {package}.\n"
+            "  The app may have crashed or failed to launch after clearing data."
+        )
+    _onboard(driver, pin, page_args, default_timeout)
+
+
 def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **page_args):
     timeouts = page_args.get("timeouts", {})
     default_timeout = timeouts.get("default", 10)
     package = app_package or driver.current_package
+
+    # A reset wipes first and never probes state at all.
+    #
+    # There is nothing worth detecting in a wallet that is about to be erased, and probing first
+    # was actively harmful: the wipe used to sit in the `else` of `if landing / elif home`, so it
+    # was reachable only *after* reaching a known screen — precisely what a broken wallet cannot
+    # do. On 2026-09-09 hovi was crash-looping on every launch (a credential persisted from a
+    # rejected paradym offer kills `CredentialCard` on the home render), `_detect_state` returned
+    # "unknown", `_back_to_known_state` exhausted its back-presses and raised, and all 10 hovi
+    # cells errored in fixture setup — with `HOVI_RESET=true` set, on the one situation the reset
+    # exists for. `mobile: clearApp` would have fixed it in two seconds.
+    if not skip_if_done:
+        _wipe_and_onboard(driver, package, pin, page_args, default_timeout)
+        return
 
     # hovi locks itself from build 34 on, and asks on every activation. The sheet is the system
     # BiometricPrompt: "Authenticate to proceed", fingerprint, and a "Use PIN" fallback that opens
@@ -183,24 +219,7 @@ def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **pa
     if state == "landing":
         logger.info("[init_flow] Fresh app state — running onboarding")
         _onboard(driver, pin, page_args, default_timeout)
-
-    elif state == "home" and skip_if_done:
-        logger.info("[init_flow] Already on home screen — skipping")
-        return
-
     else:
-        # skip_if_done=False: wipe app data and re-onboard from scratch
-        logger.info(f"[init_flow] skip_if_done=false — clearing {package} and re-onboarding")
-        driver.execute_script("mobile: clearApp", {"appId": package})
-        driver.terminate_app(package)
-        driver.activate_app(package)
-        try:
-            WebDriverWait(driver, default_timeout).until(
-                EC.presence_of_element_located(_landing_id)
-            )
-        except TimeoutException:
-            raise RuntimeError(
-                f"Landing page not found after reset for {package}.\n"
-                "  The app may have crashed or failed to launch after clearing data."
-            )
-        _onboard(driver, pin, page_args, default_timeout)
+        # `_detect_state` returns only landing/home/unknown, and unknown either resolves to one of
+        # the two above or raises — so reaching here means home.
+        logger.info("[init_flow] Already on home screen — skipping")
