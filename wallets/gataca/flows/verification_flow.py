@@ -1,6 +1,5 @@
 import logging
 import time
-from urllib.parse import urlparse
 
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -74,18 +73,6 @@ def _handle_biometric_and_confirm(driver, offer_timeout: float, **page_args):
     raise RuntimeError(f"[verification_flow] No success/home screen after biometric within {offer_timeout}s")
 
 
-def _to_openid4vp(url: str) -> str:
-    """Convert an https:// invitation URL to the openid4vp:// scheme Gataca handles.
-
-    Paradym verifiers return https://paradym.id/invitation?request_uri=...
-    Gataca registers for openid4vp:// but not for paradym.id App Links.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme in ("http", "https") and parsed.query:
-        return f"openid4vp://?{parsed.query}"
-    return url
-
-
 def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: str,
         pin: str = "", **page_args):
     """Open a presentation request deeplink and share credentials in the Gataca wallet.
@@ -97,7 +84,6 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     device_pin = page_args.get("device_pin", "") or pin
 
     url = provider.get(credential_name)
-    url = _to_openid4vp(url)
 
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
     driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
