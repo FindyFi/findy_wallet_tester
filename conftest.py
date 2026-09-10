@@ -19,7 +19,12 @@ from selenium.webdriver.support.ui import WebDriverWait
 from base.android import (handle_biometric_if_present, handle_permission_if_present,
                           unlock_if_locked)
 from base.base_test import BaseTest, UpdateNotFinished
-from base.conftest_helpers import node_failed, save_failure_artifacts, screen_is_protected
+from base.conftest_helpers import (
+    capture_appium_logs,
+    node_failed,
+    save_failure_artifacts,
+    screen_is_protected,
+)
 from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
                         sanitize_test_name, device_locale)
 
@@ -560,6 +565,7 @@ def app(driver, request):
         )
 
     request.node._artifact_captured = False
+    request.node._appium_captured = False
     yield base_test
 
     # `node_failed`, not `rep_call`, because this is the only capture point a setup error ever
@@ -570,6 +576,19 @@ def app(driver, request):
         # live here took the screenshot *before* the XML dump — the wrong order on a screen with
         # FLAG_SECURE, where the dump is the only evidence that can be captured at all.
         save_failure_artifacts(driver, request, config, wallet=app_name)
+
+    # Appium's log, for the same reason and from the same fallback position.
+    #
+    # `capture_appium_logs` used to live only in the per-wallet `teardown_test`, which never runs
+    # when `_ensure_home` raises before its yield — so the failure mode that most needs the Appium
+    # log was the only one that could not produce it. hovi's 2026-09-09 run was the whole wallet
+    # dying in setup, and hovi is the one directory in that run with no appium.log at all while
+    # every other wallet has 11-21 MB of it. Capturing here covers a setup error and
+    # `skip_home_setup` alike; the flag keeps a normal test to exactly one block.
+    #
+    # After `save_failure_artifacts`, so the screenshot and XML calls appear in the log too.
+    if not getattr(request.node, "_appium_captured", False):
+        capture_appium_logs(driver, request.config._run_dir, sanitize_test_name(request.node.name))
 
     if _is_anr_present(driver):
         logger.warning(f"[app] ANR detected for {app_package} — clearing app cache before retry")

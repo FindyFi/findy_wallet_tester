@@ -212,6 +212,9 @@ def teardown_test(app, request, init_flow):
     """
     capture_failure_artifact(app, request)
     capture_appium_logs(app.driver, request.config._run_dir, sanitize_test_name(request.node.name))
+    # Tells the `app` fixture's fallback that this test's Appium block is already written, so it
+    # does not drain the buffer a second time and append a near-empty duplicate.
+    request.node._appium_captured = True
 
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
