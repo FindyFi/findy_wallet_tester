@@ -27,14 +27,35 @@ def navigate_to_home(app, request, init_flow):
     skip_if_done = app.config.get("onboarding", {}).get("skip_if_done", True)
 
     if not skip_if_done and not getattr(request.config, "_session_reset_done", False):
+        # A reset that has already burned its reruns is not attempted again.
+        #
+        # The flag below is set only on success, so a reset that always fails used to be retried
+        # by every test in the wallet: 11 tests x 3 attempts x ~2 min sent hovi's 2026-09-09
+        # segment to 84 minutes of wall clock for zero signal, all 10 cells reporting the same
+        # error. The first test still gets its full rerun budget — a wipe-and-onboard can be
+        # genuinely flaky — but once *that* node has given up, every later test fails in
+        # milliseconds with the original cause instead of re-running the wipe from scratch.
+        owner = getattr(request.config, "_session_reset_owner", None)
+        failure = getattr(request.config, "_session_reset_failure", None)
+        if failure is not None and owner != request.node.nodeid:
+            raise RuntimeError(
+                "Session reset already failed for this wallet earlier in the run — not retrying. "
+                f"First failure: {failure}"
+            )
+
+        request.config._session_reset_owner = request.node.nodeid
         logger.info("[conftest] skip_if_done=false — resetting wallet for this session")
-        init_flow.run(
-            app.driver,
-            pin=pin,
-            app_package=app_package,
-            skip_if_done=False,
-            **app.page_args,
-        )
+        try:
+            init_flow.run(
+                app.driver,
+                pin=pin,
+                app_package=app_package,
+                skip_if_done=False,
+                **app.page_args,
+            )
+        except Exception as e:
+            request.config._session_reset_failure = f"{type(e).__name__}: {e}"
+            raise
         request.config._session_reset_done = True
     else:
         init_flow.run(
