@@ -23,8 +23,8 @@ _OFFER_SCHEMES = (
 _OFFER_PATTERN = re.compile(
     r'(?:openid-credential-offer|openid-gatc-credential-offer|openid4vp|openid-vp|openid-gatc-vp|haip)://[^\s"\'<>]+'
 )
-# Matches https:// invitation URLs in href attributes (e.g. Paradym verifier pages
-# embed the request as a clickable link: <a href="https://paradym.id/invitation?...">)
+# Matches invitation URLs in href attributes, for verifier pages that link the request rather than
+# printing it in a scheme _OFFER_PATTERN knows (e.g. <a href="https://…/invitation?request_uri=…">)
 _HREF_INVITATION_PATTERN = re.compile(
     r'href=["\']([^"\']*(?:request_uri=|credential_offer_uri=)[^"\']+)["\']'
 )
@@ -122,8 +122,8 @@ class WebDeeplinkProvider(DeeplinkProvider):
     def _scan_raw_url(self, text: str) -> Optional[str]:
         """Return the body directly if the entire response is a bare URL.
 
-        Some issuers (e.g. Paradym) respond with a single HTTPS invitation URL
-        rather than an HTML page containing a deeplink.
+        Some issuers respond with a single https:// invitation URL rather than an
+        HTML page containing a deeplink.
         """
         stripped = text.strip()
         if stripped.startswith(("http://", "https://")) and " " not in stripped and "\n" not in stripped:

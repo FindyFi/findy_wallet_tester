@@ -467,18 +467,15 @@ same `dumpsys package` dump it already reads for the version, and every run reco
 `app_info.json`. Diagnosis after the fact, never a gate before it, and never a claim without a dump
 behind it.
 
-The one URL that is not published in a scheme is paradym's, and it is handled **once, for every
-wallet equally**, in `providers/paradym_provider.py` — never inside a flow. Paradym wraps both
-directions in `https://paradym.id/invitation?...`, an app-link only its own wallet verifies, so the
-provider strips the envelope and hands on the standard scheme the query already names
-(`credential_offer_uri` -> `openid-credential-offer://`, `request_uri` -> `openid4vp://`). Every
-wallet in the fleet registers both, per their `app_info.json`.
-
-This used to be the exception that proved the rule: authbound and gataca each did the same rewrite
-privately in their own flows, so paradym read green in their columns and red in everyone else's for
-identical behaviour — a harness choice published as a wallet property. Those three rewrites are
-deleted. Doing it symmetrically is what the principle asks for; doing it per wallet is what it
-forbids. The matrix notes should still say that emitting a standard scheme is a small change on
+There is no longer any exception to this. Paradym used to publish both directions wrapped in
+`https://paradym.id/invitation?...`, an app-link only its own wallet verifies, and the harness
+unwrapped it — first privately inside the authbound and gataca flows, which published a harness
+choice as a wallet property, then once for every wallet equally in a `ParadymProvider`. As of
+2026-09-11 the pensiondemo endpoints emit the standard schemes themselves: the issuer answers with
+an `offerDeeplinkUri` of `openid-credential-offer://…` and the verifier page links
+`openid4vp://?request_uri=…`. Paradym is now a plain `WebDeeplinkProvider` like hovi, procivis and
+waltid, and `providers/paradym_provider.py` is deleted. If paradym ever reverts to the https
+envelope, the cases fail `[unroutable]` — that is the honest result, and the fix belongs on
 paradym's side.
 
 **Manipulate wallet settings** — heidi enables Show Metadata and sets "Always Ask" for trusted and

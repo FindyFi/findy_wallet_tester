@@ -15,8 +15,6 @@ def get_provider(config: dict, issuer_name: str) -> DeeplinkProvider:
         (authenticates to itb.ilabs.ai and drives a test session)
       - AuthboundProvider      when ``type`` is ``"authbound"``
         (POSTs to the Authbound demo to mint an offer / presentation request)
-      - ParadymProvider        when ``type`` is ``"paradym"``
-        (scrapes like the web provider, then strips paradym's https invitation envelope)
       - WebDeeplinkProvider    when the issuer has a ``base_url``
         (credentials specify a ``path`` suffix)
       - ConfigDeeplinkProvider when there is no ``base_url``
@@ -50,10 +48,6 @@ def get_provider(config: dict, issuer_name: str) -> DeeplinkProvider:
     if issuer.get("type") == "authbound":
         from providers.authbound_provider import AuthboundProvider
         return AuthboundProvider(issuer["base_url"], credentials)
-
-    if issuer.get("type") == "paradym":
-        from providers.paradym_provider import ParadymProvider
-        return ParadymProvider(issuer["base_url"], credentials)
 
     base_url = issuer.get("base_url")
     if base_url:
