@@ -26,7 +26,6 @@
             }
         },
         "paradym": {
-            "type": "paradym",
             "base_url": "https://issuer.paradym.pensiondemo.findy.fi",
             "credentials": {
                 "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
@@ -66,7 +65,6 @@
             }
         },
         "paradym": {
-            "type": "paradym",
             "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
             "credentials": {
                 "pension_verification": { "type": "verification", "path": "/" }
