@@ -50,7 +50,8 @@ become uniform.
 ## Capability matrix
 
 What the test suite can actually **do** with each wallet today. Every ❌/⚠️ is either a gap to close or
-a difference to justify. Status as of 2026-08-20, branch `fix/hovi_general`.
+a difference to justify. Status as of 2026-08-20, branch `fix/hovi_general`; the **sphereon** column
+is newer — measured 2026-09-10 on 0.9.0 (build 901), branch `sphereon_wallet`.
 
 **Legend**
 
@@ -62,30 +63,30 @@ a difference to justify. Status as of 2026-08-20, branch `fix/hovi_general`.
 | –    | not applicable for this wallet                                                       |
 | 🔁   | provided by shared code in `base/` or the root `conftest.py`, same for every wallet  |
 
-| Capability                            | authbound | gataca | heidi | hovi | paradym | procivis | toppan | unime |
-|:--------------------------------------|:---------:|:------:|:-----:|:----:|:-------:|:--------:|:------:|:-----:|
-| **Lifecycle**                         |           |        |       |      |         |          |        |       |
-| Install app (Play Store)              |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
-| Update app to a newer release         |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
-| Record app version                    |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |   🔁   |  🔁   |
-| Launch app                            |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Onboard from fresh install            |    ❌     |   ❌   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Open / unlock returning wallet        |    ✅     |   ✅   |  ✅   |  –   |   ✅    |    ✅    |   –    |  ✅   |
-| Reset wallet (wipe + re-onboard)      |    ⚠️      |   ⚠️    |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Clean-slate strategy                  |  delete   | delete |  wipe | wipe |  wipe   |   wipe   |  wipe  | wipe  |
-| **Credentials**                       |           |        |       |      |         |          |        |       |
-| Issue credential (deeplink -> accept) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Verify credential (deeplink -> share) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Count credentials                     |    ✅     |   ⚠️    |  ✅   |  ✅  |   ✅    |    ⚠️     |   ✅   |  ✅   |
-| **Assert** the count changed          |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ✅   |
-| Open / review a credential's detail   |    ⚠️      |   ✅   |  ⚠️    |  ⚠️   |   ⚠️     |    ⚠️     |   ⚠️    |  ⚠️    |
-| Delete a single credential            |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   –    |  ✅   |
-| Wipe all credentials (post-suite)     |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   –    |  ✅   |
-| **Support**                           |           |        |       |      |         |          |        |       |
-| Detect app error screens              |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ⚠️    |
-| Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
-| Collect in-app debug logs             |    ❌     |   ❌   |  ❌   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
-| Wallet-specific pre-test setup        |     –     |   ✅   |   –   |  –   |    –    |    –     |   –    |   –   |
+| Capability                            | authbound | gataca | heidi | hovi | paradym | procivis | sphereon | toppan | unime |
+|:--------------------------------------|:---------:|:------:|:-----:|:----:|:-------:|:--------:|:--------:|:------:|:-----:|
+| **Lifecycle**                         |           |        |       |      |         |          |          |        |       |
+| Install app (Play Store)              |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |    🔁    |   🔁   |  🔁   |
+| Update app to a newer release         |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |    🔁    |   🔁   |  🔁   |
+| Record app version                    |    🔁     |   🔁   |  🔁   |  🔁  |   🔁    |    🔁    |    🔁    |   🔁   |  🔁   |
+| Launch app                            |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |    ✅    |   ✅   |  ✅   |
+| Onboard from fresh install            |    ❌     |   ❌   |  ✅   |  ✅  |   ✅    |    ✅    |    ✅    |   ✅   |  ✅   |
+| Open / unlock returning wallet        |    ✅     |   ✅   |  ✅   |  –   |   ✅    |    ✅    |    ✅    |   –    |  ✅   |
+| Reset wallet (wipe + re-onboard)      |    ⚠️      |   ⚠️    |  ✅   |  ✅  |   ✅    |    ✅    |    ✅    |   ✅   |  ✅   |
+| Clean-slate strategy                  |  delete   | delete |  wipe | wipe |  wipe   |   wipe   |   wipe   |  wipe  | wipe  |
+| **Credentials**                       |           |        |       |      |         |          |          |        |       |
+| Issue credential (deeplink -> accept) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |    ⚠️     |   ✅   |  ✅   |
+| Verify credential (deeplink -> share) |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |    ⚠️     |   ✅   |  ✅   |
+| Count credentials                     |    ✅     |   ⚠️    |  ✅   |  ✅  |   ✅    |    ⚠️     |    ✅    |   ✅   |  ✅   |
+| **Assert** the count changed          |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |    ⚠️     |   ✅   |  ✅   |
+| Open / review a credential's detail   |    ⚠️      |   ✅   |  ⚠️    |  ⚠️   |   ⚠️     |    ⚠️     |    ⚠️     |   ⚠️    |  ⚠️    |
+| Delete a single credential            |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |    ❌    |   –    |  ✅   |
+| Wipe all credentials (post-suite)     |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |    ❌    |   –    |  ✅   |
+| **Support**                           |           |        |       |      |         |          |          |        |       |
+| Detect app error screens              |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |    ✅    |   ✅   |  ⚠️    |
+| Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ✅    |    ❌    |    ❌    |   ❌   |  ❌   |
+| Collect in-app debug logs             |    ❌     |   ❌   |  ❌   |  ❌  |   ✅    |    ❌    |    ❌    |   ❌   |  ❌   |
+| Wallet-specific pre-test setup        |     –     |   ✅   |   –   |  –   |    –    |    –     |    –     |   –    |   –   |
 
 ---
 
@@ -124,27 +125,72 @@ dropping a scheme in a new build.
 the app *launched*, not that an install happened (install is a side effect of the `app` fixture). The
 file is near-identical boilerplate in every wallet.
 
-**Onboard from fresh install** — heidi, hovi, paradym, procivis and unime drive the full first-run
-sequence. authbound and gataca deliberately raise: both need server-side registration (authbound:
-email/registration; gataca: email) that isn't automated, so tests assume an already-registered
-wallet. toppan has no onboarding at all.
+**Onboard from fresh install** — heidi, hovi, paradym, procivis, sphereon and unime drive the full
+first-run sequence. authbound and gataca deliberately raise: both need server-side registration
+(authbound: email/registration; gataca: email) that isn't automated, so tests assume an
+already-registered wallet. toppan has no onboarding at all.
+
+**sphereon** ✅ since 2026-09-10, and it is the longest of them: eleven screens, and the only
+onboarding in the suite that needs more than a PIN. The wallet asks for a name and an email address
+(`SPHEREON_HOLDER_NAME`, `SPHEREON_EMAIL` in `.env`, read via `onboarding.*` in its config) and
+**self-issues a "Sphereon Wallet Identity" credential from them** — which is why a wiped sphereon
+comes back holding 1 credential rather than 0. Biometrics are declined at the offer ("Maybe later")
+so the wallet stays on a PIN, and the language step is left at "System default" because the root
+conftest already asserts the device locale.
+
+Its PIN entry is the one genuinely new mechanism: **the digits cannot be injected.** There is no
+`EditText` in the tree — the six slots are bare `ViewGroup`s — and both `press_keycode(KEYCODE_0..9)`
+and `adb shell input text 346399` are accepted by Android and then ignored by the wallet, leaving the
+field empty and the screen where it was, which looks exactly like a wrong PIN. What works is
+`mobile: type`, **one digit per call**, after tapping the slots to raise the IME; all six characters
+in a single call also leave the field empty. See `wallets/sphereon/pages/pin_page.py`.
 
 **Open / unlock returning wallet** — five different mechanisms: app passcode (authbound), device PIN via
-the system biometric prompt (gataca), biometric only (heidi), app PIN (paradym, procivis), password
-(unime). hovi and toppan have no lock to open.
+the system biometric prompt (gataca), biometric only (heidi), app PIN (paradym, procivis, sphereon),
+password (unime). hovi and toppan have no lock to open. sphereon locks itself on every cold start, so
+its unlock runs before every test rather than once per session.
 
 **Reset wallet** — `init_flow.run(skip_if_done=False)` clears app data and re-onboards; triggered once
 per session by `conftest_helpers.navigate_to_home` when `onboarding.skip_if_done` is false. authbound
 and gataca are ⚠️: they clear the data and then raise, because they can't re-onboard — so using
 `skip_if_done=false` on those two leaves the wallet unusable until someone registers it by hand.
 
+**A reset can silently become an unlock, and every `init_flow` should be checked for it.** Found in
+sphereon on 2026-09-10 and fixed there: its `elif state == "pin":` branch had no `and skip_if_done`
+guard, so with a reset requested and the wallet locked — **the normal state at the start of a
+session** — `navigate_to_home` logged "skip_if_done=false — resetting wallet for this session",
+unlocked instead, and set `request.config._session_reset_done`. The wipe then never happened for the
+rest of the run. It only came to light because `test_onboarding` asks for a reset a second time; a
+run of the issuance tests alone would have kept whatever the wallet held while reporting a clean
+slate. The fix is one line (`elif state == "pin" and skip_if_done:`), which lets a reset fall through
+to the wipe branch.
+
+**Two wallets still carry it**, from a grep of every `init_flow.run()` on 2026-09-10. Neither is
+fixed — recorded here so the instance is not left uncredited, and so nobody re-derives the audit:
+
+- `wallets/unime/flows/init_flow.py` — `elif state == "pin":`, unguarded. Sphereon's shape exactly,
+  so the one-line guard above is the fix.
+- `wallets/procivis/flows/init_flow.py:121-131` — the worse variant: `if state == "pin_lock":`
+  unlocks and **`return`s unconditionally**, in its own `if` ahead of the `skip_if_done` chain, so
+  the flag is never consulted and a reset on a locked procivis never reaches its `clearApp` branch.
+  Not a one-line guard: the branch has to be restructured so a reset falls through.
+
+Clean, and not worth re-auditing: heidi, hovi and toppan have no pin state at all; authbound,
+paradym and gataca already spell `elif state == "<pin>" and skip_if_done:`. Confirm either fix
+against a run with `<WALLET>_RESET=true` starting from a *locked* wallet — reading the diff is what
+let this survive in the first place.
+
 **Clean-slate strategy** — every wallet is meant to start a run holding nothing. A verification that
 passes by presenting a credential left over from an earlier run is not evidence about today's issuer.
 "Clean slate" covers two different mechanisms, and the row above says which one a wallet gets.
 
-- **wipe** (heidi, hovi, paradym, procivis, toppan, unime): the reset above, once per session. It
-  clears keys, settings and consent state, not only credentials. toppan qualifies despite having no
-  onboarding at all, because its `clearApp` path lands straight back on home.
+- **wipe** (heidi, hovi, paradym, procivis, sphereon, toppan, unime): the reset above, once per
+  session. It clears keys, settings and consent state, not only credentials. toppan qualifies despite
+  having no onboarding at all, because its `clearApp` path lands straight back on home. sphereon is
+  the one wallet where a wipe does **not** produce an empty wallet: onboarding re-issues its own
+  identity card, so a clean sphereon holds exactly 1. `HomePage.holds_only_own_identity()` is what
+  tells that state apart from "an issuer succeeded", and `SPHEREON_RESET=true` is set in `.env` for
+  the same reason toppan's is — there is no delete to fall back on.
 - **delete** (authbound, gataca): the per-credential UI delete path. Both need manual email/server
   registration, so a wipe would brick them, and a rerun must never need a human.
 
@@ -154,8 +200,10 @@ written down here but not in force. The UI delete path stays even for wallets th
 because sometimes a cleanup is wanted rather than a start-from-scratch and no test cares how the
 wallet got clean.
 
-**Issue / verify credential** — every wallet has both flows, and all eight now complete both for at
-least one counterparty. authbound was the last ⚠️ and closed on 2026-08-13:
+**Issue / verify credential** — every wallet has both flows, and eight of the nine complete both for
+at least one counterparty. **sphereon is the exception and is ⚠️ on both**, not because its flows are
+unfinished but because no configured counterparty gets far enough to exercise them (see its block
+below). authbound was the last of the eight and closed on 2026-08-13:
 
 - *Issuance* runs end to end against `authbound_issuer`: consent screen (ISSUANCE REQUEST → "Add"),
   device authentication, success screen, and the wallet's own total goes up. The old blocker was a
@@ -174,16 +222,60 @@ measured 2026-08-12 — so `document_success_page.wait_for_outcome()` answers re
 instead of assuming a single one. That page is shared by both flows: the same success screen and ids
 serve issuance and presentation, only the header copy differs.
 
+**sphereon ⚠️ on both rows — the wallet-side half is proven, the counterparty-side half is blocked.**
+Measured over a complete run on 2026-09-10 (13 cases, no reruns, 0 flaky): **all six issuers report
+`rejected` and all five verifiers `nothing_to_present`.** What is proven live is the deeplink, the
+"Getting information..." spinner, the trust gate, the error surface and the count; what has never
+happened is an offer screen or a share.
+
+Each rejection quotes the wallet's own words, which is the point of having mapped its error screen:
+
+- `sphereon_issuer` — token endpoint `400 invalid_request`. **This one is the provider's, not the
+  wallet's**, and it is reproducible with plain curl outside any wallet: the offer at
+  issuer.sphereon.pensiondemo.findy.fi carries the literal pre-authorized code
+  `using the same code for all requests...`, and Sphereon's own agent rejects it. No wallet can take
+  that offer, which also explains the old sphereon_issuer failures in the hovi and unime columns.
+- `authbound_issuer` — `use_attestation_challenge`: "Wallet client attestation is required".
+- `procivis_issuer` — `400: invalid_or_missing_proof`. The token step succeeds and the key-binding
+  proof is refused.
+- `waltid_issuer` — `400` on the credential endpoint.
+- `hovi_issuer`, `paradym_issuer` — "Sending authorization challenge request", with no body. The
+  wallet attempts a first-party authorization challenge for these offers and the request fails.
+
+So `pages/credential_offer_page.py` is the one page in the wallet whose locators did **not** come off
+a device: they are read out of the build's own string table (`Offered data`, Accept/Decline) and
+cross-checked against the wallet's in-app help text, and the module says so at the top. Two steps
+that help text describes are unmapped for the same reason — credential-type selection for a
+multi-credential offer, and the issuer's transaction code. Both would surface as `absent`.
+
+Verification got one step further by hand: the "Information request" screen was reached and read
+against `hovi_verifier`, and its `no_match` state ("No Available Credentials / 0 available") renders
+*inside* the request with `Share` still present and inert — hovi's shape exactly. In the run itself
+`verification_flow` never executed: the test's pre-flight check stops first, because the wallet holds
+nothing but its own identity card, so the four verifier cells blame issuance rather than the verifier.
+
+**sphereon's trust gate is per-party and has two layers**, and it is serviced as an interstitial
+rather than a step because it is tied to the party, not to a point in the flow — it reappeared for
+hovi on a second attempt after the first had already created the contact. First "Do you recognize
+<party>" [Yes, continue]; then, for a party outside the wallet's trust federations, a modal ("Are you
+sure you want to continue?" / "You are going to interact with a party that has a low level of
+trust"). **Both spell the confirm button "Yes, continue", and the modal overlays the screen rather
+than replacing it**, so the bare content-desc matches two buttons one tap apart and taps land on the
+covered one — which reads exactly like a broken locator. The modal's is matched as the only
+"Yes, continue" with "No, abort" as a preceding sibling. Findynet came back high-trust and raised no
+modal; Kela, omakela and waltid all came back low-trust.
+
 The other counterparties fail, and these are *results*, not defects: waltid returns 404 for the
 spec-required `.well-known/openid-credential-issuer/<path>` metadata, while hovi, procivis, sphereon and
 paradym serve valid metadata and offers that the wallet then rejects internally
 (`issueDocumentsFromOffer failure`). Both are readable straight from `app.log`, which carries the
 wallet's full HTTP traffic under the logcat tag `EUDI Wallet PROD-RELEASE`.
 
-**Count credentials** — the mechanism is per-wallet and stays that way: gataca, hovi and unime count
-card elements (with locators that have nothing in common), heidi, paradym and authbound parse a count
-label, toppan counts the card containers in its WebView list. heidi and authbound navigate to get it —
-to a list screen and the Wallet tab respectively — and both return to where they started.
+**Count credentials** — the mechanism is per-wallet and stays that way: gataca, hovi, sphereon and
+unime count card elements (with locators that have nothing in common), heidi, paradym and authbound
+parse a count label, toppan counts the card containers in its WebView list. heidi and authbound
+navigate to get it — to a list screen and the Wallet tab respectively — and both return to where
+they started.
 
 One lesson worth carrying to the other card-counting wallets: **count containers, never text inside
 them.** Toppan counted an "Issued on" line per card until 2026-08-05, when a saved page dump showed 14
@@ -200,6 +292,14 @@ heidi where counting is a navigation step) and reads the wallet's *own* header t
 rather than counting cards: its document cards are `android.view.View` with no resource-id inside a
 scrolling list, so the header is both simpler and immune to the truncation described above. An empty
 wallet omits that label and says "Your wallet is empty", which is a real 0.
+
+**sphereon** ✅ since 2026-09-10 — it counts the per-card accessibility summaries the wallet emits
+("<name>. Issued by: <issuer>, on: <date>. Expires on: … Status: valid"), anchored inside the
+`AbsListView` labelled "Credentials" so the identical node on the detail screen cannot be counted.
+Read as 1 on every case of a complete run. Two caveats are in its docstring and both matter to a
+number: the tab's "Show: Revoked / Expired" filters are **off by default**, so a credential that
+arrives already revoked or expired is held and not counted; and being a card count it will saturate
+like the others — it has only ever been read at 1, so the ceiling is unmeasured.
 
 **procivis** ❌ is the only wallet left with no counting at all — no credential-list locator, its
 `HomePage` only knows `wait_until_loaded()`. It does issue credentials successfully, so this is
@@ -257,9 +357,13 @@ which cannot show a ceiling of three. The fix is to scroll and accumulate unique
 wallet-reported total; until then, clean-slate is not a tidiness preference for these wallets, it is
 what makes their numbers mean anything.
 
-**Assert the count changed** — the actual pass criterion. Re-measured 2026-09-03: **all eight now
-assert**, where on 2026-08-20 only four did. gataca, heidi and paradym used to compute
-`count_before`/`count_after` and merely log the delta, so a no-op issuance passed; procivis asserted
+**Assert the count changed** — the actual pass criterion. sphereon is ⚠️ and is a different case
+from the ones below: its test goes through `base.credential_count.assert_increased`, but the
+assertion has **never executed**, because `credential_flow` raises `rejected` for every issuer before
+the count is re-read. Wired, not exercised — it becomes ✅ the day an issuer succeeds. Re-measured
+2026-09-03 for the other eight: **all eight assert**, where on 2026-08-20 only four did. gataca,
+heidi and paradym used to compute `count_before`/`count_after` and merely log the delta, so a no-op
+issuance passed; procivis asserted
 nothing at all. heidi, paradym and procivis now go through `base.credential_count.assert_increased`,
 and the run evidence is in the logs (`heidi: 17 → 18, +1`, `paradym: 9 → 10, +1`). procivis is ⚠️
 only because its counting has not yet appeared in a run, not because it does not assert.
@@ -282,8 +386,12 @@ one of them under-reports:
 grep -lE "assert_increased|assert count_after|assert added" wallets/*/tests/test_credential_issuance.py
 ```
 
-**Open / review a credential's detail** — the "check credential" capability. Only gataca has it in
-full (`CredentialDetailPage`, heading "Credential details"). heidi is ⚠️: it navigates to the
+**Open / review a credential's detail** — the "check credential" capability. sphereon is the closest
+any wallet has come without closing it: `CredentialDetailPage` is captured live (anchored on "Card
+information", reached by tapping a card with no authentication) and **reads the claims as
+{label: value}** plus the "Issued by" name — so the data an assertion would need is already in hand.
+No test uses it, which is what keeps it ⚠️. Only gataca has the capability in full
+(`CredentialDetailPage`, heading "Credential details"). heidi is ⚠️: it navigates to the
 credential *list* to read a count label and immediately backs out. authbound is ⚠️ for the opposite
 reason — its detail screen is reachable and captured (see below) and does expose the raw claims
 (`exp`, `iat`, `jti`, `nbf`, `sub`, expandable Pension/Person groups, ISSUER), but the page object
@@ -291,9 +399,18 @@ only uses it to delete; nothing reads a field. So still no wallet can assert *wh
 (claims, issuer, validity), only *how many*.
 
 **Delete a single credential / wipe all** — gataca, hovi and authbound. authbound closed on
-2026-09-03: pruned 2 → 1 → 0 and, separately, 1 → 0, with the final count asserted each time. hovi was exercised on 2026-08-20, pruning a wallet holding two credentials down to
-empty and re-counting between deletions. Two of its paths have still never occurred in a run, so
-they are not claimed here: `can_delete()` returning False, and the `DeleteRefused` restart-and-retry.
+2026-09-03: pruned 2 → 1 → 0 and, separately, 1 → 0, with the final count asserted each time. hovi
+was exercised on 2026-08-20, pruning a wallet holding two credentials down to empty and re-counting
+between deletions. Two of its paths have still never occurred in a run, so they are not claimed
+here: `can_delete()` returning False, and the `DeleteRefused` restart-and-retry.
+
+**sphereon has neither, and it is the one wallet with no path to an empty wallet at all**: its
+actions menu, opened on the only credential it has ever held (the identity card onboarding issues to
+itself), offers just "Raw credential", and a wipe re-issues that card. It is ❌ rather than `–`
+because the measurement is incomplete — the build's string table carries a
+`credential_delete_wallet_identity_message`, which suggests the identity card is a special case and
+a delete may well exist for an issued credential. Re-check the day an issuer succeeds;
+`CredentialDetailPage.can_delete()` returns False and says so.
 
 **The loop is shared; only the gestures below are per-wallet.** All three had written the same
 count → open → delete → re-count loop independently and agreed on every structural decision, so it
@@ -310,8 +427,9 @@ was **never the class the loop catches**, and its restart-and-retry was dead cod
 intermittent failure nobody watches closely. Import the exception from `base.cleanup`; do not
 declare another.
 
-The five wallets with no cleanup at all (heidi, paradym, procivis, toppan, unime) need locators
-captured live: **nothing in the 792 archived XML dumps touches a delete path**, because dumps come
+The wallets with no cleanup at all (heidi, paradym, procivis, sphereon, toppan, unime) need locators
+captured live — except sphereon, which has no delete to capture (see above): **nothing in the 792
+archived XML dumps touches a delete path**, because dumps come
 from issuance and verification, which never open a detail screen. Two of them are visibly paying for
 it — heidi reached 19 credentials and paradym 10 on 2026-09-02, against a clean-slate target of 0.
 
@@ -417,7 +535,17 @@ the root conftest's `_MODULE_ORDER` already sorts last for every wallet, so no m
 wallets accumulate
 credentials across runs forever, which inflates counts and changes what verifiers match against.
 
-**Detect app error screens** — implemented for six wallets, in varying depth: paradym and toppan run
+**Detect app error screens** — implemented for seven wallets. **sphereon**'s is the best-behaved of
+them and fired on all six issuers in a complete run. It is a full screen (not an
+overlay) anchored on its dismiss button's content-desc, `"Ok, I understand. Exit flow"` — note the
+*visible* text is only "Ok, I understand", so the desc is what makes it specific — with the failed
+step as a heading and the issuer's HTTP response quoted in the body, which is what lets a red cell
+name the party at fault. `init_flow` also dismisses it when a failed case parks the wallet there, so
+one failure does not leave every later case starting from an unrecognised screen. One trap already
+paid for: the wallet's toast host (`toastAnimatedContainer`) outlives the screen that raised it, so
+the first run quoted `hovi_issuer` as "Sending authorization challenge request — Contact successfully
+created", splicing a success notice from the previous step into the failure; the text reader now
+excludes that subtree. The rest, in varying depth: paradym and toppan run
 staged `check_for_error()` between every step (plus crash/ANR overlay detection and `[no_retry]`
 tagging), heidi has two distinct error screens checked before *and* after sharing, gataca has an error
 page plus a separate "Rejected" screen and a backend "Service currently unavailable" dialog, procivis
@@ -441,8 +569,11 @@ timeout.
 hovi is also the first wallet to name its outcomes rather than describe them, in
 `wallets/hovi/flows/outcome.py`: `success`, `rejected`, `processing`, `dismissed`, `absent`,
 `unroutable` and `no_match` from the flow, plus `not_stored` and `nothing_to_present` from the
-tests. Failures carry the name as a `category` attribute and as a `[tag]` on the message. The other
-seven wallets are meant to adopt the same names, which is what the published report needs before a
+tests. Failures carry the name as a `category` attribute and as a `[tag]` on the message. **sphereon
+adopted the vocabulary wholesale** — it uses `base/outcome.py` and `base/interstitials.py` rather
+than a hand-written wait loop, and a complete run on 2026-09-10 published 6 `rejected` and 5
+`nothing_to_present` with no bare timeouts and nothing flaky. The remaining six wallets are meant to
+adopt the same names, which is what the published report needs before a
 red cell can say *why*. Six of the nine fired on real cases in the 2026-08-20 runs; `dismissed` and
 `processing` have never occurred.
 
@@ -519,16 +650,23 @@ Provided by the root `conftest.py`, `base/conftest_helpers.py` and `base/android
 2. **Counting: procivis has none.** Until it exists, "did the credential arrive?" is unanswerable
    there. authbound closed this on 2026-08-13.
 3. **Reviewing a credential: nobody asserts on content.** gataca and hovi can both *open* a
-   credential and see its claims, and authbound's detail screen exposes them too, but no wallet
-   checks a single field. If the unified scenario is to assert on issued content (claims/issuer),
-   the remaining five need a detail page and all eight need the assertions.
-4. **Delete / cleanup: gataca and hovi, plus authbound pending its first run.** For the other
-   five, wallet state drifts monotonically across runs, and verification results depend on
-   accumulated history rather than the credential just issued.
-5. **Error detection missing in unime.** Its failures surface as "returned to home" or a bare
+   credential and see its claims, authbound's detail screen exposes them too, and sphereon's page
+   object already **returns** them as {label: value} — but no wallet checks a single field. If the
+   unified scenario is to assert on issued content (claims/issuer), the remaining wallets need a
+   detail page and all of them need the assertions. sphereon is the cheapest one to close.
+4. **Delete / cleanup: gataca and hovi, plus authbound pending its first run.** For the others,
+   wallet state drifts monotonically across runs, and verification results depend on accumulated
+   history rather than the credential just issued. sphereon is a harder case than drift: it has no
+   delete *and* no empty state, since a wipe re-issues its identity card.
+5. **A working issuer for sphereon.** Its wallet-side flows are proven, but all six configured
+   issuers reject the offer, so issuance, share, the offer screen's locators and the count assertion
+   are all blocked behind one counterparty getting through. `sphereon_issuer` is the first to fix and
+   is not a wallet problem at all: its offer's pre-authorized code is a placeholder string that
+   Sphereon's own agent rejects for a plain curl too.
+6. **Error detection missing in unime.** Its failures surface as "returned to home" or a bare
    timeout, so triage means watching the recording. hovi was in the same position until 2026-08-19;
    the lesson from fixing it is that a single blocking wait on the accept button reports every
    distinct failure (app never foregrounded, wallet still processing, wallet showed an error) as
    one phantom "locator not found".
-6. **Onboarding blocked for authbound and gataca** (server-side registration). Not a code gap — tracked
+7. **Onboarding blocked for authbound and gataca** (server-side registration). Not a code gap — tracked
    here so it isn't mistaken for one.
