@@ -1,9 +1,10 @@
 import importlib
-import json
 import logging
 import pytest
 from pathlib import Path
 
+from base import credential_count
+from base.test_cases import issuance_cases
 from providers.factory import get_provider
 from wallets.sphereon.pages.home_page import HomePage
 
@@ -11,32 +12,18 @@ logger = logging.getLogger(__name__)
 
 APP_NAME = Path(__file__).parents[1].name
 credential_flow = importlib.import_module(f"wallets.{APP_NAME}.flows.credential_flow")
-_config = json.loads(
-    (Path(__file__).parents[1] / "config.json").read_text()
-)
-_issuance_cases = [
-    pytest.param(
-        issuer_name, cred_name,
-        id=f"{issuer_name}/{cred_name}",
-        marks=[pytest.mark.xfail(reason=cred_cfg["xfail"], strict=False)]
-        if cred_cfg.get("xfail") else [],
-    )
-    for issuer_name, issuer_cfg in _config.get("test_cases", {}).items()
-    for cred_name, cred_cfg in issuer_cfg.get("credentials", {}).items()
-    if cred_cfg.get("type") == "issuance"
-]
+_issuance_cases = issuance_cases(APP_NAME)
 
 
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
-@pytest.mark.parametrize("issuer_name,test_case", _issuance_cases or [pytest.param(
-    "", "", marks=pytest.mark.skip(reason="No issuance test cases configured in config")
-)])
-def test_credential_issuance(app, issuer_name, test_case):
+@pytest.mark.parametrize("issuer_name,test_case", _issuance_cases)
+def test_credential_issuance(app, request, issuer_name, test_case):
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
 
     home = HomePage(app.driver, **app.page_args)
-    count_before = home.count_credentials()
+    count_before = credential_count.read(home, when="before issuance")
+    logger.info(f"[test] Credentials in wallet before testing '{issuer_name}': {count_before}")
 
     provider = get_provider(app.config, issuer_name)
     credential_flow.run(
@@ -49,9 +36,8 @@ def test_credential_issuance(app, issuer_name, test_case):
     )
 
     home.wait_until_loaded()
-    count_after = home.count_credentials()
-    added = count_after - count_before
-    logger.info(
-        f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
-        f"(wallet: {count_before} → {count_after}, +{added})"
+    count_after = credential_count.read(home, when="after issuance")
+    credential_count.assert_increased(
+        count_before, count_after,
+        request=request, wallet=APP_NAME, issuer=issuer_name, case=test_case,
     )

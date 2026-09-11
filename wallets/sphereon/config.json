@@ -2,34 +2,20 @@
     "application": {
         "package": "com.sphereon.ssi.wallet",
         "activity": ".MainActivity",
-        "pin": "123456"
+        "pin": "${SPHEREON_APP_PIN:-'346399'}"
     },
     "timeouts": {
         "default": 10,
-        "pin_digit_delay": 0.3,
-        "credential_offer": 30
+        "pin_digit_delay": 0.4,
+        "credential_offer": 45
     },
     "reporting": {
-        "screenshot_on_failure": true
+        "screenshot_on_failure": "${DEFAULT_SCREENSHOT_ON_FAILURE:-true}",
+        "xml_on_failure": "${DEFAULT_XML_ON_FAILURE:-true}"
     },
     "onboarding": {
-        "skip_if_done": true
-    },
-    "test_cases": {
-        "sphereon_pension": {
-            "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
-            "credentials": {
-                "credential_issuance":            { "type": "issuance", "path": "pensioncredential.json" },
-                "provisional_issuance":    { "type": "issuance", "path": "pensioncredential-provisional.json" },
-                "disability_issuance":     { "type": "issuance", "path": "pensioncredential-disability.json" },
-                "rehabilitation_issuance": { "type": "issuance", "path": "pensioncredential-rehabilitation.json" }
-            }
-        },
-        "paradym_verifier": {
-            "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
-            "credentials": {
-                "pension_verification": { "type": "verification", "path": "/" }
-            }
-        }
+        "reset": "${DEFAULT_RESET:-false}",
+        "holder_name": "${SPHEREON_HOLDER_NAME:-'Findy Test'}",
+        "email": "${SPHEREON_EMAIL}"
     }
 }
