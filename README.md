@@ -155,7 +155,9 @@ python runners/run_tests.py example
 │   └── run_tests.py            # Runs all wallets in sequence under one report directory
 ├── reports/
 │   └── <DATE_TIME>             # Report with the specific time stamp
-│       └── <wallet>/           # Wallet specific logs and report (screenshots, app.log, test.log, etc.)
+│       └── <wallet>/           # Per-wallet artifacts: app.log (failure digest), logcat.log,
+│                               #   appium.log, test.log, crashes.log (DropBox crashes/ANRs),
+│                               #   summary.json, report.html, screenshots/, xml_dumps/, recordings/
 └── conftest.py                 # Shared fixtures (driver, app, reporting)
 ```
 
@@ -331,8 +333,11 @@ Most device interaction goes through Appium, but two parts of the framework use 
 
 | File | Command | Reason |
 |------|---------|--------|
-| `conftest.py` | `adb logcat` | Streams device logs to `reports/<run>/app.log` for the whole session. Appium has no logcat streaming API. |
+| `conftest.py` | `adb logcat` | Streams the device log to `reports/<run>/<wallet>/logcat.log` for the whole session, filtered to the wallet's own uid plus the system's (1000). Appium has no logcat streaming API. |
+| `conftest.py` | `adb shell pm list packages -U` | Resolves the app's uid, so the logcat capture can be scoped to it. |
 | `base/utils.py` | `adb shell dumpsys package` | Reads app version and build number for reporting. Appium has no package metadata API. |
+| `conftest.py` | `adb shell dumpsys dropbox` | Reads Android's own crash/ANR store into `crashes.log` after the session. It is written by the system, so it survives a crash that kills the Appium session — unlike every live capture. |
+| `conftest.py` | `adb shell date` | The device's own clock, used as the time floor for the DropBox read (device timestamps are device-local). |
 
 Some wallet implementations may also need to use `mobile: shell` (which requires `--allow-insecure adb_shell` on the Appium server) to send intents directly to a specific app component, bypassing Android's intent chooser dialog. This is needed when multiple wallets on the same device register for the same URI scheme (e.g. `openid-credential-offer://`).
 

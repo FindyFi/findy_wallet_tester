@@ -83,8 +83,7 @@ a difference to justify. Status as of 2026-08-20, branch `fix/hovi_general`.
 | Wipe all credentials (post-suite)     |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   –    |  ✅   |
 | **Support**                           |           |        |       |      |         |          |        |       |
 | Detect app error screens              |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ⚠️    |
-| Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
-| Collect in-app debug logs             |    ❌     |   ❌   |  ❌   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
+| Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
 | Wallet-specific pre-test setup        |     –     |   ✅   |   –   |  –   |    –    |    –     |   –    |   –   |
 
 ---
@@ -177,8 +176,9 @@ serve issuance and presentation, only the header copy differs.
 The other counterparties fail, and these are *results*, not defects: waltid returns 404 for the
 spec-required `.well-known/openid-credential-issuer/<path>` metadata, while hovi, procivis, sphereon and
 paradym serve valid metadata and offers that the wallet then rejects internally
-(`issueDocumentsFromOffer failure`). Both are readable straight from `app.log`, which carries the
-wallet's full HTTP traffic under the logcat tag `EUDI Wallet PROD-RELEASE`.
+(`issueDocumentsFromOffer failure`). Both are readable straight from `logcat.log`, which carries
+the wallet's full HTTP traffic under the logcat tag `EUDI Wallet PROD-RELEASE` — 2479 of those
+lines are at `D` priority, which is why that capture filters by uid and not by priority.
 
 **Count credentials** — the mechanism is per-wallet and stays that way: gataca, hovi and unime count
 card elements (with locators that have nothing in common), heidi, paradym and authbound parse a count
@@ -478,12 +478,15 @@ waltid, and `providers/paradym_provider.py` is deleted. If paradym ever reverts 
 envelope, the cases fail `[unroutable]` — that is the honest result, and the fix belongs on
 paradym's side.
 
-**Manipulate wallet settings** — heidi enables Show Metadata and sets "Always Ask" for trusted and
-untrusted connections; paradym enables Development Mode. Both run from their wallet conftest, before
-tests. No other wallet touches settings.
+**Manipulate wallet settings** — heidi only: it enables Show Metadata and sets "Always Ask" for
+trusted and untrusted connections, from its wallet conftest, before tests. No other wallet touches
+settings.
 
-**Collect in-app debug logs** — paradym only (`settings_flow.collect_debug_logs`, via the share sheet).
-Everything else relies on the shared logcat/Appium capture.
+paradym used to enable Development Mode here in order to scrape its in-app debug logs through the
+Android share sheet on failure. That is gone: across 40 runs it made 104 attempts and produced zero
+files, while costing UI navigation (drawer -> Settings -> share sheet) after every failure — on a
+screen the test had just failed on. Log evidence is the shared capture, identically for every
+wallet.
 
 **Wallet-specific pre-test setup** — gataca only: `setup_flow.ensure_did()` before every test, because
 the wallet resets its active DID to `did:gatc:` on each cold start.
@@ -495,8 +498,20 @@ the wallet resets its active DID to `did:gatc:` on each cold start.
 Provided by the root `conftest.py`, `base/conftest_helpers.py` and `base/android.py`:
 
 - Screenshot on failure, XML page-source dump on failure (per `reporting` config)
-- Per-test screen recording (`recordings/*.mp4`), session-wide logcat (`app.log`), per-test Appium
-  server log (`appium.log`), pytest HTML report, `test.log`
+- Per-test screen recording (`recordings/*.mp4`), pytest HTML report, and six records, each with
+  one job and no overlap:
+  - `app.log` — one block per failed test: what was tested against, where in the flow it broke,
+    and what the wallet itself said
+  - `logcat.log` — this wallet's device log, scoped to its own uid plus the system's (1000).
+    Only `Finsky` and `appium` are silenced, both because they are recorded in full elsewhere
+  - `appium.log` — the Appium server log, each entry once, under the test that produced it
+  - `test.log` — this wallet's pytest log: the timeline of what the harness did, in order
+  - `crashes.log` — this wallet's crashes and ANRs from Android's DropBox, read *after* the
+    session, so it survives a crash that kills the session. Absent when nothing crashed
+  - `summary.json` — machine-readable outcome per test (outcome, attempts, duration, provider,
+    outcome category), so nothing has to scrape `report.html`. **Not written under xdist**: the
+    records accumulate on each worker and the controller has nothing to write, so a missing file
+    in a parallel `-n` run means "not collected", not "no tests ran"
 - Automatic retry/rerun of failed tests (except cases tagged `[no_retry]`)
 - Provider reachability precheck before each case
 - User-style app close between tests (recents "Clear all", else swipe the card away — never
