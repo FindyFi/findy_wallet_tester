@@ -309,6 +309,50 @@ def test_a_retry_that_passes_does_not_keep_the_earlier_failures_verdict():
     assert record["attempts"] == 2, "how many tries it took is not the same as passing"
 
 
+def test_a_failing_teardown_does_not_overwrite_what_the_test_failed_on():
+    """The verdict a test reached outranks whatever its teardown then hit.
+
+    `_record_result` runs for every phase, so a test that failed `[rejected]` in `call` and then
+    raised a second time during teardown was republished as `error`/`teardown` — while still
+    carrying the call phase's message and category. A genuine wallet rejection then left
+    `totals.failed` and arrived in `totals.error`, where it reads as a harness problem.
+    """
+    item = _item()
+    item._failure_line = "FlowFailure: [rejected] hovi refused the offer"
+    item._failure_category = "rejected"
+    root_conftest._record_result(item, _rep("setup"))
+    root_conftest._record_result(item, _rep("call", failed=True))
+    root_conftest._record_result(item, _rep("teardown", failed=True))
+
+    record = _record_of(item)
+    assert record["outcome"] == "failed" and record["failed_in"] == "call"
+    assert record["category"] == "rejected"
+
+
+def test_a_failing_teardown_on_a_clean_test_is_still_an_error():
+    """The path the guard must not break: nothing was reached, so teardown is the whole story."""
+    item = _item()
+    root_conftest._record_result(item, _rep("setup"))
+    root_conftest._record_result(item, _rep("call"))
+    root_conftest._record_result(item, _rep("teardown", failed=True))
+
+    record = _record_of(item)
+    assert record["outcome"] == "error" and record["failed_in"] == "teardown"
+
+
+def test_a_failing_teardown_after_a_skip_leaves_the_skip_standing():
+    """A skip is a verdict too, so the guard covers it — stated here rather than left to chance.
+
+    An unreachable provider skips in setup; if the teardown that follows then fails, the run must
+    still report a skip. Otherwise a provider outage would surface as a wallet error.
+    """
+    item = _item()
+    root_conftest._record_result(item, _rep("setup", skipped=True))
+    root_conftest._record_result(item, _rep("teardown", failed=True))
+
+    assert _record_of(item)["outcome"] == "skipped"
+
+
 def test_the_provider_is_recorded_but_the_wallet_is_not_duplicated():
     item = _item(params={"driver": "hovi", "issuer_name": "waltid_issuer"})
     root_conftest._record_result(item, _rep("setup"))

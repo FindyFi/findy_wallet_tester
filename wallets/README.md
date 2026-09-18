@@ -504,7 +504,9 @@ Provided by the root `conftest.py`, `base/conftest_helpers.py` and `base/android
     and what the wallet itself said
   - `logcat.log` — this wallet's device log, scoped to its own uid plus the system's (1000).
     Only `Finsky` and `appium` are silenced, both because they are recorded in full elsewhere
-  - `appium.log` — the Appium server log, each entry once, under the test that produced it
+  - `appium.log` — the Appium server log, each entry once, under the test that produced it.
+    The dedup cursor is per worker, so a parallel `-n` run sharing **one** Appium server
+    duplicates entries; give each lane its own server (see `env.example`)
   - `test.log` — this wallet's pytest log: the timeline of what the harness did, in order
   - `crashes.log` — this wallet's crashes and ANRs from Android's DropBox, read *after* the
     session, so it survives a crash that kills the session. Absent when nothing crashed

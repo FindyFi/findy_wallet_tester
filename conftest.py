@@ -185,7 +185,14 @@ def pytest_configure(config):
         # and `app.log` now holds the run's error-screen digest (one block per failed test, see
         # `record_error_screen`). Two different things were sharing one name, and the name
         # described neither.
-        start_logcat(config, run_dir)
+        #
+        # Not while merely collecting: `--collect-only` runs no test, but it used to clear and
+        # stream the device's log and read its crash store — on a device someone else may be
+        # testing on. It also ended the session in the same second, so the empty-capture guard
+        # fired every time, and an alarm that means "your device log is broken" was raised by a
+        # command that never intended to touch a device.
+        if not getattr(config.option, "collectonly", False):
+            start_logcat(config, run_dir)
 
     config._run_dir = run_dir
 
@@ -829,7 +836,12 @@ def _record_result(item, rep) -> None:
             record["attempts"] += 1
             # A retry starts clean: the previous attempt's verdict must not outlive it.
             record.update(outcome="passed", failed_in="", error="", category="")
-        if rep.failed:
+        # A teardown error must not overwrite a verdict the test already reached — the same rule
+        # `_failure_line` follows above. Without this, a test that failed `[rejected]` in `call`
+        # and then hit a second exception in teardown is published as `error`/`teardown` while
+        # still carrying the call phase's message, and `totals.failed` undercounts. A skip counts
+        # as a verdict reached, so a failing teardown after one leaves the skip standing.
+        if rep.failed and not (rep.when == "teardown" and record["outcome"] != "passed"):
             # pytest calls a failure outside the test body an Error, and the distinction matters:
             # it means the wallet never got as far as being tested.
             record["outcome"] = "failed" if rep.when == "call" else "error"
