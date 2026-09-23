@@ -12,6 +12,7 @@ while heidi was testing on the emulator. So "wrong device" is the case that has 
 "unknown device" the case that has to write nothing — a log filed under the wrong device is worse
 than no log, because someone will read it.
 """
+import signal
 import subprocess
 from types import SimpleNamespace
 
@@ -71,8 +72,10 @@ def test_every_adb_call_names_the_device(spy, tmp_path, monkeypatch):
     start_logcat(_config("hovi"), tmp_path)
 
     assert ["adb", "-s", "ZT322L348J", "logcat", "-c"] in spy.run
-    assert all("-s" in c and "ZT322L348J" in c for c in spy.run), \
-        f"an adb call went to the default device: {spy.run}"
+    # adb calls only: the stale-capture sweep shells out to `ps`, which addresses no device.
+    adb_calls = [c for c in spy.run if c[0] == "adb"]
+    assert all("-s" in c and "ZT322L348J" in c for c in adb_calls), \
+        f"an adb call went to the default device: {adb_calls}"
     argv = spy.popen[0][0]
     assert argv[:4] == ["adb", "-s", "ZT322L348J", "logcat"]
 
@@ -205,6 +208,98 @@ def test_adb_failing_to_list_packages_gives_no_uid_rather_than_a_wrong_one(monke
 
     monkeypatch.setattr(root_conftest.subprocess, "run", _boom)
     assert _app_uid("ZT322L348J", PKG) == ""
+
+
+# --- stale captures: the one thing session end cannot clean up --------------------------------
+
+PS_LISTING = (
+    " 5867 adb -L tcp:5037 fork-server server --reply-fd 4\n"
+    "26006 adb -s emulator-5556 logcat -v time --uid=10179,1000 Finsky:S appium:S *:V\n"
+    "46135 adb -s ZT322L348J logcat -v time --uid=10352,1000 Finsky:S appium:S *:V\n"
+    "61669 adb -s ZT322L348J logcat -v time\n"
+    "99999 grep adb -s ZT322L348J logcat\n"
+)
+
+
+@pytest.fixture
+def killed(monkeypatch):
+    """Records what would be signalled, against the real `ps` listing of 2026-09-21."""
+    sent = []
+    monkeypatch.setattr(root_conftest.subprocess, "run",
+                        lambda *a, **k: FakeCompleted(PS_LISTING))
+    monkeypatch.setattr(root_conftest.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    return sent
+
+
+def test_a_capture_left_by_an_interrupted_run_is_stopped(killed):
+    """`pytest_sessionfinish` does not run on Ctrl-C, so nothing else ever stops these. One had
+    been appending to a finished run's logcat.log for 2d19h and reached 12.7 MB."""
+    root_conftest._kill_stale_logcats("ZT322L348J")
+
+    assert [pid for pid, _ in killed] == [46135, 61669]
+    assert all(sig == signal.SIGTERM for _, sig in killed)
+
+
+def test_only_this_sessions_device_is_touched(killed):
+    """The fleet is shared: another wallet's run may be live on another device right now."""
+    root_conftest._kill_stale_logcats("ZT322L348J")
+
+    assert 26006 not in [pid for pid, _ in killed], \
+        "emulator-5556's capture belongs to somebody else's run"
+
+
+def test_the_adb_server_is_never_killed(killed):
+    """`adb -L tcp:5037 fork-server server` would take every device on the machine offline."""
+    root_conftest._kill_stale_logcats("ZT322L348J")
+    root_conftest._kill_stale_logcats("emulator-5556")
+
+    assert 5867 not in [pid for pid, _ in killed]
+
+
+def test_a_process_that_merely_mentions_the_serial_is_not_killed(killed):
+    """Matching a substring of the command line would hit a grep for the very same thing."""
+    root_conftest._kill_stale_logcats("ZT322L348J")
+
+    assert 99999 not in [pid for pid, _ in killed], "argv[0] is grep, not adb"
+
+
+def test_a_capture_with_no_serial_is_left_alone(killed):
+    """It cannot be attributed to a device, and only this session's device may be acted on."""
+    monkey = " 7001 adb logcat -v time\n"
+    root_conftest.subprocess.run = lambda *a, **k: FakeCompleted(monkey)
+
+    root_conftest._kill_stale_logcats("ZT322L348J")
+    assert killed == []
+
+
+def test_the_sweep_runs_before_the_buffer_is_cleared(spy, tmp_path, monkeypatch):
+    """Order matters: an orphan still streaming during `logcat -c` writes into the new file."""
+    _fixed_device(monkeypatch, "ZT322L348J")
+    monkeypatch.setattr(root_conftest, "_app_uid", lambda serial, package: "10351")
+    start_logcat(_config("hovi"), tmp_path)
+
+    commands = [c[0] for c in spy.run]
+    assert commands.index("ps") < commands.index("adb")
+
+
+def test_a_process_that_exits_between_the_listing_and_the_signal_is_not_an_error(monkeypatch):
+    """A race with the operator's own Ctrl-C. Diagnostics must not break the run."""
+    monkeypatch.setattr(root_conftest.subprocess, "run",
+                        lambda *a, **k: FakeCompleted(PS_LISTING))
+
+    def _gone(pid, sig):
+        raise ProcessLookupError(pid)
+
+    monkeypatch.setattr(root_conftest.os, "kill", _gone)
+    root_conftest._kill_stale_logcats("ZT322L348J")  # must not raise
+
+
+def test_an_unlistable_process_table_does_not_break_the_run(monkeypatch):
+    def _boom(*a, **k):
+        raise subprocess.TimeoutExpired("ps", 10)
+
+    monkeypatch.setattr(root_conftest.subprocess, "run", _boom)
+    assert root_conftest._stale_logcats("ZT322L348J") == []
 
 
 # --- and it has to say whether it worked ------------------------------------------------------

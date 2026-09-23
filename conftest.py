@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -533,12 +534,71 @@ def capture_dropbox(run_dir, serial: str, package: str, since: str) -> None:
         logger.warning(f"[dropbox] Could not capture the crash store: {e}")
 
 
+def _stale_logcats(serial: str) -> list:
+    """PIDs of `adb -s <serial> logcat` processes that are still running.
+
+    Matched on the parsed argv, not on a substring of the command line: the adb *server*
+    (`adb -L tcp:5037 fork-server server`) sits in the same listing and killing it would take
+    every device on the machine offline, including ones this session has no business touching.
+    So the test is narrow on purpose — argv[0] is adb, `logcat` is one of its arguments, and
+    `-s` is followed by exactly this serial. A capture with no `-s` at all is left alone: it
+    cannot be attributed to a device, and this session's device is the only one it may act on.
+    """
+    try:
+        listing = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True,
+                                 timeout=10).stdout or ""
+    except Exception as e:
+        logger.warning(f"[logcat] Could not list processes to look for stale captures: {e}")
+        return []
+    pids = []
+    for line in listing.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        argv = command.split()
+        if not pid.isdigit() or not argv or os.path.basename(argv[0]) != "adb":
+            continue
+        if "logcat" not in argv[1:]:
+            continue
+        if any(a == "-s" and nxt == serial for a, nxt in zip(argv, argv[1:])):
+            pids.append(int(pid))
+    return pids
+
+
+def _kill_stale_logcats(serial: str) -> None:
+    """Stop any `adb logcat` left streaming to this device from an earlier session.
+
+    `pytest_sessionfinish` is the only thing that stops the capture, and it does not run on
+    Ctrl-C — so every interrupted run leaks an adb that goes on appending to a finished run's
+    `logcat.log` for as long as the machine stays up. Four were alive on 2026-09-21, the oldest
+    for eleven days; one had written 12.7 MB into a report from a run interrupted 2d19h earlier,
+    against the 0.5-1.4 MB a whole run normally produces. Every byte past the interrupt is
+    device activity from other people's work, filed under this run's wallet.
+
+    Sweeping here rather than in an `atexit`/signal handler is what makes it self-healing: a
+    handler can only clean up after the run that installed it, and cannot recover a process that
+    already leaked. This recovers them, including the two on the pre-branch command form.
+
+    Only this session's device. The fleet is shared and another run may be live on another
+    device. Two sessions on the *same* device already collide — the `logcat -c` below wipes the
+    other one's buffer regardless — so there is nothing extra to lose there.
+    """
+    for pid in _stale_logcats(serial):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            logger.info(f"[logcat] Stopped a stale capture on {serial} (pid {pid}) left by an "
+                        "earlier session")
+        except ProcessLookupError:
+            pass  # exited between the listing and the signal
+        except Exception as e:
+            logger.warning(f"[logcat] Could not stop stale capture pid {pid} on {serial}: {e}")
+
+
 def start_logcat(config, run_dir) -> None:
     """Stream this wallet's device log to logcat.log for the whole session. Never raises."""
     serial, package = _logcat_target(_detect_wallet_name(config))
     if not serial:
         return
     try:
+        _kill_stale_logcats(serial)
         subprocess.run(["adb", "-s", serial, "logcat", "-c"], capture_output=True, timeout=10)
         log_file = open(run_dir / "logcat.log", "w")  # closed in pytest_sessionfinish
         try:
