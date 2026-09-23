@@ -118,6 +118,19 @@ def screen_is_protected(request, wallet: str) -> bool:
 
 
 _QUOTED = re.compile(r'"([^"]{1,400})"')
+# A quoted span that is a locator, not something a wallet said. Selenium puts the failing locator
+# in its own message — `The element 'By.xpath: //*[@resource-id="com.android.systemui:id/lockPassword"]'`
+# — and the inner double quotes match `_QUOTED` perfectly. hovi's 2026-09-18 run published
+# `wallet said: "com.android.systemui:id/lockPassword"` six times before this existed. The
+# double-quote convention holds for messages this repo formats; it says nothing about the text of
+# exceptions raised inside the driver.
+# `^//` and `^\(//`, not a bare `//`: an unanchored `//` matches the scheme separator of any URL,
+# so it threw away wallet copy that merely quoted one. Measured over the digest's own inputs
+# (app.log + test.log across every run in reports/), anchoring recovers 171 spans and every one
+# of them is genuine copy — 159 URLs plus authbound's "Unable to retrieve access token from ...",
+# procivis's "Fetching well known metadata from ..." and walt.id's "Invalid client_id prefix..." —
+# while a quoted XPath, a parenthesised one and a bare `pkg:id/name` all stay suppressed.
+_LOCATORISH = re.compile(r'@resource-id|By\.\w+|^//|^\(//|^[\w.]+:id/[\w.]+$')
 _LEADING_TAG = re.compile(r"\s*\[([^\]]+)\]")
 # "TimeoutException: Message:" — an exception type and nothing else.
 _NO_MESSAGE = re.compile(r"^(?:Message:?)?\s*$")
@@ -230,13 +243,21 @@ def record_error_screen(driver, request, config, *, wallet: str = "", evidence=(
         category = getattr(request.node, "_failure_category", "")
 
         # The message is prefixed with its own tags: "[rejected] [credential_flow] ...". The
-        # category is taken from the attribute, never parsed; the remaining tag names the flow.
-        flow = next((t for t in _leading_tags(line) if t != category), "")
+        # category is taken from the attribute, never parsed. Of what remains, a `*_flow` tag names
+        # the flow and anything else names the phase the wallet was in — paradym and toppan tag
+        # "[after consent]", "[after PIN]", "[after confirmation]", which the digest used to
+        # publish under `flow:`. Both are worth reporting; calling one the other is not.
+        tags = [t for t in _leading_tags(line) if t != category]
+        flow = next((t for t in tags if t.endswith("_flow")), "")
+        phase = next((t for t in tags if t != flow), "")
 
         # Prefer the copy captured at failure time over a live re-read: by teardown the surface may
         # be gone (hovi's error is a banner, suspected to be a timed toast).
-        quoted = _QUOTED.search(line)
-        said = quoted.group(1) if quoted else _read_error_text(driver, wallet)
+        # The first quoted span that is not a locator: a message can carry both, and a wallet's
+        # own words are worth more than the first match.
+        said = next((m.group(1) for m in _QUOTED.finditer(line)
+                     if not _LOCATORISH.search(m.group(1))), "")
+        said = said or _read_error_text(driver, wallet)
 
         surface = _error_surface(wallet)
         if said:
@@ -263,6 +284,7 @@ def record_error_screen(driver, request, config, *, wallet: str = "", evidence=(
             f"tested against: {against or '(no parameters)'}",
             f"failed in:      {_failed_phase(request.node) or '?'}",
             f"flow:           {flow or '(not reported by the failure)'}",
+            *([f"phase:          {phase}"] if phase else []),
             f"outcome:        {category or '(uncategorised)'}",
             f"wallet said:    {said_line}",
             f"error:          {_error_line(line, getattr(request.node, '_failure_where', ''))}",

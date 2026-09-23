@@ -319,6 +319,108 @@ def test_a_message_less_exception_with_no_location_still_names_the_type(tmp_path
     assert _field(_digest(tmp_path), "error") == "TimeoutException — no message"
 
 
+def test_a_phase_tag_is_reported_as_a_phase_not_as_the_flow(tmp_path):
+    """paradym and toppan tag the phase, not the flow, and the digest used to conflate them.
+
+    The 2026-09-18 run published `flow: after consent` / `after PIN` / `after confirmation` —
+    readable, but false: those name where in the flow the wallet was, not which flow ran. `flow:`
+    is the first field a reader scans, so it has to mean one thing.
+    """
+    request = _request(
+        tmp_path, params={"driver": "paradym"},
+        line=('RuntimeError: [after consent] Paradym error screen. '
+              'Reason: Error while retrieving credentials'),
+    )
+    record_error_screen(Driver(), request, _config(), wallet="paradym")
+    body = _digest(tmp_path)
+
+    assert _field(body, "phase") == "after consent"
+    assert _field(body, "flow") == "(not reported by the failure)"
+
+
+def test_a_flow_tag_is_still_the_flow_and_adds_no_phase_line(tmp_path):
+    """The shape of an ordinary block does not change: no phase tag, no phase line."""
+    request = _request(
+        tmp_path, params={"driver": "hovi"},
+        line='FlowFailure: [rejected] [credential_flow] hovi refused the offer',
+        category="rejected",
+    )
+    record_error_screen(Driver(), request, _config(), wallet="hovi")
+    body = _digest(tmp_path)
+
+    assert _field(body, "flow") == "credential_flow"
+    assert "phase:" not in body
+
+
+def test_a_locator_in_a_driver_exception_is_not_published_as_the_wallets_words(tmp_path):
+    """Selenium quotes the failing locator; `_QUOTED` matched it and called it wallet copy.
+
+    hovi's 2026-09-18 run published `wallet said: "com.android.systemui:id/lockPassword"` six
+    times — a resource-id from inside a StaleElementReferenceException, presented as something the
+    wallet told the user. The double-quote convention holds for messages this repo formats and
+    says nothing about text raised inside the driver.
+    """
+    request = _request(
+        tmp_path, params={"driver": "hovi"},
+        line=('StaleElementReferenceException: Message: The element \'By.xpath: '
+              '//*[@resource-id="com.android.systemui:id/lockPassword"]\' is not attached'),
+    )
+    record_error_screen(Driver(), request, _config(), wallet="hovi")
+
+    said = _field(_digest(tmp_path), "wallet said")
+    assert "lockPassword" not in said, f"a locator was published as the wallet's words: {said}"
+    assert said.startswith("("), "with no wallet copy to quote, the block must say so"
+
+
+def test_the_wallets_words_still_win_when_a_locator_is_also_in_the_message(tmp_path):
+    """Rejecting locators must not cost the copy: a message can carry both."""
+    request = _request(
+        tmp_path, params={"driver": "hovi"},
+        line=('RuntimeError: [credential_flow] hovi failed at //*[@resource-id="x:id/y"] '
+              'showing "Please check if the QR is correct"'),
+    )
+    record_error_screen(Driver(), request, _config(), wallet="hovi")
+
+    assert _field(_digest(tmp_path), "wallet said") == '"Please check if the QR is correct"'
+
+
+def test_wallet_copy_that_quotes_a_url_is_not_mistaken_for_a_locator(tmp_path):
+    """The locator filter used to hold a bare `//`, which matches any URL's scheme separator.
+
+    So a wallet naming the endpoint it could not reach — the most useful thing it can say about a
+    network failure — was discarded as if it were an XPath, and the block fell back to
+    "(nothing read...)". Measured over every app.log and test.log in reports/, anchoring the
+    alternative to `^//` recovers 171 quoted spans and all of them are genuine copy: authbound's
+    "Unable to retrieve access token from ...", procivis's "Fetching well known metadata from ..."
+    and walt.id's "Invalid client_id prefix..." among them.
+    """
+    request = _request(
+        tmp_path, params={"driver": "hovi"},
+        line=('RuntimeError: [credential_flow] issuance failed showing '
+              '"Could not reach https://issuer.example/offer"'),
+    )
+    record_error_screen(Driver(), request, _config(), wallet="hovi")
+
+    said = _field(_digest(tmp_path), "wallet said")
+    assert said == '"Could not reach https://issuer.example/offer"'
+
+
+def test_an_xpath_is_still_suppressed_now_that_the_match_is_anchored(tmp_path):
+    """Anchoring must not cost the suppression it exists for: a bare quoted XPath, the
+    parenthesised form, and a bare `pkg:id/name` all still have to be rejected."""
+    for locator in ('//android.widget.Button[@text=\'Next\']',
+                    '(//android.widget.TextView)[2]',
+                    'com.android.systemui:id/lockPassword'):
+        request = _request(
+            tmp_path, params={"driver": "hovi"},
+            line=f'RuntimeError: [credential_flow] could not find "{locator}"',
+        )
+        record_error_screen(Driver(), request, _config(), wallet="hovi")
+
+        said = _field(_digest(tmp_path), "wallet said")
+        assert said.startswith("("), f"a locator was published as the wallet's words: {said}"
+
+
 def test_a_rerun_gets_its_own_block_stamped_with_the_attempt(tmp_path):
     """A retried failure often fails differently, and the files on disk are the last attempt's.
 
