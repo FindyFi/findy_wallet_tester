@@ -280,6 +280,47 @@ These lists only choose *which* providers run. Everything else about a provider,
 is deployed, is configured in `config/providers.json` and nowhere else — to test the suite against
 your own instance, change that entry's `base_url`.
 
+### API issuers and verifiers
+
+Most public demo issuers and verifiers are single-page apps: the HTML that arrives over HTTP holds
+no deeplink at all, only the JavaScript that will later ask a backend for one. Those backends are
+plain JSON APIs, so an entry with `type: api` calls one directly and reads the offer out of the
+answer. The request is entirely config — adding a provider that works this way is a registry entry,
+not Python.
+
+```json
+"eudiplo_loyalty": {
+    "type": "api",
+    "base_url": "https://playground.eudi-wallet.org",
+    "credentials": {
+        "credential_issuance": {
+            "type": "issuance",
+            "path": "/api/issue",
+            "body": { "credentialId": "loyalty-card" }
+        }
+    }
+}
+```
+
+| Key | Meaning |
+|:----|:--------|
+| `path` | Required. Appended to `base_url`. |
+| `method` | `POST` (default) or `GET`. |
+| `body` | JSON request body. Omitted for a `GET`. |
+| `headers` | Extra request headers. |
+| `response_field` | JSON field holding the deeplink, default `uri`. |
+
+The response is read with the same scan the web provider uses, so an API that answers with a bare
+URL and one that answers with JSON both work without config saying which. A 4xx is raised as
+`[no_retry]`: the provider is rejecting the configured request, and its body says why, so retrying
+an unchanged request twice more only buries that message.
+
+**A registry entry is not evidence.** That an API mints a well-formed offer says nothing about
+whether a wallet completes the flow — EUDIPLO's PID offer resolves perfectly and then dies at the
+token endpoint, because the offer names an authorization server that only accepts
+`authorization_code` while the grant is `pre-authorized_code`. Run the provider against real
+wallets before adding it here, and keep only what a run actually passed.
+
 ### ITB issuer
 
 To test against the [FIDES Interoperability Test Bed](https://itb.ilabs.ai), add an entry with
