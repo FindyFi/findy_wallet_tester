@@ -33,6 +33,11 @@ _OPEN_DETAIL = (
 )
 
 
+def on_screen(driver, timeout: float = 2) -> bool:
+    """Is the wallet list in front? The `home` probe for base/screens.py."""
+    return wait_present(driver, SCREEN_ID, timeout=timeout)
+
+
 class HomePage(BasePage):
     def wait_until_loaded(self, timeout=None):
         self.find(SCREEN_ID, timeout=timeout)
