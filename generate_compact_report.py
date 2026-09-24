@@ -11,9 +11,11 @@ into a single cell. Only the issuance and verification suites are charted;
 install / onboarding / cleanup results stay in the per-wallet pytest reports.
 
 A failing cell says *why* it failed. The flows tag their exceptions with a
-category from a shared vocabulary ("[unroutable]", "[rejected]", ...); this
-script reads the tag out of the pytest log, falls back to matching known
-message shapes for the flows that have not adopted it, and prints a short
+category from a shared vocabulary ("[unroutable]", "[rejected]", ...). This
+script takes it from the run's summary.json, which records the exception's own
+category attribute; for runs without one it reads the tag out of the pytest
+log, falls back to matching known message shapes for the flows that have not
+adopted it, and prints a short
 reason under the cell's mark. An unrecognised failure still renders as a plain
 red cell, exactly as every failure did before. See FAILURE_CATEGORIES.
 
@@ -239,6 +241,30 @@ FAILURE_CATEGORIES = {
         "description": "The wallet was still working when the wait ran out. No verdict was "
                        "reached either way.",
     },
+    "prompt_loop": {
+        "stage": "present",
+        "label": "Prompt loop",
+        "short": "prompt loop",
+        "description": "The wallet kept asking for the same confirmation or authentication. "
+                       "Every prompt was answered and a new one appeared at once, so the flow "
+                       "never moved on.",
+    },
+    "crashed": {
+        # No fixed stage: a crash can happen at any point in the flow.
+        "stage": None,
+        "label": "Crashed",
+        "short": "crashed",
+        "description": "The wallet app crashed or stopped responding while handling the offer "
+                       "or request. Android showed its crash or not-responding dialog.",
+    },
+    "lost_session": {
+        # Ours, not the wallet's: kept apart so it is never read as a finding about a vendor.
+        "stage": None,
+        "label": "Session lost",
+        "short": "session lost",
+        "description": "The test harness lost its connection to the device mid-test. The cell "
+                       "says nothing about interoperability.",
+    },
     "harness": {
         # No stage: the flow never started, so it cannot have stopped in one.
         "stage": None,
@@ -354,9 +380,9 @@ def stage_applies(meta: dict, suite: str) -> bool:
 # flow never started. "harness" sits at the bottom: a real interop reason from
 # a sibling case is always worth more than our own setup falling over.
 CATEGORY_RANK = {
-    None: 0, "harness": 10, "processing": 20, "absent": 30, "dismissed": 35,
-    "not_stored": 40, "nothing_to_present": 45, "no_match": 50,
-    "rejected": 60, "unroutable": 70,
+    None: 0, "lost_session": 5, "harness": 10, "processing": 20, "absent": 30,
+    "dismissed": 35, "prompt_loop": 38, "not_stored": 40, "nothing_to_present": 45,
+    "no_match": 50, "rejected": 60, "crashed": 65, "unroutable": 70,
 }
 
 # The flows tag their exceptions with the category in brackets, e.g.
@@ -381,8 +407,11 @@ EXC_LINE_RE = re.compile(r"^E\s+((?:[\w.]*(?:Error|Exception|Failure|Failed)\b|a
 #
 # Order matters: the first hit wins, so the specific phrasings come before the
 # catch-all "the wallet showed an error" ones. Message text becoming a contract
-# is the known cost of reading this out of prose; when a run grows an
-# outcomes.json sidecar, prefer that and keep this as the fallback.
+# is the known cost of reading this out of prose, which is why a category from
+# the run's summary.json (see load_summary) always wins over these. Do not widen
+# them for a message our own code raises: type it at the raise site instead. A
+# regex cannot read negation — "neither the success nor the error screen
+# appeared" matches the `rejected` pattern below.
 REASON_PATTERNS = (
     # Appium could not hand the URL to any app: Android resolved no activity.
     ("unroutable", r"Activity not started, unable to resolve Intent|Could not deliver\b"),
@@ -556,13 +585,42 @@ def is_wallet_dir(child: Path) -> bool:
     return (child / "report.html").exists() or (REPO_ROOT / "wallets" / child.name).is_dir()
 
 
-def make_cell(recs: list) -> dict:
+def load_summary(wallet_dir: Path) -> dict:
+    """The run's own per-test records from summary.json, keyed by nodeid. {} when unavailable.
+
+    summary.json holds the outcome category exactly as the flow raised it — the exception's
+    `.category` attribute, read in the root conftest — so it is the sidecar this report's comments
+    asked for, and a typed category from it never has to be parsed back out of prose. Runs from
+    before it existed, and xdist runs (which do not write it), have none; those cells fall back to
+    `classify_failure`, as every cell did before.
+    """
+    path = wallet_dir / "summary.json"
+    if not path.exists():
+        return {}
+    try:
+        tests = json.loads(path.read_text(encoding="utf-8")).get("tests", [])
+        if not isinstance(tests, list):
+            raise TypeError(f"'tests' is {type(tests).__name__}, not a list")
+        return {t["nodeid"]: t for t in tests
+                if isinstance(t, dict) and isinstance(t.get("nodeid"), str)}
+    except (ValueError, TypeError, OSError, AttributeError) as exc:
+        # ValueError covers bad JSON and bad UTF-8 alike. One wallet's damaged file must cost
+        # that wallet its typed reasons, never the whole report.
+        print(f"note: ignoring unreadable {path}: {exc}", file=sys.stderr)
+        return {}
+
+
+def make_cell(recs: list, record: Optional[dict] = None) -> dict:
     """Fold one test id's attempts into the facts a matrix cell shows.
 
     pytest-rerunfailures records every attempt, so ``recs`` may hold two
     discarded reruns before the verdict. Only the last attempt decides the
     outcome, but the earlier ones are the difference between "passes" and
     "passes on the third try" — worth publishing, and invisible until now.
+
+    ``record`` is this test's summary.json entry, when the run wrote one. Its category is what the
+    flow asserted, so it wins over anything read out of the log; the log still supplies the detail
+    line, which is the sentence a reader sees.
     """
     last = recs[-1] if recs else {}
     outcome = last.get("result")
@@ -570,6 +628,16 @@ def make_cell(recs: list) -> dict:
     reason, detail = (None, "")
     if outcome not in ("Passed", "Skipped", None):
         reason, detail = classify_failure(last.get("log"))
+        typed = (record or {}).get("category")
+        if isinstance(typed, str) and typed in FAILURE_CATEGORIES:
+            # When the prose agrees, its headline is the sentence that justified it. When it does
+            # not, the log's line may be about something else entirely: a failed teardown gets
+            # its own pytest-html record, so `last` can be an InvalidSessionId while summary.json
+            # rightly keeps the call's verdict. The record's own line is the one that carried it.
+            error = (record or {}).get("error")
+            if (typed != reason or not detail) and isinstance(error, str) and error:
+                detail = _detail(error)
+            reason = typed
     return {
         "outcome": outcome,
         "reason": reason,
@@ -638,6 +706,7 @@ def collect(run_dir: Path) -> dict:
             continue
 
         data = load_pytest_html(report)
+        summary = load_summary(child)
         for tid, recs in data.get("tests", {}).items():
             if isinstance(recs, dict):
                 recs = [recs]
@@ -655,7 +724,7 @@ def collect(run_dir: Path) -> dict:
             else:
                 target, agents_set = verification, verification_agents
             agents_set.add(agent)
-            cell = make_cell(recs)
+            cell = make_cell(recs, summary.get(tid))
             bucket = target.setdefault(col, {})
             bucket[agent] = merge_cells(bucket.get(agent), cell)
             if cell["outcome"] in totals:

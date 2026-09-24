@@ -49,6 +49,7 @@ CRASHED = "crashed"            # the app died or stopped responding
 # Harness-decided: not a statement about the wallet at all. Kept separate so a report can exclude
 # it rather than publishing our own breakage as a vendor's failure.
 LOST_SESSION = "lost_session"
+HARNESS = "harness"            # a precondition of ours or the device's was not met (config, DID, PIN)
 
 # Test-decided: what the wallet did with the credential.
 NOT_STORED = "not_stored"                    # accepted, but the count did not move
@@ -77,6 +78,16 @@ class FlowFailure(RuntimeError):
     def __init__(self, category: str, message: str):
         super().__init__(f"[{category}] {message}")
         self.category = category
+
+
+def fail(category: str, message: str):
+    """Fail the current test with a named outcome, for the verdicts a *test* reaches.
+
+    `pytest.fail` and a bare `assert` carry no category, so a `[not_stored]` written into their
+    text reached only the report's regex: summary.json and the app.log digest read the exception's
+    `.category` attribute and recorded those failures as uncategorised.
+    """
+    raise FlowFailure(category, message)
 
 
 def _a(noun: str) -> str:

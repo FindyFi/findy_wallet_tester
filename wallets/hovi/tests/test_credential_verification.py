@@ -32,11 +32,12 @@ def test_credential_verification(app, issuer_name, test_case):
         logger.warning(f"[test] Could not count credentials before verification: {e}")
     else:
         if held == 0:
-            pytest.fail(
-                f"[{outcome.NOTHING_TO_PRESENT}] Cannot verify '{test_case}' against "
-                f"'{issuer_name}': the wallet holds no credentials, so nothing could be shared. "
-                "Issuance failed earlier in this run."
-            )
+            # `outcome.fail`, not `pytest.fail`: the category has to be an attribute for
+            # summary.json and the app.log digest, not only a tag in the text.
+            outcome.fail(outcome.NOTHING_TO_PRESENT, (
+                f"Cannot verify '{test_case}' against '{issuer_name}': the wallet holds no "
+                "credentials, so nothing could be shared. Issuance failed earlier in this run."
+            ))
 
     provider = get_provider(app.config, issuer_name)
     verification_flow.run(
