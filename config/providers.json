@@ -4,37 +4,86 @@
             "type": "authbound",
             "base_url": "https://authbound.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "slug": "kael" }
+                "credential_issuance": {
+                    "type": "issuance",
+                    "slug": "kael"
+                }
             }
         },
         "hovi": {
             "base_url": "https://issuer.hovi.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "pensioncredential.json"
+                }
             }
         },
         "procivis": {
             "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "pensioncredential.json"
+                }
             }
         },
         "waltid": {
             "base_url": "https://issuer.waltid.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "pensioncredential.json"
+                }
             }
         },
         "paradym": {
             "base_url": "https://issuer.paradym.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "pensioncredential.json"
+                }
             }
         },
         "sphereon": {
             "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
             "credentials": {
-                "credential_issuance": { "type": "issuance", "path": "pensioncredential.json" }
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "pensioncredential.json"
+                }
+            }
+        },
+        "eudiplo_loyalty": {
+            "type": "api",
+            "base_url": "https://playground.eudi-wallet.org",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/api/issue",
+                    "body": {
+                        "credentialId": "loyalty-card"
+                    }
+                }
+            }
+        },
+        "talao_pid": {
+            "base_url": "https://talao.co",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "sandbox/issuer/test_13"
+                }
+            }
+        },
+        "talao_lpid": {
+            "base_url": "https://talao.co",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "sandbox/issuer/test_17"
+                }
             }
         }
     },
@@ -43,31 +92,58 @@
             "type": "authbound",
             "base_url": "https://authbound.pensiondemo.findy.fi",
             "credentials": {
-                "pension_verification": { "type": "verification" }
+                "pension_verification": {
+                    "type": "verification"
+                }
             }
         },
         "hovi": {
             "base_url": "https://verifier.hovi.pensiondemo.findy.fi",
             "credentials": {
-                "pension_verification": { "type": "verification", "path": "/" }
+                "pension_verification": {
+                    "type": "verification",
+                    "path": "/"
+                }
             }
         },
         "procivis": {
             "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
             "credentials": {
-                "pension_verification": { "type": "verification", "path": "/" }
+                "pension_verification": {
+                    "type": "verification",
+                    "path": "/"
+                }
             }
         },
         "waltid": {
             "base_url": "https://verifier.waltid.pensiondemo.findy.fi",
             "credentials": {
-                "pension_verification": { "type": "verification", "path": "/" }
+                "pension_verification": {
+                    "type": "verification",
+                    "path": "/"
+                }
             }
         },
         "paradym": {
             "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
             "credentials": {
-                "pension_verification": { "type": "verification", "path": "/" }
+                "pension_verification": {
+                    "type": "verification",
+                    "path": "/"
+                }
+            }
+        },
+        "eudiplo_loyalty": {
+            "type": "api",
+            "base_url": "https://playground.eudi-wallet.org",
+            "credentials": {
+                "loyalty_verification": {
+                    "type": "verification",
+                    "path": "/api/verify",
+                    "body": {
+                        "useCase": "sports-shop"
+                    }
+                }
             }
         }
     }
