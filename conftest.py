@@ -203,6 +203,22 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
     config = session.config
     if hasattr(config, "workerinput"):
         return  # xdist workers don't own the logcat process
+
+    # The stale-capture sweep, reported here because it ran where INFO is dropped (see
+    # `_kill_stale_logcats`). Before the capture's own checks, and independent of them: the sweep
+    # happened even when the capture it made room for then failed to start.
+    try:
+        serial, stopped = getattr(config, "_swept_logcats", ("", []))
+        if stopped:
+            logger.info(
+                f"[logcat] Stopped {len(stopped)} stale capture(s) on {serial} left by earlier "
+                f"sessions (pid {', '.join(str(p) for p in stopped)})"
+            )
+    except Exception as e:
+        # Guarded because everything below — stopping this session's own adb, detaching the file
+        # log — must still happen; skipping it leaks exactly what the sweep exists to clean up.
+        logger.warning(f"[logcat] Could not report the stale-capture sweep: {e}")
+
     logcat_proc = getattr(config, "_logcat_proc", None)
     # Captured **before** terminating: a healthy capture is still running at this point, so an
     # already-exited process means adb gave up during the session.
@@ -563,7 +579,7 @@ def _stale_logcats(serial: str) -> list:
     return pids
 
 
-def _kill_stale_logcats(serial: str) -> None:
+def _kill_stale_logcats(serial: str) -> list:
     """Stop any `adb logcat` left streaming to this device from an earlier session.
 
     `pytest_sessionfinish` is the only thing that stops the capture, and it does not run on
@@ -580,16 +596,22 @@ def _kill_stale_logcats(serial: str) -> None:
     Only this session's device. The fleet is shared and another run may be live on another
     device. Two sessions on the *same* device already collide — the `logcat -c` below wipes the
     other one's buffer regardless — so there is nothing extra to lose there.
+
+    Returns the pids actually signalled, for `pytest_sessionfinish` to report. Logging them here
+    recorded nothing: this runs inside `pytest_configure`, where an INFO record is dropped (see
+    `_logcat_scope`), and four orphans were killed on 2026-09-21 without a word in test.log. A
+    failure to stop one is still logged here, since WARNING does get through.
     """
+    stopped = []
     for pid in _stale_logcats(serial):
         try:
             os.kill(pid, signal.SIGTERM)
-            logger.info(f"[logcat] Stopped a stale capture on {serial} (pid {pid}) left by an "
-                        "earlier session")
+            stopped.append(pid)
         except ProcessLookupError:
             pass  # exited between the listing and the signal
         except Exception as e:
             logger.warning(f"[logcat] Could not stop stale capture pid {pid} on {serial}: {e}")
+    return stopped
 
 
 def start_logcat(config, run_dir) -> None:
@@ -598,7 +620,8 @@ def start_logcat(config, run_dir) -> None:
     if not serial:
         return
     try:
-        _kill_stale_logcats(serial)
+        # Kept before anything below can fail, so the report survives a capture that then breaks.
+        config._swept_logcats = (serial, _kill_stale_logcats(serial))
         subprocess.run(["adb", "-s", serial, "logcat", "-c"], capture_output=True, timeout=10)
         log_file = open(run_dir / "logcat.log", "w")  # closed in pytest_sessionfinish
         try:
@@ -824,7 +847,8 @@ def pytest_runtest_makereport(item, call):
         # A rerun re-runs the *same* item object, and pytest-rerunfailures only relabels reports
         # as "rerun" after the protocol returns — so each attempt looks like a genuine failure and
         # `save_failure_artifacts` runs again, overwriting the screenshot and XML dump. The `app`
-        # fixture already resets its own two flags per attempt; these four were not, so the digest
+        # fixture resets its own three capture flags at the top of each attempt; these four were
+        # not reset at all, so the digest
         # kept attempt 1's cause while the files on disk became attempt 3's, and a test that failed
         # once and then passed still left a failure block contradicting summary.json.
         item._attempt = getattr(item, "_attempt", 0) + 1
@@ -1005,9 +1029,50 @@ def driver(request):
     driver.quit()
 
 
+def _save_recording(driver, request, app_name: str) -> None:
+    """Stop this attempt's screen recording and write it to recordings/, once. Never raises.
+
+    Called from the `app` fixture's teardown and from its fallback finalizer; `_recording_saved`
+    keeps the two to one write, since stopping a recording twice returns nothing the second time.
+    """
+    node = request.node
+    if getattr(node, "_recording_saved", False):
+        return
+    node._recording_saved = True
+    try:
+        video_b64 = driver.stop_recording_screen()
+        if video_b64:
+            recordings_dir = request.config._run_dir / "recordings"
+            recordings_dir.mkdir(exist_ok=True)
+            test_name = sanitize_test_name(node.name)
+            path = recordings_dir / f"{test_name}.mp4"
+            path.write_bytes(base64.b64decode(video_b64))
+            if screen_is_protected(request, app_name):
+                # FLAG_SECURE blanks the video as well as screenshots — confirmed 2026-09-04
+                # by extracting frames from a heidi recording: the wallet's own screens are
+                # solid black, only the launcher and systemui render. The file is kept because
+                # those non-app segments are real evidence (an unroutable deeplink lands on the
+                # launcher), but it must not be read as a recording of the wallet.
+                logger.info(
+                    f"[recording] Saved: {path} — NOTE: {app_name} sets FLAG_SECURE, so the "
+                    "wallet's own screens are blank in this video; only non-app screens render"
+                )
+            else:
+                logger.info(f"[recording] Saved: {path}")
+    except Exception as e:
+        logger.warning(f"[recording] Failed to save recording: {e}")
+
+
 @pytest.fixture
 def app(driver, request):
     """Install the app if needed, launch it, and return the ready BaseTest instance."""
+    # Per-attempt capture flags, reset before anything here can raise. A rerun reuses the same item,
+    # so a flag the previous attempt's teardown left True would make this attempt's fallback below
+    # believe its captures were already taken — and a body that dies early would save nothing.
+    request.node._artifact_captured = False
+    request.node._appium_captured = False
+    request.node._recording_saved = False
+
     app_name = request.node.callspec.params["driver"]
     config = load_config(app_name)
 
@@ -1026,6 +1091,41 @@ def app(driver, request):
         except Exception as e:
             logger.warning(f"[recording] Failed to start recording: {e}")
             recording_enabled = False
+
+    def _capture_if_the_body_died():
+        """Take the captures the post-yield teardown would have, when the body never reached it.
+
+        pytest schedules a yield fixture's teardown only once the body reaches `yield`, so a raise
+        anywhere below used to skip every capture at once — recording, XML, screenshot and
+        appium.log. unime died in the `activate_app` → foreground wait 33 times in one run
+        (2026-09-10_11-11-18) and its directory held no artifacts at all.
+
+        A fallback, not the capture point. Finalizers run LIFO, so on a normal test this runs
+        *after* the post-yield code — after HOME and the recents clear, on the wrong screen. By then
+        that code has set every flag below, and this does nothing.
+
+        Never raises: pytest re-raises finalizer errors, and a second exception would bury the
+        failure being recorded. Each capture has its own guard so one failing does not cost the
+        others.
+        """
+        node = request.node
+        try:
+            if node_failed(node) and not getattr(node, "_artifact_captured", False):
+                node._artifact_captured = True
+                save_failure_artifacts(driver, request, config, wallet=app_name)
+        except Exception as e:
+            logger.warning(f"[app] Fallback capture could not save failure artifacts: {e}")
+        try:
+            # After the artifacts, as in the post-yield path, so their calls appear in the log.
+            if not getattr(node, "_appium_captured", False):
+                node._appium_captured = True
+                capture_appium_logs(driver, request, sanitize_test_name(node.name))
+        except Exception as e:
+            logger.warning(f"[app] Fallback capture could not capture the Appium log: {e}")
+        if recording_enabled:
+            _save_recording(driver, request, app_name)
+
+    request.addfinalizer(_capture_if_the_body_died)
 
     base_test = BaseTest(driver, config)
     just_installed = base_test.setup()
@@ -1112,20 +1212,22 @@ def app(driver, request):
             f"on {info['platform']} {info['platform_version']} ({info['device_name']})"
         )
 
-    request.node._artifact_captured = False
-    request.node._appium_captured = False
     yield base_test
 
-    # `node_failed`, not `rep_call`, because this is the only capture point a setup error ever
-    # reaches: a wallet's `_ensure_home` raises before its own yield, so its teardown — and the
-    # `capture_failure_artifact` inside it — never runs, while this one does.
+    # `node_failed`, not `rep_call`, because this is where a setup error in a *dependent* fixture
+    # is captured: a wallet's `_ensure_home` raises before its own yield, so its teardown — and the
+    # `capture_failure_artifact` inside it — never runs, while this one does. A setup error in
+    # this fixture's own body never reaches here; `_capture_if_the_body_died` covers that.
     if node_failed(request.node) and not getattr(request.node, "_artifact_captured", False):
         # One implementation, shared with the per-wallet teardown path. The copy that used to
         # live here took the screenshot *before* the XML dump — the wrong order on a screen with
         # FLAG_SECURE, where the dump is the only evidence that can be captured at all.
         save_failure_artifacts(driver, request, config, wallet=app_name)
+        # Set whether or not anything saved: the finalizer registered above runs after this, on
+        # the home screen, and a second attempt there would dump the wrong screen.
+        request.node._artifact_captured = True
 
-    # Appium's log, for the same reason and from the same fallback position.
+    # Appium's log, for the same reason and from the same position behind the wallet's teardown.
     #
     # `capture_appium_logs` used to live only in the per-wallet `teardown_test`, which never runs
     # when `_ensure_home` raises before its yield — so the failure mode that most needs the Appium
@@ -1137,34 +1239,14 @@ def app(driver, request):
     # After `save_failure_artifacts`, so the screenshot and XML calls appear in the log too.
     if not getattr(request.node, "_appium_captured", False):
         capture_appium_logs(driver, request, sanitize_test_name(request.node.name))
+        request.node._appium_captured = True
 
     if _is_anr_present(driver):
         logger.warning(f"[app] ANR detected for {app_package} — clearing app cache before retry")
         _clear_app_cache(driver, app_package)
 
     if recording_enabled:
-        try:
-            video_b64 = driver.stop_recording_screen()
-            if video_b64:
-                recordings_dir = request.config._run_dir / "recordings"
-                recordings_dir.mkdir(exist_ok=True)
-                test_name = sanitize_test_name(request.node.name)
-                path = recordings_dir / f"{test_name}.mp4"
-                path.write_bytes(base64.b64decode(video_b64))
-                if screen_is_protected(request, app_name):
-                    # FLAG_SECURE blanks the video as well as screenshots — confirmed 2026-09-04
-                    # by extracting frames from a heidi recording: the wallet's own screens are
-                    # solid black, only the launcher and systemui render. The file is kept because
-                    # those non-app segments are real evidence (an unroutable deeplink lands on the
-                    # launcher), but it must not be read as a recording of the wallet.
-                    logger.info(
-                        f"[recording] Saved: {path} — NOTE: {app_name} sets FLAG_SECURE, so the "
-                        "wallet's own screens are blank in this video; only non-app screens render"
-                    )
-                else:
-                    logger.info(f"[recording] Saved: {path}")
-        except Exception as e:
-            logger.warning(f"[recording] Failed to save recording: {e}")
+        _save_recording(driver, request, app_name)
 
     try:
         driver.press_keycode(3)  # HOME — let the app save state before clearing

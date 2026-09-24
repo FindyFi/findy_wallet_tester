@@ -12,6 +12,7 @@ while heidi was testing on the emulator. So "wrong device" is the case that has 
 "unknown device" the case that has to write nothing — a log filed under the wrong device is worse
 than no log, because someone will read it.
 """
+import logging
 import signal
 import subprocess
 from types import SimpleNamespace
@@ -300,6 +301,93 @@ def test_an_unlistable_process_table_does_not_break_the_run(monkeypatch):
 
     monkeypatch.setattr(root_conftest.subprocess, "run", _boom)
     assert root_conftest._stale_logcats("ZT322L348J") == []
+
+
+def test_the_sweep_returns_only_the_pids_it_actually_stopped(monkeypatch):
+    """A pid that exited before the signal was not stopped by us, so it must not be reported."""
+    monkeypatch.setattr(root_conftest.subprocess, "run",
+                        lambda *a, **k: FakeCompleted(PS_LISTING))
+
+    def _kill(pid, sig):
+        if pid == 46135:
+            raise ProcessLookupError(pid)
+
+    monkeypatch.setattr(root_conftest.os, "kill", _kill)
+    assert root_conftest._kill_stale_logcats("ZT322L348J") == [61669]
+
+
+def _swept_session(tmp_path, monkeypatch, caplog, listing, popen=None) -> str:
+    """A session whose `start_logcat` sweeps `listing`, then ends. Returns its test.log.
+
+    Modelled on production in the two ways that decide whether the line survives, because caplog
+    alone sees a record either way and so proved nothing:
+
+      * `start_logcat` runs at WARNING, as it does inside `pytest_configure`, before pytest's
+        logging plugin lowers the root level. An INFO logged there is dropped, which is the bug.
+      * the report is read from a real test.log handler that `pytest_sessionfinish` detaches
+        itself, so a line emitted after the detach is lost here as it would be in a run.
+    """
+    _fixed_device(monkeypatch, "ZT322L348J")
+    monkeypatch.setattr(root_conftest, "_app_uid", lambda serial, package: "10351")
+    monkeypatch.setattr(root_conftest.subprocess, "run", lambda *a, **k: FakeCompleted(listing))
+    monkeypatch.setattr(root_conftest.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(root_conftest.subprocess, "Popen", popen or (lambda *a, **k: FakeProc()))
+    config = _config("hovi")
+    config._run_dir = tmp_path
+
+    handler = logging.FileHandler(str(tmp_path / "test.log"))
+    handler.setLevel(logging.DEBUG)
+    logging.getLogger().addHandler(handler)
+    config._log_handler = handler
+    try:
+        with caplog.at_level(logging.WARNING):
+            start_logcat(config, tmp_path)
+        with caplog.at_level(logging.INFO):
+            root_conftest.pytest_sessionfinish(SimpleNamespace(config=config), 0)
+    finally:
+        logging.getLogger().removeHandler(handler)  # a no-op once sessionfinish detached it
+        handler.close()
+    return (tmp_path / "test.log").read_text()
+
+
+def test_a_swept_capture_is_named_in_test_log(tmp_path, monkeypatch, caplog):
+    """The sweep runs inside `pytest_configure`, where INFO is dropped. On 2026-09-21 it stopped
+    four orphans and test.log recorded none of them."""
+    log = _swept_session(tmp_path, monkeypatch, caplog, PS_LISTING)
+
+    reported = [line for line in log.splitlines() if "stale capture" in line]
+    assert len(reported) == 1, log
+    assert "Stopped 2 stale capture(s) on ZT322L348J" in reported[0]
+    assert "46135" in reported[0] and "61669" in reported[0]
+
+
+def test_a_sweep_that_stopped_nothing_says_nothing(tmp_path, monkeypatch, caplog):
+    """Silence is the normal case; a line saying "stopped 0" on every run would be noise."""
+    log = _swept_session(tmp_path, monkeypatch, caplog, " 5867 adb -L tcp:5037 fork-server server\n")
+
+    assert "stale capture" not in log
+
+
+def test_the_sweep_is_reported_even_when_the_capture_then_fails(tmp_path, monkeypatch, caplog):
+    """The processes were stopped either way — that must not vanish with the capture's failure."""
+    def _refuse(*a, **k):
+        raise OSError("adb not found")
+
+    log = _swept_session(tmp_path, monkeypatch, caplog, PS_LISTING, popen=_refuse)
+
+    assert "Stopped 2 stale capture(s) on ZT322L348J" in log
+
+
+def test_a_malformed_sweep_record_does_not_stop_session_end(tmp_path, caplog):
+    """Everything after the report — stopping this session's adb — must still happen."""
+    proc = FakeProc()
+    config = _session(tmp_path, proc=proc)
+    config._swept_logcats = "not a pair"
+
+    _finish(config)
+
+    assert proc.terminated
+    assert any("Could not report the stale-capture sweep" in r.message for r in caplog.records)
 
 
 # --- and it has to say whether it worked ------------------------------------------------------
