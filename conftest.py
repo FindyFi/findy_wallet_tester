@@ -21,6 +21,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from base.android import (handle_biometric_if_present, handle_permission_if_present,
                           unlock_if_locked)
 from base.base_test import BaseTest, UpdateNotFinished
+from base import progress
 from base.conftest_helpers import (
     capture_appium_logs,
     node_failed,
@@ -710,7 +711,11 @@ def pytest_runtest_setup(item):
     config of its own: which providers a wallet runs is decided in one place, so the probe has to
     ask that same place. The wallet name is already on the callspec, from the indirect `driver`
     param every one of these tests carries.
+
+    Also where each attempt's progress trail starts empty. A conftest hook runs before pytest's own
+    setup, so this is before any fixture of the attempt, and it runs again for every rerun.
     """
+    progress.reset()
     callspec = getattr(item, "callspec", None)
     params = getattr(callspec, "params", {})
     issuer_name = params.get("issuer_name")
@@ -852,7 +857,7 @@ def pytest_runtest_makereport(item, call):
         # kept attempt 1's cause while the files on disk became attempt 3's, and a test that failed
         # once and then passed still left a failure block contradicting summary.json.
         item._attempt = getattr(item, "_attempt", 0) + 1
-        for stale in ("_failure_line", "_failure_category", "_failure_where",
+        for stale in ("_failure_line", "_failure_category", "_failure_where", "_failure_trail",
                       "_error_screen_logged"):
             if hasattr(item, stale):
                 delattr(item, stale)
@@ -867,6 +872,9 @@ def pytest_runtest_makereport(item, call):
         exc = call.excinfo.value
         item._failure_line = f"{type(exc).__name__}: {exc}".split("\n")[0].strip()
         item._failure_category = getattr(exc, "category", "")
+        # How far the flow got, at the moment it failed. Read for any exception, not only a
+        # FlowFailure: a bare locator timeout is exactly the failure whose position is unknown.
+        item._failure_trail = progress.snapshot()
 
         # Where it was raised, which is the only useful thing left when the exception carries no
         # message. Selenium's `TimeoutException` stringifies as "Message: \n<stacktrace>", so the
@@ -907,6 +915,10 @@ def _record_result(item, rep) -> None:
             "failed_in": "",
             "error": "",
             "category": "",
+            # The furthest flow stage completed before the failure, and every recorded step.
+            # Empty for a wallet whose flow records none — which is not the same as "got nowhere".
+            "stage": "",
+            "steps": [],
             # Summed across attempts, deliberately: a flaky test's real cost is all the time it
             # consumed, not just its last try. Every other field describes the final attempt —
             # `attempts` is what tells a reader the two are measuring different things.
@@ -919,7 +931,8 @@ def _record_result(item, rep) -> None:
         if rep.when == "setup":
             record["attempts"] += 1
             # A retry starts clean: the previous attempt's verdict must not outlive it.
-            record.update(outcome="passed", failed_in="", error="", category="")
+            record.update(outcome="passed", failed_in="", error="", category="", stage="",
+                          steps=[])
         # A teardown error must not overwrite a verdict the test already reached — the same rule
         # `_failure_line` follows above. Without this, a test that failed `[rejected]` in `call`
         # and then hit a second exception in teardown is published as `error`/`teardown` while
@@ -932,6 +945,13 @@ def _record_result(item, rep) -> None:
             record["failed_in"] = rep.when
             record["error"] = getattr(item, "_failure_line", "")
             record["category"] = getattr(item, "_failure_category", "")
+            trail = getattr(item, "_failure_trail", None) or {}
+            if rep.when == "teardown":
+                # The test itself passed, so a trail reaching `keep` describes that pass, not the
+                # teardown error — which would otherwise be drawn as the wallet stopping there.
+                trail = {}
+            record["stage"] = trail.get("stage", "")
+            record["steps"] = list(trail.get("steps", []))
         elif rep.skipped:
             # No phase condition: both skip routes in this repo fire during **setup** — the
             # unreachable-provider `pytest.skip` in `pytest_runtest_setup`, and the

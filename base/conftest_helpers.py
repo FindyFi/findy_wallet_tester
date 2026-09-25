@@ -168,6 +168,18 @@ def _leading_tags(line: str) -> list:
         rest = rest[match.end():]
 
 
+def _reached_line(trail) -> str:
+    """How far the flow got, from `base/progress.py`'s snapshot: the stage, then the steps.
+
+    "No completed step recorded" rather than "got nowhere": most wallets' flows do not record
+    progress yet, and an empty trail from them says nothing about how far they got.
+    """
+    if not trail or not trail.get("steps"):
+        return "(no completed step recorded)"
+    stage = trail.get("stage") or "no stage completed"
+    return f"{stage} — {' → '.join(trail['steps'])}"
+
+
 def _failed_phase(node) -> str:
     """"setup" or "call" — which phase produced the failure. "" if the node did not fail."""
     for phase in ("setup", "call"):
@@ -286,6 +298,7 @@ def record_error_screen(driver, request, config, *, wallet: str = "", evidence=(
             f"flow:           {flow or '(not reported by the failure)'}",
             *([f"phase:          {phase}"] if phase else []),
             f"outcome:        {category or '(uncategorised)'}",
+            f"reached:        {_reached_line(getattr(request.node, '_failure_trail', None))}",
             f"wallet said:    {said_line}",
             f"error:          {_error_line(line, getattr(request.node, '_failure_where', ''))}",
             f"evidence:       {', '.join(evidence) if evidence else '(none saved)'}",

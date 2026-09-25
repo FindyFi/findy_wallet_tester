@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 
 from selenium.common.exceptions import WebDriverException
 
-from base import deeplink, interstitials as _interstitials
+from base import deeplink, interstitials as _interstitials, progress
 from base.android import SystemOverlay, detect_crash_or_anr
 
 logger = logging.getLogger(__name__)
@@ -115,11 +115,15 @@ def _error_text(driver, screens) -> str:
 
 
 def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool = False,
-             interstitials=()) -> str:
+             interstitials=(), completes: str = progress.PRESENT) -> str:
     """Poll until the target screen, a fresh error, or home settles. Returns an outcome name.
 
     `target` is the page's own `on_screen(driver, timeout)` — the one screen that means this
     particular step worked. Everything else is shared.
+
+    Reaching the target completes `completes` in the progress trail — the offer or request being
+    shown, for every current caller — and each answered interstitial is recorded as a step, so a
+    failure later in the flow still says which prompts it got past.
 
     `error_before` says whether the wallet's error surface was already showing when the deeplink was
     fired; one that was already there says nothing about this case. Only wallets whose error surface
@@ -145,6 +149,7 @@ def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool
             # on it can be read. Answering one is progress, so it may buy the wait more time.
             acted = _interstitials.service(driver, ctx, interstitials, fired)
             if acted is not None:
+                progress.step(f"answered {acted.name} ({fired.get(acted.name, 0)})")
                 if acted.extends and extended < screens.processing_grace:
                     grant = min(acted.extends, screens.processing_grace - extended)
                     end += grant
@@ -152,6 +157,7 @@ def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool
                 continue
 
             if target(driver, _TICK):
+                progress.reached(completes, f"{screens.name} showed the screen it was waited for")
                 return SUCCESS
 
             if error_probe and not error_before and error_probe(driver, _TICK):
@@ -295,7 +301,8 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
     ))
 
 
-def raise_if_rejected(driver, screens, ctx, *, action: str, error_before: bool = False):
+def raise_if_rejected(driver, screens, ctx, *, action: str, error_before: bool = False,
+                      settled: bool = False):
     """Fail with `rejected` if the wallet's error surface appeared after an action succeeded.
 
     Reaching the next screen is not the same as the wallet being happy. authbound_issuer and
@@ -304,9 +311,24 @@ def raise_if_rejected(driver, screens, ctx, *, action: str, error_before: bool =
 
     Skipped when the surface was already showing, since then its presence proves nothing, and a
     no-op for a wallet with no mapped error screen.
+
+    `settled` says the caller already waited for the wallet to leave the screen it acted on — hovi
+    waits for home. Only then does a clean probe complete `accept` in the progress trail. Probed
+    straight after the tap, two seconds without an error is weak evidence: a wallet whose error
+    arrives at three seconds would be recorded as having accepted. That case is a step, and a later
+    stage (the count moving) carries the flow forward instead.
     """
     error_probe = screens.probe("error")
-    if error_before or not error_probe or not error_probe(driver, 2):
+    if error_before or not error_probe:
+        # The step happened, but nothing could tell whether the wallet then objected, so it is
+        # recorded without claiming the stage — the trail stays earlier than the truth, not later.
+        progress.step(f"{screens.name} {action} '{ctx.what}' (error surface not checkable)")
+        return
+    if not error_probe(driver, 2):
+        if settled:
+            progress.reached(progress.ACCEPT, f"{screens.name} {action} '{ctx.what}' with no error")
+        else:
+            progress.step(f"{screens.name} {action} '{ctx.what}', no error within 2s")
         return
     said = _error_text(driver, screens)
     quoted = f": \"{said}\"" if said else ""

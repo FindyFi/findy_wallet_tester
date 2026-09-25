@@ -2,7 +2,7 @@ import logging
 
 from selenium.common.exceptions import WebDriverException
 
-from base import interstitials, outcome
+from base import deeplink, interstitials, outcome, progress
 from base.android import authenticate_with_pin
 from base.flow_context import FlowContext
 from providers.base import DeeplinkProvider
@@ -33,7 +33,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     Flow:
       1. Clear any stale error banner
       2. Background app (HOME keycode)
-      3. Fire deeplink via mobile: deepLink, exactly as the provider gave it
+      3. Fire the deeplink, exactly as the provider gave it (base/deeplink.fire)
       4. Wait for one of the known outcomes; share if it is the one we wanted
       5. Return to home screen
 
@@ -54,7 +54,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
     try:
-        driver.execute_script("mobile: deepLink", {"url": ctx.url, "package": app_package})
+        deeplink.fire(driver, ctx.url, app_package)
     except WebDriverException as exc:
         logger.info(f"[verification_flow] Android would not route the deeplink: {exc.msg}")
         outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="information request",
@@ -74,6 +74,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         no_match_page.dismiss(driver)
         outcome.raise_no_match(SCREENS, ctx, said=(
             "No Credential Found: the credential is not present in your wallet"))
+    progress.reached(progress.MATCH, "hovi offered a credential to share")
 
     VerificationRequestPage(driver, **page_args).share()
     logger.info("[verification_flow] Waiting for home screen after sharing")
@@ -83,4 +84,4 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     authenticate_with_pin(driver, ctx.device_pin, detect_timeout=3)
     HomePage(driver, **page_args).wait_until_loaded()
     outcome.raise_if_rejected(driver, SCREENS, ctx, action="shared for",
-                              error_before=error_before)
+                              error_before=error_before, settled=True)

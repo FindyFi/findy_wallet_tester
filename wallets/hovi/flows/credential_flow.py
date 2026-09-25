@@ -2,7 +2,7 @@ import logging
 
 from selenium.common.exceptions import WebDriverException
 
-from base import interstitials, outcome
+from base import deeplink, interstitials, outcome
 from base.android import authenticate_with_pin
 from base.flow_context import FlowContext
 from providers.base import DeeplinkProvider
@@ -36,7 +36,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     Flow:
       1. Clear any stale error banner (see flows/__init__.py)
       2. Background app (HOME keycode)
-      3. Fire deeplink via mobile: deepLink, exactly as the provider gave it
+      3. Fire the deeplink, exactly as the provider gave it (base/deeplink.fire)
       4. Wait for one of the known outcomes; accept the offer if it is the one we wanted
       5. Return to home screen
 
@@ -59,7 +59,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
     logger.info(f"[credential_flow] Opening deeplink for '{credential_name}'")
     try:
-        driver.execute_script("mobile: deepLink", {"url": ctx.url, "package": app_package})
+        deeplink.fire(driver, ctx.url, app_package)
     except WebDriverException as exc:
         # Android refused to route the intent at all. Same conclusion as nothing appearing, so it
         # takes the same diagnosis rather than a second failure shape.
@@ -83,4 +83,4 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     authenticate_with_pin(driver, ctx.device_pin, detect_timeout=3)
     HomePage(driver, **page_args).wait_until_loaded()
     outcome.raise_if_rejected(driver, SCREENS, ctx, action="accepted the offer for",
-                              error_before=error_before)
+                              error_before=error_before, settled=True)

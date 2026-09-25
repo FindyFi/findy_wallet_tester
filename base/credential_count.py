@@ -17,7 +17,7 @@ What every wallet's `count_credentials()` does agree on:
 """
 import logging
 
-from base import outcome
+from base import outcome, progress
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,7 @@ def assert_increased(before, after, *, request, wallet: str, issuer: str, case: 
     """
     if before is None or after is None:
         request.node.user_properties.append(("count_evidence", "unavailable"))
+        progress.step(f"{wallet} could not report a count, so storage is unconfirmed")
         logger.warning(
             f"[test] '{case}' from '{issuer}': the flow reported success but {wallet} could not "
             "report a count — this run has NO evidence the credential was stored"
@@ -77,4 +78,5 @@ def assert_increased(before, after, *, request, wallet: str, issuer: str, case: 
             f"Credential '{case}' from '{issuer}' did not reach {wallet}: the flow completed "
             f"without error but the count stayed at {after}"
         ))
+    progress.reached(progress.KEEP, f"{wallet} count {before} → {after}")
 

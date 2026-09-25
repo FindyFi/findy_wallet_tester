@@ -57,7 +57,7 @@ to the public site; being ignored is also what keeps git checkouts from
 touching it. HISTORY_LIMIT bounds how many runs it keeps.
 
 The JSON twin (data.json) carries all of this: each cell is an object with
-"outcome", "reason", "detail", "attempts", "flaky" and "change" rather than a
+"outcome", "reason", "detail", "stage", "steps", "attempts", "flaky" and "change" rather than a
 bare outcome string, and the top level gains "reason_counts", "flaky_cells",
 "wallet_info", "compared_to" and "change_counts".
 
@@ -84,6 +84,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+from base import progress
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = REPO_ROOT / "status"
@@ -320,7 +322,7 @@ CHANGES = {
 # link carries a request, and saying so beats one wording that fits neither.
 # "suites" limits a step to the flows it belongs to; a flow that has no such
 # step simply does not draw it.
-FLOW_STAGES = (
+_STAGE_TEXT = dict((
     ("deliver", {
         "label": {"issuance": "Offer link delivered",
                   "verification": "Request link delivered"},
@@ -352,7 +354,12 @@ FLOW_STAGES = (
         "caption": {"issuance": "the wallet's credential count moves",
                     "verification": "the presentation reaches the verifier"},
     }),
-)
+))
+
+# The keys are the progress trail's own (base/progress.py), so the diagram and what a
+# flow records cannot drift apart: a stage added there without a label here fails at
+# import rather than silently disappearing from the diagram.
+FLOW_STAGES = tuple((key, _STAGE_TEXT[key]) for key in progress.STAGES)
 
 SUITES = (("issuance", "Issuance"), ("verification", "Verification"))
 
@@ -638,10 +645,21 @@ def make_cell(recs: list, record: Optional[dict] = None) -> dict:
             if (typed != reason or not detail) and isinstance(error, str) and error:
                 detail = _detail(error)
             reason = typed
+    # How far the flow got, when it recorded that (base/progress.py). The last stage *completed*,
+    # not the one it stopped at; `stage_breakdown` works out the latter per suite. Absent for
+    # passes, for runs without summary.json, and for flows that record no progress.
+    stage, steps = None, []
+    if outcome not in ("Passed", "Skipped", None) and record:
+        if record.get("stage") in progress.STAGES:
+            stage = record["stage"]
+        if isinstance(record.get("steps"), list):
+            steps = [str(x) for x in record["steps"]]
     return {
         "outcome": outcome,
         "reason": reason,
         "detail": detail,
+        "stage": stage,
+        "steps": steps,
         "attempts": attempts,
         # A pass that needed a retry. The wallet did interoperate, so the cell
         # stays green, but a reader deciding on a provider should see it.
@@ -725,6 +743,10 @@ def collect(run_dir: Path) -> dict:
                 target, agents_set = verification, verification_agents
             agents_set.add(agent)
             cell = make_cell(recs, summary.get(tid))
+            if cell["stage"]:
+                # Labels differ per suite ("Offer shown" / "Request shown"), and only here is the
+                # suite known; the cell renderer is handed the finished phrase.
+                cell["reached_label"] = stage_text(_STAGE_TEXT[cell["stage"]], "label", flow)
             bucket = target.setdefault(col, {})
             bucket[agent] = merge_cells(bucket.get(agent), cell)
             if cell["outcome"] in totals:
@@ -1741,6 +1763,10 @@ def _outcome_td(cell: Optional[dict]) -> str:
         title.append(f'{meta["label"]} — {meta["description"]}')
     if cell.get("detail"):
         title.append(cell["detail"])
+    if cell.get("reached_label"):
+        n = len(cell.get("steps") or [])
+        title.append(f'Got as far as: {cell["reached_label"]} '
+                     f'({n} step{"s" if n != 1 else ""} recorded).')
     if cell.get("flaky"):
         cls += " flaky"
         caption = '<span class="reason">on retry</span>'
@@ -2057,6 +2083,26 @@ def render_change_key(matrix: dict) -> str:
     )
 
 
+# Failures that are ours, not the wallet's. They stay off the flow diagram however far the trail
+# got: drawing a lost Appium session at "Wallet opens" would publish it as a finding about the
+# vendor, which is what keeping them apart is for. A crash is the wallet's, so a measured stage
+# places it — that is exactly where it crashed.
+OFF_FLOW_REASONS = ("harness", "lost_session")
+
+
+def stopped_after(completed: str, suite: str) -> str:
+    """The stage a cell stopped at, given the last one its flow completed.
+
+    The trail records what *completed*; the diagram draws where a cell *stopped*, which is the
+    next step of this suite's own flow — issuance has no "match". A failure after the final stage
+    stays on it.
+    """
+    order = [key for key, meta in FLOW_STAGES if stage_applies(meta, suite)]
+    done = progress.STAGES.index(completed)
+    later = [key for key in order if progress.STAGES.index(key) > done]
+    return later[0] if later else order[-1]
+
+
 def stage_breakdown(matrix: dict) -> dict:
     """How far each cell got, per suite, keyed by stage.
 
@@ -2077,14 +2123,19 @@ def stage_breakdown(matrix: dict) -> dict:
                     done += 1
                     continue
                 reason = cell.get("reason")
-                stage = FAILURE_CATEGORIES.get(reason, {}).get("stage") if reason else None
+                if cell.get("stage") and reason not in OFF_FLOW_REASONS:
+                    stage = stopped_after(cell["stage"], suite)
+                else:
+                    stage = FAILURE_CATEGORIES.get(reason, {}).get("stage") if reason else None
                 if stage not in stages:
                     # No reason, or a reason that is not part of the flow
                     # (a test-setup failure). Counted, but not placed.
                     off_flow += 1
                     continue
                 stages[stage]["n"] += 1
-                if reason not in stages[stage]["reasons"]:
+                # A measured stage places a cell even when its failure has no category — the bare
+                # locator timeout whose position used to be unknown.
+                if reason and reason not in stages[stage]["reasons"]:
                     stages[stage]["reasons"].append(reason)
         out[suite] = {"stages": stages, "done": done, "off_flow": off_flow}
     return out

@@ -3,7 +3,7 @@ import time
 
 from selenium.common.exceptions import WebDriverException
 
-from base import interstitials, outcome
+from base import deeplink, interstitials, outcome
 from base.flow_context import FlowContext
 from providers.base import DeeplinkProvider
 from wallets.unime.pages import pin_page as pin_screen
@@ -43,7 +43,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
     logger.info(f"[credential_flow] Opening deeplink for '{credential_name}'")
     try:
-        driver.execute_script("mobile: deepLink", {"url": ctx.url, "package": app_package})
+        deeplink.fire(driver, ctx.url, app_package)
     except WebDriverException as exc:
         logger.info(f"[credential_flow] Android would not route the deeplink: {exc.msg}")
         outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="credential offer",
