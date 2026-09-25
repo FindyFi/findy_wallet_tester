@@ -42,8 +42,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         deeplink.fire(driver, ctx.url, app_package)
     except WebDriverException as exc:
         logger.info(f"[verification_flow] Android would not route the deeplink: {exc.msg}")
-        outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="information request",
-                          timeout=t)
+        outcome.raise_refused(driver, SCREENS, ctx, exc, expected="information request")
 
     time.sleep(3)
 

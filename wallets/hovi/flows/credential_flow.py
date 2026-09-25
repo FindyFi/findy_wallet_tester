@@ -64,8 +64,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         # Android refused to route the intent at all. Same conclusion as nothing appearing, so it
         # takes the same diagnosis rather than a second failure shape.
         logger.info(f"[credential_flow] Android would not route the deeplink: {exc.msg}")
-        outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="credential offer",
-                          timeout=t, error_before=error_before)
+        outcome.raise_refused(driver, SCREENS, ctx, exc, expected="credential offer")
 
     logger.info("[credential_flow] Waiting for credential offer screen")
     state = outcome.wait_for(driver, SCREENS, ctx, target=_offer_on_screen, timeout=t,

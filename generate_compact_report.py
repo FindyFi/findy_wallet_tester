@@ -240,8 +240,8 @@ FAILURE_CATEGORIES = {
         "stage": "present",
         "label": "Timed out",
         "short": "timed out",
-        "description": "The wallet was still working when the wait ran out. No verdict was "
-                       "reached either way.",
+        "description": "The wait ran out with no verdict either way: the wallet was still "
+                       "working, or was in front on a screen the test does not recognise.",
     },
     "prompt_loop": {
         "stage": "present",

@@ -46,8 +46,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         deeplink.fire(driver, ctx.url, app_package)
     except WebDriverException as exc:
         logger.info(f"[credential_flow] Android would not route the deeplink: {exc.msg}")
-        outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="credential offer",
-                          timeout=t)
+        outcome.raise_refused(driver, SCREENS, ctx, exc, expected="credential offer")
 
     # unime needs a moment before anything it will show is on screen; polling immediately just
     # burns ticks against the home screen it is still displaying.

@@ -94,6 +94,5 @@ def unroutable_reason(driver, app_package: str, url: str, wallet: str = "the wal
     return (
         f"the provider returned a {scheme + '://' if scheme else 'scheme-less'} URL "
         f"({url[:70]}…), which {wallet} does not register. It claims only "
-        f"{', '.join(schemes)}. The deeplink was delivered to whatever else on the device "
-        "claims that scheme, so it could never reach this wallet"
+        f"{', '.join(schemes)}, so a link with this scheme can never reach this wallet"
     )

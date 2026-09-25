@@ -285,10 +285,9 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
         raise FlowFailure(UNROUTABLE, f"[{flow}] Could not deliver '{what}': {reason} [no_retry]")
 
     # Not unroutable, so name the scheme that *was* used: otherwise this failure reads the same
-    # whether the URL was deliverable or not.
-    scheme = urlsplit(ctx.url).scheme.lower() if ctx.url else ""
-    used = (f" The URL used the {scheme}:// scheme, which {wallet} does register, so it had the "
-            "chance to take it." if scheme else "")
+    # whether the URL was deliverable or not. "Does register" only when the dump said so — an
+    # unreadable dump also leaves `reason` empty, and must not become a claim.
+    used = _scheme_note(driver, ctx, wallet)
     stale = (" A stale error banner from an earlier test was already on screen, so the wallet may "
              "have rejected this one too." if error_before else "")
     # Say what was never looked for, rather than implying every surface was checked and clean.
@@ -301,15 +300,117 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
     # Only claim to have seen nothing on the surfaces actually probed. Saying "no error" about a
     # wallet whose error screen is unmapped states as fact something nobody checked.
     looked = [f"no {expected}"]
-    if screens.probe("error"):
+    if screens.probe("error") and not error_before:
         looked.append("no error")
     looked.append("no home screen")
     nothing = f"{', '.join(looked[:-1])} and {looked[-1]}"
+
+    front = _foreground(driver)
+    if ctx.app_package and front == ctx.app_package:
+        # The wallet *is* in front — on a screen none of the probes recognise, or a loader nobody
+        # mapped. "Did not come to the foreground (<its own package> was)" is what this used to
+        # say, and unime published exactly that on 2026-09-24. Not `absent`, whose meaning is that
+        # the wallet never came forward: the wait ran out with the wallet up and no verdict.
+        progress.reached(progress.OPEN, f"{wallet} was in front, on a screen not recognised")
+        raise FlowFailure(PROCESSING, (
+            f"[{flow}] {wallet} was in front when the {timeout:.0f}s wait for '{what}' ran out, "
+            f"but showed {nothing} that this harness recognises.{used}{stale}{unmapped}{enrolled}"
+        ))
+
     raise FlowFailure(ABSENT, (
         f"[{flow}] Nothing appeared for '{what}' after {timeout:.0f}s: {nothing}. "
         f"{wallet} did not come to the foreground "
-        f"({_foreground(driver)} was).{used}{stale}{unmapped}{enrolled}"
+        f"({front} was).{used}{stale}{unmapped}{enrolled}"
     ))
+
+
+def _scheme_note(driver, ctx, wallet: str) -> str:
+    """One sentence on the URL's scheme, claiming registration only on the device's word."""
+    scheme = urlsplit(ctx.url).scheme.lower() if ctx.url else ""
+    if not scheme:
+        return ""
+    try:
+        schemes = deeplink.registered_schemes(driver, ctx.app_package) if ctx.app_package else []
+    except Exception:
+        schemes = []
+    if scheme in schemes:
+        return (f" The URL used the {scheme}:// scheme, which {wallet} does register, so it had "
+                "the chance to take it.")
+    return (f" The URL used the {scheme}:// scheme; whether {wallet} registers it could not be "
+            "read from the device.")
+
+
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _refusal_line(said: str) -> str:
+    """Android's own refusal, from a message that also carries Appium's wrapper around it.
+
+    The real shape is two lines — "Error attempting to start URI. Original error: Error: Starting:
+    Intent {…}" and then "Error: Activity not started, unable to resolve Intent {…}" — and only the
+    first line of a failure survives into summary.json and the app.log digest. So the line that
+    says what Android refused is picked out, rather than quoting the wrapper.
+    """
+    for line in said.splitlines():
+        if "unable to resolve intent" in line.lower():
+            return _one_line(line.split("Error: ", 1)[-1] if "Error: " in line else line)
+    return _one_line(said)
+
+
+def _refusal_reason(driver, ctx, wallet: str) -> str:
+    """Why Android refused, from the device's own list of schemes. Never raises."""
+    scheme = urlsplit(ctx.url).scheme.lower() if ctx.url else ""
+    try:
+        reason = deeplink.unroutable_reason(driver, ctx.app_package, ctx.url, wallet)
+    except Exception as e:  # a diagnosis must never replace the failure it explains
+        logger.warning(f"[{ctx.flow}] Could not read registered schemes: {e}")
+        reason = ""
+    if reason:
+        return reason
+    try:
+        schemes = deeplink.registered_schemes(driver, ctx.app_package)
+    except Exception:
+        schemes = []
+    if scheme and scheme in schemes:
+        # Registered, and still refused: the intent filter's host or path does not take this URL,
+        # or the app is disabled. "Had the chance to take it" would contradict the verdict.
+        return (f"{wallet} registers the {scheme}:// scheme, but none of its intent filters "
+                "accepts this URL (host or path), or the app is disabled")
+    if scheme:
+        return f"whether {wallet} registers the {scheme}:// scheme could not be read from the device"
+    return "the URL has no scheme"
+
+
+def raise_refused(driver, screens, ctx, exc, *, expected: str):
+    """Android would not fire the deeplink at all. Say what it said, and never that we waited.
+
+    Every flow fires with the wallet's package named, so Android either resolves an activity inside
+    that app or refuses outright with "unable to resolve Intent" — itself the device's evidence
+    that this URL cannot reach this wallet, so the case is `unroutable` on that alone. appium-adb's
+    `startUri` checks for exactly that phrase. These refusals used to go through
+    `raise_for(ABSENT)`, which described a 30-second wait that never happened.
+
+    One line, explanation first: only a failure's first line reaches summary.json and the digest,
+    and the report cuts its tooltip at 200 characters. Android's words are not double-quoted,
+    because the digest reads the first double-quoted span as what the *wallet* said.
+
+    Any other error here — adb offline, a timeout, a permission denial — is recorded as ours, not
+    as a verdict about the wallet.
+    """
+    said = (getattr(exc, "msg", None) or str(exc) or type(exc).__name__).strip()
+    wallet, flow, what = screens.name, ctx.flow, ctx.what
+    if "unable to resolve intent" not in said.lower():
+        raise FlowFailure(LOST_SESSION, (
+            f"[{flow}] Firing the deeplink for '{what}' failed without Android resolving it "
+            f"({_one_line(said)[:160]}). Recorded as a harness failure, not a verdict about "
+            f"{wallet} or the provider"
+        )) from exc
+
+    raise FlowFailure(UNROUTABLE, (
+        f"[{flow}] Could not deliver '{what}': {_refusal_reason(driver, ctx, wallet)}. Android "
+        f"refused to hand the {expected} link to {wallet}: {_refusal_line(said)} [no_retry]"
+    )) from exc
 
 
 def raise_if_rejected(driver, screens, ctx, *, action: str, error_before: bool = False,
