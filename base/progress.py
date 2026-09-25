@@ -32,7 +32,7 @@ from typing import List, Tuple
 logger = logging.getLogger(__name__)
 
 DELIVER = "deliver"    # the URL was handed to Android and it routed it to the wallet
-OPEN = "open"          # the wallet is in front, and acting on the link
+OPEN = "open"          # the wallet was seen in front, on a screen of its own, after the delivery
 PRESENT = "present"    # it showed the offer or the request
 MATCH = "match"        # it holds something that satisfies the request (verification only)
 ACCEPT = "accept"      # it took the credential, or handed the presentation over, without an error

@@ -123,7 +123,10 @@ def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool
 
     Reaching the target completes `completes` in the progress trail — the offer or request being
     shown, for every current caller — and each answered interstitial is recorded as a step, so a
-    failure later in the flow still says which prompts it got past.
+    failure later in the flow still says which prompts it got past. Any other screen of the
+    wallet's own (its error, its spinner, its home) completes `open`: it proves the wallet was in
+    front, and nothing more. A wait that saw none of those records nothing — answered prompts
+    included, since a permission dialog or the system's biometric sheet is not the wallet's.
 
     `error_before` says whether the wallet's error surface was already showing when the deeplink was
     fired; one that was already there says nothing about this case. Only wallets whose error surface
@@ -161,11 +164,17 @@ def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool
                 return SUCCESS
 
             if error_probe and not error_before and error_probe(driver, _TICK):
+                # The error is the wallet's own screen, so it was in front: `open` completed, and
+                # the cell stops at the offer or request it showed instead. Without this a wallet
+                # that answered the link with an error was drawn as never having come forward.
+                progress.reached(progress.OPEN, f"{screens.name} was in front, showing its error")
                 return REJECTED
 
             if processing_probe and processing_probe(driver, _TICK):
                 # A visible spinner is the wallet saying it is still working. Waiting is progress,
                 # up to the wallet's own budget — authbound's issuance genuinely takes minutes.
+                if not saw_processing:
+                    progress.reached(progress.OPEN, f"{screens.name} was in front, processing")
                 saw_processing = True
                 if extended < screens.processing_grace:
                     grant = min(_TICK, screens.processing_grace - extended)
@@ -176,6 +185,8 @@ def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool
             # Home only counts once the grace period has passed, so a momentary home screen during
             # processing is not mistaken for a finished flow.
             if time.time() - start > screens.home_grace and screens.home(driver, _TICK):
+                # Its own home screen, after the grace: in front, and offering nothing.
+                progress.reached(progress.OPEN, f"{screens.name} was in front, on its home screen")
                 return DISMISSED
 
             if time.time() - last_crash_scan > _CRASH_SCAN_INTERVAL:

@@ -151,7 +151,58 @@ def test_the_awaited_screen_completes_present_and_answered_prompts_are_steps():
 
 
 def test_a_wait_that_never_sees_its_screen_completes_nothing():
+    """`absent`: nothing of the wallet's appeared, so it cannot be said to have come forward."""
     outcome.wait_for(FiringDriver(), _screens(), _ctx(), target=lambda d, t: False, timeout=0.5)
+    assert progress.snapshot()["stage"] == ""
+
+
+@pytest.mark.parametrize("seen, expected", [
+    ({"error": lambda d, t: True}, outcome.REJECTED),
+    ({"home": lambda d, t: True}, outcome.DISMISSED),
+], ids=["its error", "its home screen"])
+def test_the_wallets_own_screen_proves_it_came_forward(seen, expected):
+    """hovi's early rejections and unime's dismissals were drawn at "Wallet opens" — as if the app
+    never came forward — while it was in front showing its own screen."""
+    state = outcome.wait_for(FiringDriver(), _screens(**seen), _ctx(),
+                             target=lambda d, t: False, timeout=1)
+    assert state == expected
+    assert progress.snapshot()["stage"] == progress.OPEN
+    assert report.stopped_after(progress.OPEN, "issuance") == "present", \
+        "so the cell stops at the offer it never showed"
+
+
+def test_a_spinner_proves_it_came_forward_once_not_every_tick():
+    outcome.wait_for(FiringDriver(), _screens(processing=lambda d, t: True), _ctx(),
+                     target=lambda d, t: False, timeout=0.6)
+    opened = [s for s in progress.snapshot()["steps"] if s.startswith("open:")]
+    assert opened == ["open: testwallet was in front, processing"]
+
+
+def test_answered_prompts_and_a_prompt_loop_do_not_prove_the_wallet_came_forward():
+    """A permission dialog or the system biometric sheet is Android's, not the wallet's."""
+    loop = Interstitial("device-pin", lambda driver, ctx: True, max_fires=1)
+    state = outcome.wait_for(FiringDriver(), _screens(), _ctx(), target=lambda d, t: False,
+                             timeout=0.5, interstitials=(loop,))
+    assert state == outcome.PROMPT_LOOP
+    snap = progress.snapshot()
+    assert snap["stage"] == ""
+    assert snap["steps"] == ["start: answered device-pin (1)"]
+
+
+def test_a_crash_does_not_prove_the_wallet_came_forward(monkeypatch):
+    monkeypatch.setattr(outcome, "_CRASH_SCAN_INTERVAL", 0.0)
+    monkeypatch.setattr(outcome, "detect_crash_or_anr", lambda driver, timeout=0.3: object())
+    state = outcome.wait_for(FiringDriver(), _screens(), _ctx(), target=lambda d, t: False,
+                             timeout=1)
+    assert state == outcome.CRASHED
+    assert progress.snapshot()["stage"] == ""
+
+
+def test_a_stale_error_proves_nothing_about_this_case():
+    """hovi's banner can outlive the case that raised it; `error_before` makes the loop ignore it,
+    and the trail must ignore it too."""
+    outcome.wait_for(FiringDriver(), _screens(error=lambda d, t: True), _ctx(),
+                     target=lambda d, t: False, timeout=0.5, error_before=True)
     assert progress.snapshot()["stage"] == ""
 
 
