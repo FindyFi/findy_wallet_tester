@@ -255,6 +255,11 @@ describe the interop matrix, not any one wallet, so they are defined once:
 Each entry becomes a test case named `<name>_issuer` / `<name>_verifier` — the names the compact
 report charts as matrix rows, so renaming one breaks continuity with previously published runs.
 
+An entry may also carry a `"group"`, naming where the provider comes from (`"Pension demo"`,
+`"FIDES Community"`). The compact report gives each group its own section, with *Issuers* and
+*Verifiers* under it, in the order the groups first appear here, and its run history gets a column
+per group. If no entry has a group, the report is split by *Issuers* and *Verifiers* alone.
+
 A wallet that declares its own `test_cases` block opts out of the registry entirely. That is how
 `wallets/example/` stays a self-contained illustration; no real wallet does it.
 
@@ -308,12 +313,14 @@ not Python.
 | `method` | `POST` (default) or `GET`. |
 | `body` | JSON request body. Omitted for a `GET`. |
 | `headers` | Extra request headers. |
-| `response_field` | JSON field holding the deeplink, default `uri`. |
+| `response_field` | Top-level JSON field that must hold the deeplink. If it doesn't, the call fails `[no_retry]` rather than falling back to another link in the response. Leave it out to let the scan find the deeplink: a bare URL, a `uri` field, or the first deeplink anywhere in the JSON. |
 
 The response is read with the same scan the web provider uses, so an API that answers with a bare
 URL and one that answers with JSON both work without config saying which. A 4xx is raised as
 `[no_retry]`: the provider is rejecting the configured request, and its body says why, so retrying
-an unchanged request twice more only buries that message.
+an unchanged request twice more only buries that message. The exceptions are 408 and 429, a
+timeout or a rate limit, which stay retryable because that is exactly the transient failure a
+rerun is for.
 
 **A registry entry is not evidence.** That an API mints a well-formed offer says nothing about
 whether a wallet completes the flow — EUDIPLO's PID offer resolves perfectly and then dies at the

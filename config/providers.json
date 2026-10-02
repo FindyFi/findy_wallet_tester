@@ -3,6 +3,7 @@
         "authbound": {
             "type": "authbound",
             "base_url": "https://authbound.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
@@ -12,6 +13,7 @@
         },
         "hovi": {
             "base_url": "https://issuer.hovi.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
@@ -21,6 +23,7 @@
         },
         "procivis": {
             "base_url": "https://issuer.procivis.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
@@ -30,6 +33,7 @@
         },
         "waltid": {
             "base_url": "https://issuer.waltid.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
@@ -39,6 +43,7 @@
         },
         "paradym": {
             "base_url": "https://issuer.paradym.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
@@ -48,6 +53,7 @@
         },
         "sphereon": {
             "base_url": "https://issuer.sphereon.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
@@ -58,6 +64,7 @@
         "eudiplo_loyalty": {
             "type": "api",
             "base_url": "https://playground.eudi-wallet.org",
+            "group": "FIDES Community",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
@@ -70,6 +77,7 @@
         },
         "talao_pid": {
             "base_url": "https://talao.co",
+            "group": "FIDES Community",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
@@ -79,10 +87,48 @@
         },
         "talao_lpid": {
             "base_url": "https://talao.co",
+            "group": "FIDES Community",
             "credentials": {
                 "credential_issuance": {
                     "type": "issuance",
                     "path": "sandbox/issuer/test_17"
+                }
+            }
+        },
+        "verana": {
+            "type": "api",
+            "base_url": "https://playground.testnet.verana.network",
+            "group": "FIDES Community",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "method": "GET",
+                    "path": "/api/demo/civil-registry?format=openid4vc-sdjwt&credential=verandia-citizen-id&signer=x5c",
+                    "response_field": "url"
+                }
+            }
+        },
+        "eudiplo_honorary": {
+            "type": "api",
+            "base_url": "https://playground.eudi-wallet.org",
+            "group": "FIDES Community",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/api/issue",
+                    "body": {
+                        "credentialId": "honorary-engagement-card"
+                    }
+                }
+            }
+        },
+        "talao_pid_ref": {
+            "base_url": "https://talao.co",
+            "group": "FIDES Community",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "sandbox/issuer/test_12"
                 }
             }
         }
@@ -91,6 +137,7 @@
         "authbound": {
             "type": "authbound",
             "base_url": "https://authbound.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "pension_verification": {
                     "type": "verification"
@@ -99,6 +146,7 @@
         },
         "hovi": {
             "base_url": "https://verifier.hovi.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "pension_verification": {
                     "type": "verification",
@@ -108,6 +156,7 @@
         },
         "procivis": {
             "base_url": "https://verifier.procivis.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "pension_verification": {
                     "type": "verification",
@@ -117,6 +166,7 @@
         },
         "waltid": {
             "base_url": "https://verifier.waltid.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "pension_verification": {
                     "type": "verification",
@@ -126,6 +176,7 @@
         },
         "paradym": {
             "base_url": "https://verifier.paradym.pensiondemo.findy.fi",
+            "group": "Pension demo",
             "credentials": {
                 "pension_verification": {
                     "type": "verification",
@@ -136,6 +187,7 @@
         "eudiplo_loyalty": {
             "type": "api",
             "base_url": "https://playground.eudi-wallet.org",
+            "group": "FIDES Community",
             "credentials": {
                 "loyalty_verification": {
                     "type": "verification",
@@ -143,6 +195,92 @@
                     "body": {
                         "useCase": "sports-shop"
                     }
+                }
+            }
+        },
+        "eudi_reference": {
+            "type": "api",
+            "base_url": "https://verifier-backend.eudiw.dev",
+            "group": "FIDES Community",
+            "credentials": {
+                "pid_verification": {
+                    "type": "verification",
+                    "path": "/ui/presentations/v2",
+                    "body": {
+                        "dcql_query": {
+                            "credentials": [
+                                {
+                                    "id": "pid",
+                                    "format": "dc+sd-jwt",
+                                    "meta": {
+                                        "vct_values": [
+                                            "eu.europa.ec.eudi.pid.1"
+                                        ]
+                                    },
+                                    "claims": [
+                                        {
+                                            "path": [
+                                                "given_name"
+                                            ]
+                                        },
+                                        {
+                                            "path": [
+                                                "family_name"
+                                            ]
+                                        },
+                                        {
+                                            "path": [
+                                                "birth_date"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "nonce": "findy-wallet-tester",
+                        "request_uri_method": "get",
+                        "intended_use_id": "TEST-01",
+                        "authorization_request_scheme": "openid4vp"
+                    },
+                    "response_field": "authorization_request_uri"
+                }
+            }
+        },
+        "verana": {
+            "type": "api",
+            "base_url": "https://playground.testnet.verana.network",
+            "group": "FIDES Community",
+            "credentials": {
+                "citizen_id_verification": {
+                    "type": "verification",
+                    "method": "GET",
+                    "path": "/api/demo/meridian-bank?format=openid4vc-sdjwt&credential=verandia-citizen-id",
+                    "response_field": "url"
+                }
+            }
+        },
+        "multipaz": {
+            "type": "api",
+            "base_url": "https://verifier.multipaz.org",
+            "group": "FIDES Community",
+            "credentials": {
+                "pid_verification": {
+                    "type": "verification",
+                    "path": "/verifier/openid4vpBegin",
+                    "body": {
+                        "format": "vc",
+                        "docType": "",
+                        "requestId": "",
+                        "protocol": "uri_scheme_openid4vp_29",
+                        "origin": "https://verifier.multipaz.org",
+                        "host": "verifier.multipaz.org",
+                        "scheme": "openid4vp",
+                        "rawDcql": "{\"credentials\": [{\"id\": \"pid\", \"format\": \"dc+sd-jwt\", \"meta\": {\"vct_values\": [\"eu.europa.ec.eudi.pid.1\"]}, \"claims\": [{\"path\": [\"given_name\"]}, {\"path\": [\"family_name\"]}, {\"path\": [\"birth_date\"]}]}]}",
+                        "multiDocumentRequestId": "",
+                        "signRequest": true,
+                        "encryptResponse": true
+                    },
+                    "response_field": "uri"
                 }
             }
         }
