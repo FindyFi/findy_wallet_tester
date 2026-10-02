@@ -38,7 +38,7 @@ def _scan_raw_url(text: str) -> Optional[str]:
     HTML page containing a deeplink.
 
     A body that is a bare openid-credential-offer:// URL needs no branch here — `_scan_source`
-    already matches it, and adding one would only change which reason gets logged for the six
+    already matches it, and adding one would only change which reason gets logged for the
     pension-demo issuers that answer that way.
     """
     stripped = text.strip()
@@ -71,10 +71,26 @@ def _scan_json_uri(text: str, field: str = "uri") -> Optional[str]:
     return None
 
 
+# A complete character reference: named (&amp;), decimal (&#38;) or hex (&#x26;), semicolon included.
+_ENTITY = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);")
+
+
+def _unescape_entities(text: str) -> str:
+    """Decode complete HTML character references, and nothing else.
+
+    Not `html.unescape`: that also expands the legacy references that need no semicolon, so a
+    raw `&registration=` in a URL came out as `®istration=` and `&notify=` as `¬ify=`.
+    `registration` is a real OID4VP parameter, and a browser reading the same attribute leaves
+    both alone. Requiring the semicolon decodes what a page actually encoded (`&amp;`) and leaves
+    a bare `&` as the separator it is.
+    """
+    return _ENTITY.sub(lambda m: _html.unescape(m.group(0)), text)
+
+
 def _scan_source(html: str) -> Optional[str]:
     match = _OFFER_PATTERN.search(html)
     if match:
-        return _html.unescape(match.group(0).rstrip('"\';>'))
+        return _unescape_entities(match.group(0).rstrip('"\';>'))
     return None
 
 
@@ -89,7 +105,43 @@ def _scan_href(html: str) -> Optional[str]:
     """
     match = _HREF_INVITATION_PATTERN.search(html)
     if match:
-        return _html.unescape(match.group(1))
+        return _unescape_entities(match.group(1))
+    return None
+
+
+def _as_json(text: str):
+    """The body parsed as JSON when it is a JSON object or array, else None."""
+    stripped = text.strip()
+    if not (stripped.startswith("{") or stripped.startswith("[")):
+        return None
+    try:
+        return _json.loads(stripped)
+    except ValueError:
+        return None
+
+
+def _scan_json_values(data) -> Optional[str]:
+    """The first deeplink among a parsed JSON body's string values, depth-first in document order.
+
+    For JSON that names its deeplink with a key other than the one configured. paradym answers
+    `{"offerUri": "https://paradym.id/…", "offerDeeplinkUri": "openid-credential-offer://…", …}`,
+    and only the second is something a wallet can open; the https envelopes beside it are not.
+
+    Searching the decoded values rather than the raw body is the point. In the raw text a sibling
+    URL is still JSON-escaped (`\\u0026` for `&`, `\\/` for `/`), and a scan of it handed wallets a
+    malformed request, so a config mistake showed up as a wallet failure.
+    """
+    stack = [data]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, str):
+            match = _OFFER_PATTERN.search(value)
+            if match:
+                return match.group(0)
+        elif isinstance(value, dict):
+            stack.extend(reversed(list(value.values())))
+        elif isinstance(value, list):
+            stack.extend(reversed(value))
     return None
 
 
@@ -103,10 +155,24 @@ def extract_deeplink(text: str, json_field: str = "uri") -> Optional[Tuple[str, 
 
     QR decoding is deliberately not here: it needs the HTTP session and the page URL to resolve
     <img> sources against, so it stays on the class that has both.
+
+    A JSON body is read as JSON only: first the named field, then any deeplink among its decoded
+    values. It never falls through to the page-source and href scans, which would read its text
+    still JSON-escaped (see `_scan_json_values`).
     """
+    url = _scan_raw_url(text)
+    if url:
+        return url, "Response body is a direct deeplink URL"
+
+    data = _as_json(text)
+    if data is not None:
+        url = _scan_json_uri(text, json_field)
+        if url:
+            return url, f"Found deeplink in JSON '{json_field}' field"
+        url = _scan_json_values(data)
+        return (url, "Found deeplink among the JSON values") if url else None
+
     for how, url in (
-        ("Response body is a direct deeplink URL", _scan_raw_url(text)),
-        (f"Found deeplink in JSON '{json_field}' field", _scan_json_uri(text, json_field)),
         ("Found deeplink in page source", _scan_source(text)),
         ("Found deeplink in href attribute", _scan_href(text)),
     ):
