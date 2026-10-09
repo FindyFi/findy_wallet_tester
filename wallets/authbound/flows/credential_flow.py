@@ -30,6 +30,20 @@ from wallets.authbound.screens import SCREENS
 logger = logging.getLogger(__name__)
 
 
+def _authenticated_since(tap: str) -> bool:
+    """Whether the trail recorded an authentication prompt answered after the step `tap` — by this
+    flow or by `wait_for_outcome`. Messages used to say "after authentication" unconditionally; on
+    2026-09-25 authbound rejected every offer ~16 s after Add with no prompt at all.
+
+    What the trail does not record, this does not claim: the negative wording is "no authentication
+    recorded", not "none happened".
+    """
+    return any(step.startswith("answered ") for step in progress.steps_after(tap))
+
+
+# The step recorded when Add is tapped; authentication is only claimed if answered after it.
+_TAPPED_STEP = "tapped Add"
+
 _ENROLLMENT_REQUIRED = (
     "[credential_flow] Cannot complete issuance of '{what}': Android opened its fingerprint "
     "enrollment wizard, which means no biometric is enrolled on this device (check with "
@@ -136,7 +150,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         logger.info("[credential_flow] Credential offer screen — accepting")
         progress.reached(progress.PRESENT, "authbound showed the credential offer")
         CredentialOfferPage(driver, **page_args).accept()
-        progress.step("tapped Add")
+        progress.step(_TAPPED_STEP)
 
         # "Add" delegates to Android for authentication. This arrives in one of two shapes —
         # the SystemUI biometric sheet (with a "Use PIN" fallback) or Settings'
@@ -159,6 +173,8 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
             if not in_biometric_enrollment(driver):
                 raise
             saw_enrollment = True
+            progress.step("answered device authentication with the PIN; Android then offered "
+                          "fingerprint enrollment")
             logger.warning(
                 "[credential_flow] PIN accepted, then Android offered fingerprint enrollment"
             )
@@ -175,9 +191,11 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
         if result_after == "error":
             error_text = ErrorPage(driver, **page_args).get_error_text()
+            how = ("after Add and device authentication" if _authenticated_since(_TAPPED_STEP)
+                   else "after Add, with no authentication recorded after it")
             raise FlowFailure(outcome.REJECTED, (
-                f"[credential_flow] Credential issuance failed for '{credential_name}' after "
-                f"authentication{quoted(error_text)}"
+                f"[credential_flow] Credential issuance failed for '{credential_name}' {how}"
+                f"{quoted(error_text)}"
             ))
 
         if result_after == "prompt_loop":
@@ -198,9 +216,11 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
                 raise FlowFailure(outcome.HARNESS, _ENROLLMENT_REQUIRED.format(what=credential_name))
             # `processing`, not `rejected`: the prose reading of this sentence filed it as a
             # rejection because it contains the words "error screen".
+            how = ("accepted and authenticated" if _authenticated_since(_TAPPED_STEP)
+                   else "accepted, with no authentication recorded after Add,")
             raise FlowFailure(outcome.PROCESSING, (
-                f"[credential_flow] '{credential_name}' was accepted and authenticated, but "
-                f"neither the success nor the error screen appeared within {t}s"
+                f"[credential_flow] '{credential_name}' was {how} but neither the success nor the "
+                f"error screen appeared within {t}s"
             ))
 
         progress.reached(progress.ACCEPT, "authbound showed its success screen")

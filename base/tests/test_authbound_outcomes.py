@@ -352,3 +352,126 @@ def test_authbounds_flows_raise_no_bare_runtime_errors():
     root = Path(__file__).parents[2] / "wallets" / "authbound" / "flows"
     for name in ("credential_flow.py", "verification_flow.py"):
         assert "raise RuntimeError(" not in (root / name).read_text(), name
+
+
+# --- what the message claims about authentication ---------------------------------------------
+#
+# On 2026-09-25 authbound rejected every offer ~16 s after Add with no authentication prompt at
+# all, and the message said "after authentication". It now says what the trail recorded.
+
+def _no_prompt(monkeypatch, module):
+    monkeypatch.setattr(module, "authenticate_with_pin", lambda *a, **k: False)
+    monkeypatch.setattr(module, "handle_biometric_if_present", lambda *a, **k: False)
+
+
+def test_a_rejection_with_no_prompt_does_not_claim_authentication(monkeypatch):
+    _no_prompt(monkeypatch, cf)
+    exc, _ = _raised(_issue, monkeypatch, "offer", "error")
+    assert "after Add, with no authentication recorded after it" in str(exc)
+    assert "after Add and device authentication" not in str(exc)
+
+
+def test_a_rejection_after_an_answered_prompt_says_so(monkeypatch):
+    exc, _ = _raised(_issue, monkeypatch, "offer", "error")
+    assert "after Add and device authentication" in str(exc)
+
+
+def test_a_prompt_answered_inside_the_outcome_wait_counts(monkeypatch):
+    """`wait_for_outcome` answers repeat prompts and records them; that is authentication too."""
+    _no_prompt(monkeypatch, cf)
+
+    def answers_then_errors(*a, **k):
+        progress.step("answered device authentication (1)")
+        return "error"
+
+    monkeypatch.setattr(cf, "_wait_for_result", lambda *a, **k: "offer")
+    monkeypatch.setattr(cf, "wait_for_outcome", answers_then_errors)
+    with pytest.raises(outcome.FlowFailure) as exc:
+        cf.run(Driver(), provider=SimpleNamespace(get=lambda n: URL),
+               credential_name="credential_issuance", app_package="io.authbound.wallet",
+               **PAGE_ARGS)
+    assert "after Add and device authentication" in str(exc.value)
+
+
+def test_a_prompt_answered_before_add_is_not_authentication_after_it(monkeypatch):
+    _no_prompt(monkeypatch, cf)
+
+    def unlocked_then_offer(*a, **k):
+        progress.step("answered the biometric prompt")   # the app's own unlock, before the offer
+        return "offer"
+
+    monkeypatch.setattr(cf, "_wait_for_result", unlocked_then_offer)
+    monkeypatch.setattr(cf, "wait_for_outcome", lambda *a, **k: "error")
+    with pytest.raises(outcome.FlowFailure) as exc:
+        cf.run(Driver(), provider=SimpleNamespace(get=lambda n: URL),
+               credential_name="credential_issuance", app_package="io.authbound.wallet",
+               **PAGE_ARGS)
+    assert "no authentication recorded after it" in str(exc.value)
+
+
+@pytest.mark.parametrize("prompt, says", [
+    (True, "was accepted and authenticated but"),
+    (False, "was accepted, with no authentication recorded after Add, but"),
+])
+def test_an_issuance_timeout_says_whether_it_authenticated(monkeypatch, prompt, says):
+    if not prompt:
+        _no_prompt(monkeypatch, cf)
+    exc, _ = _raised(_issue, monkeypatch, "offer", "timeout")
+    assert says in str(exc)
+
+
+@pytest.mark.parametrize("prompt, says", [
+    (True, "was shared and authenticated but"),
+    (False, "was shared, with no authentication recorded after Share, but"),
+])
+def test_a_verification_timeout_says_whether_it_authenticated(monkeypatch, prompt, says):
+    if not prompt:
+        _no_prompt(monkeypatch, vf)
+    exc, _ = _raised(_verify, monkeypatch, "request", "timeout")
+    assert says in str(exc)
+
+
+def test_a_prompt_answered_before_share_is_not_authentication_after_it(monkeypatch):
+    """`_wait_for_request` answers the app's biometric prompt *before* the request screen."""
+    _no_prompt(monkeypatch, vf)
+
+    def unlocked_then_request(*a, **k):
+        progress.step("answered the biometric prompt")
+        return "request"
+
+    monkeypatch.setattr(vf, "_wait_for_request", unlocked_then_request)
+    monkeypatch.setattr(vf, "wait_for_outcome", lambda *a, **k: "timeout")
+    with pytest.raises(outcome.FlowFailure) as exc:
+        vf.run(Driver(), provider=SimpleNamespace(get=lambda n: URL),
+               credential_name="pension_verification", app_package="io.authbound.wallet",
+               **PAGE_ARGS)
+    assert "no authentication recorded after Share" in str(exc.value)
+
+
+def test_a_pin_typed_before_the_enrollment_wizard_counts_as_authentication(monkeypatch):
+    """Android accepts the PIN and *then* pushes its enrollment offer, failing the auth call. The
+    PIN was answered; saying "no authentication" there would be false."""
+    def typed_then_wizard(*a, **k):
+        raise RuntimeError("PIN was accepted but the system auth UI did not close")
+
+    monkeypatch.setattr(cf, "authenticate_with_pin", typed_then_wizard)
+    monkeypatch.setattr(cf, "in_biometric_enrollment", lambda *a, **k: True)
+    exc, _ = _raised(_issue, monkeypatch, "offer", "error")
+    assert "after Add and device authentication" in str(exc)
+
+
+def test_only_a_step_that_starts_with_answered_counts(monkeypatch):
+    """A later step that merely mentions the word must not turn into a claim of authentication."""
+    _no_prompt(monkeypatch, cf)
+
+    def mentions_it(*a, **k):
+        progress.step("wallet error: the request was not answered in time")
+        return "error"
+
+    monkeypatch.setattr(cf, "_wait_for_result", lambda *a, **k: "offer")
+    monkeypatch.setattr(cf, "wait_for_outcome", mentions_it)
+    with pytest.raises(outcome.FlowFailure) as exc:
+        cf.run(Driver(), provider=SimpleNamespace(get=lambda n: URL),
+               credential_name="credential_issuance", app_package="io.authbound.wallet",
+               **PAGE_ARGS)
+    assert "no authentication recorded after it" in str(exc.value)

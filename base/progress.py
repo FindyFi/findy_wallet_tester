@@ -76,6 +76,19 @@ def step(text: str) -> None:
         pass
 
 
+def steps_after(text: str) -> List[str]:
+    """The step texts recorded after the last step whose own text is `text`, whatever its stage.
+
+    For claims that depend on order — authbound only says it authenticated if a prompt was
+    answered *after* Add. Empty when `text` was never recorded.
+    """
+    try:
+        at = [i for i, (_, t) in enumerate(_trail) if t == text]
+        return [t for _, t in _trail[at[-1] + 1:]] if at else []
+    except Exception:
+        return []
+
+
 def snapshot() -> dict:
     """The furthest stage completed and every step, in order. Empty when nothing was recorded."""
     try:

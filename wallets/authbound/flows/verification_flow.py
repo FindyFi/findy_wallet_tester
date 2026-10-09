@@ -30,11 +30,26 @@ from wallets.authbound.screens import SCREENS
 
 logger = logging.getLogger(__name__)
 
+
+def _authenticated_since(tap: str) -> bool:
+    """Whether the trail recorded an authentication prompt answered after the step `tap` — by this
+    flow or by `wait_for_outcome`. Messages used to say "after authentication" unconditionally; on
+    2026-09-25 authbound rejected every offer ~16 s after Add with no prompt at all.
+
+    What the trail does not record, this does not claim: the negative wording is "no authentication
+    recorded", not "none happened".
+    """
+    return any(step.startswith("answered ") for step in progress.steps_after(tap))
+
+
 # The openid4vp:// scheme is registered by many wallets on the device, so firing a
 # verifier deeplink can raise Android's app-chooser (ResolverActivity). Select Authbound
 # (and "Just once") to route the request into this wallet.
 _CHOOSER_ITEM = (AppiumBy.XPATH, '//*[@text="Authbound Wallet"]')
 _CHOOSER_ONCE = (AppiumBy.XPATH, '//*[@text="Just once"]')
+
+# The step recorded when Share is tapped; authentication is only claimed if answered after it.
+_TAPPED_STEP = "tapped Share"
 
 _ENROLLMENT_REQUIRED = (
     "[verification_flow] Cannot complete sharing for '{what}': Android opened its fingerprint "
@@ -189,7 +204,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         # not evidence either way: recorded without claiming the stage.
         progress.step("authbound's document list could not be counted")
     request_page.share()
-    progress.step("tapped Share")
+    progress.step(_TAPPED_STEP)
 
     # Sharing requires device authentication, same as accepting an offer: either the SystemUI
     # biometric sheet or Settings' ConfirmLockPassword, both taking the **device** PIN.
@@ -241,9 +256,11 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     if result_after != "success":
         # `processing`, not `rejected`: the prose reading of this sentence filed it as a rejection
         # because it contains the words "error screen".
+        how = ("shared and authenticated" if _authenticated_since(_TAPPED_STEP)
+               else "shared, with no authentication recorded after Share,")
         raise FlowFailure(outcome.PROCESSING, (
-            f"[verification_flow] '{credential_name}' was shared and authenticated, but neither "
-            f"the success nor the error screen appeared within {t}s"
+            f"[verification_flow] '{credential_name}' was {how} but neither the success nor the "
+            f"error screen appeared within {t}s"
         ))
 
     progress.reached(progress.ACCEPT, "authbound showed its success screen")
