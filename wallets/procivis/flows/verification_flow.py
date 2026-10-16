@@ -32,42 +32,40 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         **page_args:     Passed through to page objects (timeouts, debug, etc.)
     """
     url = provider.get(credential_name)
+    # From the background, as a tapped link arrives: see flows/_background.py for why, and for how
+    # much of that is known. Imported with its one call so the two stay together.
+    from wallets.procivis.flows._background import background
+    background(driver, app_package, "verification_flow")
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
-    driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
+    ctx = FlowContext(
+        flow="verification_flow", wallet=SCREENS.name, what=credential_name,
+        app_package=app_package, url=url, pin=pin,
+        device_pin=page_args.get("device_pin", ""), page_args=page_args,
+    )
+    t = ctx.timeout("credential_offer")
+    try:
+        deeplink.fire(driver, ctx.url, app_package)
+    except WebDriverException as exc:
+        # This used to escape as a bare driver exception. The shared diagnosis names it.
+        logger.info(f"[verification_flow] Android would not route the deeplink: {exc.msg}")
+        outcome.raise_refused(driver, SCREENS, ctx, exc, expected="proof request")
 
-    if biometric_on_screen(driver):
-        if not pin:
-            raise RuntimeError(
-                "App showed biometric prompt after deeplink — pass pin= to verification_flow.run()"
-            )
-        logger.info("[verification_flow] Biometric prompt — falling back to PIN")
-        PinPage(driver, **page_args).dismiss_biometric_prompt()
+    failures.unlock(driver, ctx)
 
-    if pin_screen.on_screen(driver):
-        if not pin:
-            raise RuntimeError(
-                "App showed PIN screen after deeplink — pass pin= to verification_flow.run()"
-            )
-        logger.info("[verification_flow] PIN screen appeared — unlocking")
-        PinPage(driver, **page_args).enter_login_pin(pin)
+    try:
+        shown = sharing_on_screen(driver, timeout=t)
+    except WebDriverException as exc:
+        raise failures.lost(ctx, "mid-wait for the proof request", exc) from exc
+    if not shown:
+        _no_request(driver, ctx, t)
 
-    if not sharing_on_screen(driver, timeout=15):
-        try:
-            elements = driver.find_elements(AppiumBy.XPATH, '//*[@text!=""]')
-            visible = [el.get_attribute("text") for el in elements if el.get_attribute("text")]
-        except Exception:
-            visible = []
-        screen_info = f" — visible text: {visible}" if visible else ""
-        raise RuntimeError(
-            f"[verification_flow] ProofRequestSharingScreen did not appear after deeplink "
-            f"for '{credential_name}'{screen_info}"
-        )
-
+    # Not `match`: procivis has no mapped no-match surface, so the sharing screen alone does not
+    # prove it holds anything that satisfies the request.
+    progress.reached(progress.PRESENT, "procivis showed the proof request")
     logger.info("[verification_flow] Sharing screen — sharing credentials")
     ProofRequestSharingPage(driver, **page_args).share()
+    progress.step("tapped Share")
 
-    if wait_present(driver, _process_id, timeout=5):
-        logger.info("[verification_flow] Accept process screen — waiting for completion")
-        ProofRequestAcceptProcessPage(driver, **page_args).wait_for_result()
+    _after_share(driver, ctx)
 
     logger.info(f"[verification_flow] Credential '{credential_name}' shared successfully")

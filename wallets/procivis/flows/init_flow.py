@@ -5,7 +5,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from base.utils import wait_present
+from wallets.procivis.pages.credential_accept_process_page import SCREEN_ID as _process_screen
 from wallets.procivis.pages.home_page import SCREEN_ID as _home_heading
+from wallets.procivis.pages.invitation_error_details_page import CLOSE_ID as _details_close
 from wallets.procivis.pages.landing_page import LandingPage, SCREEN_ID as _landing_id
 from wallets.procivis.pages.user_agreement_page import UserAgreementPage, SCREEN_ID as _agreement_id
 from wallets.procivis.pages.security_page import SecurityPage, SCREEN_ID as _security_id
@@ -16,16 +18,45 @@ logger = logging.getLogger(__name__)
 
 # Bottom Close button on InvitationProcessScreen — dismisses the entire screen back to home
 _invitation_close = (AppiumBy.XPATH, '//*[@content-desc="Close" and @clickable="true"]')
+# The header close on either process screen (content-desc "close", lowercase, so the locator above
+# never matched it). CredentialAcceptProcessScreen has no bottom Close at all — waltid's issuance
+# failure — so without this its teardown fell through to Back presses.
+_header_close = (AppiumBy.XPATH, '//*[contains(@resource-id, "ProcessScreen.header.close")]')
+
+
+def _close_error_details(driver) -> bool:
+    """Close InvitationErrorDetailsScreen if it is up. Returns True if its close icon was tapped.
+
+    The details screen behind a failure's "?". The flows leave it open on purpose, so the failure
+    screenshot shows procivis's Code/Message/Cause; this closes it first, back to the failure
+    screen, whose Close then returns home — the path this teardown already took for a failure
+    screen. Without it the back presses below get there too, one slower round later.
+    """
+    try:
+        driver.find_element(*_details_close).click()
+    except Exception:
+        return False
+    logger.info("[init_flow] Closed InvitationErrorDetailsScreen")
+    # The failure screen comes back underneath; give it a moment to be findable.
+    wait_present(driver, _process_screen, timeout=2)
+    return True
 
 
 def _close_invitation_screen(driver) -> bool:
-    """Tap the Close button on InvitationProcessScreen if present. Returns True if tapped."""
-    try:
-        driver.find_element(*_invitation_close).click()
-        logger.info("[init_flow] Closed InvitationProcessScreen")
+    """Close a process screen if one is up. Returns True if a close control was tapped.
+
+    InvitationProcessScreen's bottom Close first — the path teardown has always taken — then the
+    header close, which is all CredentialAcceptProcessScreen offers.
+    """
+    for locator, closed in ((_invitation_close, "InvitationProcessScreen"),
+                            (_header_close, "the process screen from its header")):
+        try:
+            driver.find_element(*locator).click()
+        except Exception:
+            continue
+        logger.info(f"[init_flow] Closed {closed}")
         return True
-    except Exception:
-        return False
+    return False
 
 
 def _detect_state(driver) -> str:
@@ -41,6 +72,7 @@ def _detect_state(driver) -> str:
 
 def _back_to_known_state(driver, package: str) -> str:
     """Press back up to 8 times trying to reach a known state."""
+    _close_error_details(driver)
     _close_invitation_screen(driver)
 
     for _ in range(8):

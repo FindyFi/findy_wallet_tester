@@ -18,8 +18,8 @@ SCREENS = Screens(
     home=_home_on_screen,
 
     # The failure animation on either process screen, plus the label beside it. `message` is
-    # read-only; the richer Code/Message/Cause is collected by `wait_for_result` at failure time,
-    # where tapping the "?" is safe.
+    # read-only; the richer Code/Message/Cause is collected by `flows/_failures.rejected` at
+    # failure time, where tapping the "?" is safe.
     error=_process.present,
     error_text=_process.message,
 
