@@ -57,18 +57,30 @@ def _scan_json_uri(text: str, field: str = "uri") -> Optional[str]:
     `field` names which key carries the deeplink, so a provider whose response spells it
     differently (or offers several, like EUDIPLO's same-device vs cross-device URIs) can say
     so in config instead of needing its own provider class.
+
+    A dotted `field` walks into nested objects. iGrant's verifier answers
+    `{"by_value": {"uri": …}, "by_reference": {"uri": …}}`, and only `by_reference.uri` is a
+    request a wallet should accept: the by-value link carries an unsigned request under an
+    `x509_hash` client id.
     """
+    uri = _json_field(text, field)
+    if isinstance(uri, str) and any(uri.startswith(s) for s in _OFFER_SCHEMES):
+        return uri
+    return None
+
+
+def _json_field(text: str, field: str):
+    """The value at a dotted `field` of a JSON object body, or None if there is none."""
     stripped = text.strip()
-    if not (stripped.startswith("{") or stripped.startswith("[")):
+    if not stripped.startswith("{"):
         return None
     try:
-        data = _json.loads(stripped)
-        uri = data.get(field, "") if isinstance(data, dict) else ""
-        if uri and any(uri.startswith(s) for s in _OFFER_SCHEMES):
-            return uri
-    except Exception:
-        pass
-    return None
+        value = _json.loads(stripped)
+    except ValueError:
+        return None
+    for key in field.split("."):
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
 
 
 # A complete character reference: named (&amp;), decimal (&#38;) or hex (&#x26;), semicolon included.
