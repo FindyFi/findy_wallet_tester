@@ -131,6 +131,419 @@
                     "path": "sandbox/issuer/test_12"
                 }
             }
+        },
+        "animo_pid_mdoc": {
+            "type": "api",
+            "base_url": "https://playground.animo.id",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.eudi.pid.1"
+            },
+            "issuer_metadata": "https://playground.animo.id/oid4vci/188e2459-6da8-4431-9062-2fcdac274f41/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "eudi-pid-mdoc-bdr",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/api/offers/create",
+                    "body": {
+                        "credentialSupportedIds": [
+                            "eudi-pid-mdoc-bdr"
+                        ],
+                        "authorization": "none",
+                        "requireDpop": false,
+                        "requireWalletAttestation": false,
+                        "requireKeyAttestation": false
+                    },
+                    "response_field": "credentialOffer"
+                }
+            }
+        },
+        "animo_pid_sdjwt": {
+            "type": "api",
+            "base_url": "https://playground.animo.id",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "urn:eudi:pid:1"
+            },
+            "issuer_metadata": "https://playground.animo.id/oid4vci/188e2459-6da8-4431-9062-2fcdac274f41/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "eudi-pid-sd-jwt-bdr",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/api/offers/create",
+                    "body": {
+                        "credentialSupportedIds": [
+                            "eudi-pid-sd-jwt-bdr"
+                        ],
+                        "authorization": "none",
+                        "requireDpop": false,
+                        "requireWalletAttestation": false,
+                        "requireKeyAttestation": false
+                    },
+                    "response_field": "credentialOffer"
+                }
+            }
+        },
+        "animo_mdl": {
+            "type": "api",
+            "base_url": "https://playground.animo.id",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Driving License (mDL)",
+                "format": "mso_mdoc",
+                "doctype": "org.iso.18013.5.1.mDL"
+            },
+            "issuer_metadata": "https://playground.animo.id/oid4vci/188e2459-6da8-4431-9062-2fcdac274f41/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "mdl-mdoc-bdr",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/api/offers/create",
+                    "body": {
+                        "credentialSupportedIds": [
+                            "mdl-mdoc-bdr"
+                        ],
+                        "authorization": "none",
+                        "requireDpop": false,
+                        "requireWalletAttestation": false,
+                        "requireKeyAttestation": false
+                    },
+                    "response_field": "credentialOffer"
+                }
+            }
+        },
+        "animo_av_mdoc": {
+            "type": "api",
+            "base_url": "https://playground.animo.id",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Age Verification as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.av.1"
+            },
+            "issuer_metadata": "https://playground.animo.id/oid4vci/188e2459-6da8-4431-9062-2fcdac274f41/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "proof_of_age-bdr",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/api/offers/create",
+                    "body": {
+                        "credentialSupportedIds": [
+                            "proof_of_age-bdr"
+                        ],
+                        "authorization": "none",
+                        "requireDpop": false,
+                        "requireWalletAttestation": false,
+                        "requireKeyAttestation": false
+                    },
+                    "response_field": "credentialOffer"
+                }
+            }
+        },
+        "hovi_playground_pid_mdoc": {
+            "type": "api",
+            "base_url": "https://znobygoloqcliiyjkpgz.supabase.co",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.eudi.pid.1"
+            },
+            "issuer_metadata": "https://core-agent.hovi.id/oid4vci/e7db294f-cb68-4643-851c-375d81bc3665/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "person_identification_data_(pid)_1.0.0_mdoc",
+            "notes": "Minted through the playground's (playground.hovi.id) Supabase edge function issue-credential, which answers without any key. The playground's page also sends Supabase's public anon key; it is not used here. credentialType is the playground's own name for the configuration; the sessionId must be new on every call. Photo ID, Age Verification, Health ID and LPID are in the metadata too, but their credentialType names are only listed in a table the anon key guards, so they have no row yet.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/functions/v1/issue-credential",
+                    "body": {
+                        "credentialType": "pid-mdoc",
+                        "sessionId": "{{uuid}}",
+                        "ecosystem": "eudiw"
+                    },
+                    "response_field": "request_uri"
+                }
+            }
+        },
+        "hovi_playground_pid_sdjwt": {
+            "type": "api",
+            "base_url": "https://znobygoloqcliiyjkpgz.supabase.co",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "urn:eudi:pid:1"
+            },
+            "issuer_metadata": "https://core-agent.hovi.id/oid4vci/e7db294f-cb68-4643-851c-375d81bc3665/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "person_identification_data_(pid)_1.0.0_sd_jwt",
+            "notes": "Minted through the playground's (playground.hovi.id) Supabase edge function issue-credential, which answers without any key. The playground's page also sends Supabase's public anon key; it is not used here. credentialType is the playground's own name for the configuration; the sessionId must be new on every call. Photo ID, Age Verification, Health ID and LPID are in the metadata too, but their credentialType names are only listed in a table the anon key guards, so they have no row yet.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/functions/v1/issue-credential",
+                    "body": {
+                        "credentialType": "pid-sdjwt",
+                        "sessionId": "{{uuid}}",
+                        "ecosystem": "eudiw"
+                    },
+                    "response_field": "request_uri"
+                }
+            }
+        },
+        "igrant_playground_pid_mdoc": {
+            "type": "api",
+            "base_url": "https://issuer-playground.igrant.io",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.eudi.pid.1"
+            },
+            "issuer_metadata": "https://issuer-playground-service.igrant.io/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "eu.europa.ec.eudi.pid_mdoc",
+            "notes": "Offers carry explicit claims: without them the playground marks the session claims_pending and issues deferred, waiting for an operator to submit claims.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/credential_offers",
+                    "body": {
+                        "credential_configuration_ids": [
+                            "eu.europa.ec.eudi.pid_mdoc"
+                        ],
+                        "grants": {
+                            "pre_authorized_code": true
+                        },
+                        "claims": {
+                            "family_name": "Tester",
+                            "given_name": "Findy",
+                            "birth_date": "1990-01-01",
+                            "place_of_birth": {
+                                "country": "FI",
+                                "locality": "Helsinki"
+                            },
+                            "nationality": [
+                                "FI"
+                            ],
+                            "issuing_authority": "Findynet",
+                            "issuing_country": "FI",
+                            "expiry_date": "2030-12-31"
+                        },
+                        "require_wallet_attestation": false,
+                        "require_key_attestation": false,
+                        "url_scheme": "openid-credential-offer://"
+                    },
+                    "response_field": "credential_offer_deeplink"
+                }
+            }
+        },
+        "igrant_playground_pid_sdjwt": {
+            "type": "api",
+            "base_url": "https://issuer-playground.igrant.io",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "urn:eudi:pid:1"
+            },
+            "issuer_metadata": "https://issuer-playground-service.igrant.io/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "eu.europa.ec.eudi.pid_jwt_vc",
+            "notes": "Offers carry explicit claims: without them the playground marks the session claims_pending and issues deferred, waiting for an operator to submit claims.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/credential_offers",
+                    "body": {
+                        "credential_configuration_ids": [
+                            "eu.europa.ec.eudi.pid_jwt_vc"
+                        ],
+                        "grants": {
+                            "pre_authorized_code": true
+                        },
+                        "claims": {
+                            "family_name": "Tester",
+                            "given_name": "Findy",
+                            "birthdate": "1990-01-01",
+                            "place_of_birth": {
+                                "country": "FI",
+                                "locality": "Helsinki"
+                            },
+                            "nationalities": [
+                                "FI"
+                            ],
+                            "issuing_authority": "Findynet",
+                            "issuing_country": "FI",
+                            "date_of_expiry": "2030-12-31"
+                        },
+                        "require_wallet_attestation": false,
+                        "require_key_attestation": false,
+                        "url_scheme": "openid-credential-offer://"
+                    },
+                    "response_field": "credential_offer_deeplink"
+                }
+            }
+        },
+        "igrant_playground_av_mdoc": {
+            "type": "api",
+            "base_url": "https://issuer-playground.igrant.io",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Age Verification as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.av.1"
+            },
+            "issuer_metadata": "https://issuer-playground-service.igrant.io/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "eu.europa.ec.av.1",
+            "notes": "Offers carry explicit claims: without them the playground marks the session claims_pending and issues deferred, waiting for an operator to submit claims.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/credential_offers",
+                    "body": {
+                        "credential_configuration_ids": [
+                            "eu.europa.ec.av.1"
+                        ],
+                        "grants": {
+                            "pre_authorized_code": true
+                        },
+                        "claims": {
+                            "age_over_15": true,
+                            "age_over_18": true,
+                            "age_over_21": true,
+                            "issuing_country": "FI",
+                            "expiry_date": "2030-12-31"
+                        },
+                        "require_wallet_attestation": false,
+                        "require_key_attestation": false,
+                        "url_scheme": "openid-credential-offer://"
+                    },
+                    "response_field": "credential_offer_deeplink"
+                }
+            }
+        },
+        "multipaz_pid_mdoc": {
+            "type": "multipaz",
+            "base_url": "https://issuer.multipaz.org",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.eudi.pid.1"
+            },
+            "issuer_metadata": "https://issuer.multipaz.org/.well-known/openid-credential-issuer/issuer",
+            "credential_configuration_id": "pid_mdoc",
+            "notes": "The token endpoint authenticates the client (token_endpoint_auth_methods_supported: private_key_jwt, attest_jwt_client_auth); a token request without one fails 'client_id parameter missing' / 'clientId must be authenticated'. Only a wallet that presents a client or wallet attestation Multipaz accepts gets past it. Past the token endpoint, the configuration accepts only key-attestation proofs (proof_types_supported: attestation), not jwt proofs, so a wallet without key attestation also fails at the credential request. Expect this row to fail for wallets that support neither; it is kept to show when they do.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "configuration_id": "pid_mdoc"
+                }
+            }
+        },
+        "multipaz_pid_sdjwt": {
+            "type": "multipaz",
+            "base_url": "https://issuer.multipaz.org",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "urn:eudi:pid:1"
+            },
+            "issuer_metadata": "https://issuer.multipaz.org/.well-known/openid-credential-issuer/issuer",
+            "credential_configuration_id": "pid_sd_jwt",
+            "notes": "The token endpoint authenticates the client (token_endpoint_auth_methods_supported: private_key_jwt, attest_jwt_client_auth); a token request without one fails 'client_id parameter missing' / 'clientId must be authenticated'. Only a wallet that presents a client or wallet attestation Multipaz accepts gets past it. Past the token endpoint, the configuration accepts only key-attestation proofs (proof_types_supported: attestation), not jwt proofs, so a wallet without key attestation also fails at the credential request. Expect this row to fail for wallets that support neither; it is kept to show when they do.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "configuration_id": "pid_sd_jwt"
+                }
+            }
+        },
+        "multipaz_mdl": {
+            "type": "multipaz",
+            "base_url": "https://issuer.multipaz.org",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Driving License (mDL)",
+                "format": "mso_mdoc",
+                "doctype": "org.iso.18013.5.1.mDL"
+            },
+            "issuer_metadata": "https://issuer.multipaz.org/.well-known/openid-credential-issuer/issuer",
+            "credential_configuration_id": "mDL",
+            "notes": "Only some of the sandbox's people hold a driving licence record; the provider picks one who does. The token endpoint authenticates the client (token_endpoint_auth_methods_supported: private_key_jwt, attest_jwt_client_auth); a token request without one fails 'client_id parameter missing' / 'clientId must be authenticated'. Only a wallet that presents a client or wallet attestation Multipaz accepts gets past it. Past the token endpoint, the configuration accepts only key-attestation proofs (proof_types_supported: attestation), not jwt proofs, so a wallet without key attestation also fails at the credential request. Expect this row to fail for wallets that support neither; it is kept to show when they do.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "configuration_id": "mDL"
+                }
+            }
+        },
+        "multipaz_av_mdoc": {
+            "type": "multipaz",
+            "base_url": "https://issuer.multipaz.org",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Age Verification as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.av.1"
+            },
+            "issuer_metadata": "https://issuer.multipaz.org/.well-known/openid-credential-issuer/issuer",
+            "credential_configuration_id": "mDoc-AgeVerification",
+            "notes": "The token endpoint authenticates the client (token_endpoint_auth_methods_supported: private_key_jwt, attest_jwt_client_auth); a token request without one fails 'client_id parameter missing' / 'clientId must be authenticated'. Only a wallet that presents a client or wallet attestation Multipaz accepts gets past it. Past the token endpoint, the configuration accepts only key-attestation proofs (proof_types_supported: attestation), not jwt proofs, so a wallet without key attestation also fails at the credential request. Expect this row to fail for wallets that support neither; it is kept to show when they do.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "configuration_id": "mDoc-AgeVerification"
+                }
+            }
+        },
+        "findynet_ips": {
+            "type": "api",
+            "base_url": "https://ips.digicredential.eu",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "International Patient Summary as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "https://ips.todiste.fi/credentials/v1/PatientSummary.json"
+            },
+            "issuer_metadata": "https://procivis.staging.findy.fi/.well-known/openid-credential-issuer/ssi/openid4vci/final-1.0/OPENID4VCI_FINAL1/87d0fca2-afc1-48bb-b3c0-cc181071f0b4/fba652f5-62e9-4b57-80f2-c72c4920d4d0",
+            "credential_configuration_id": "https://ips.todiste.fi/credentials/v1/PatientSummary.json",
+            "notes": "Minted through ips.digicredential.eu, the IPS demo deployment that issues from this issuer, with the sample bundle its own page uses (ips-demo.trustregistry.eu runs the same demo against a different Procivis issuer, …/7942c687…/beda035b…). The vct carries a .json suffix, as the metadata has it. Procivis serves issuer metadata only at the RFC 8615 path-inserted location and only with Accept: application/json (406 otherwise).",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/issue",
+                    "body": {
+                        "content": "{{get:/IPS_IG-bundle-01.json}}",
+                        "protocol": "OPENID4VCI_FINAL1"
+                    },
+                    "response_field": "url"
+                }
+            }
+        },
+        "lissi_pid_sdjwt": {
+            "type": "api",
+            "base_url": "https://ux-backend-demo.lissi.io",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Lissi demo PID as SD-JWT",
+                "format": "vc+sd-jwt",
+                "vct": "https://pidissuer.demo.connector.lissi.io/pid"
+            },
+            "issuer_metadata": "https://pidissuer.demo.connector.lissi.io/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "pid",
+            "notes": "Lissi's own demo PID: its vct is not one of the listed credential types. It pairs only with the other lissi_pid_sdjwt row, and only in a wallet that accepts a vc+sd-jwt credential for a dc+sd-jwt request: the vct and claims match, the format identifiers do not. Minted the way www.lissi.id/demo-receive-pid does. The backend answers with a link into Lissi's own web wallet (https://wallet.lissi.io/lite?credential_offer_uri=…), so rewrite_scheme turns it into an openid-credential-offer:// link with the same query. The configuration's format is the older vc+sd-jwt identifier, while Lissi's verifier asks for dc+sd-jwt. Its authorization server lists only attest_jwt_client_auth as a token endpoint auth method while also allowing anonymous pre-authorized access; whether a wallet without an attestation is refused is unverified.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "path": "/pid-issuance",
+                    "response_field": "redirectUrl",
+                    "rewrite_scheme": "openid-credential-offer"
+                }
+            }
         }
     },
     "verifiers": {
@@ -281,6 +694,344 @@
                         "encryptResponse": true
                     },
                     "response_field": "uri"
+                }
+            }
+        },
+        "eudi_reference_pid_mdoc": {
+            "type": "api",
+            "base_url": "https://verifier-backend.eudiw.dev",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.eudi.pid.1"
+            },
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "path": "/ui/presentations/v2",
+                    "body": {
+                        "dcql_query": {
+                            "credentials": [
+                                {
+                                    "id": "pid",
+                                    "format": "mso_mdoc",
+                                    "meta": {
+                                        "doctype_value": "eu.europa.ec.eudi.pid.1"
+                                    },
+                                    "claims": [
+                                        {
+                                            "path": [
+                                                "eu.europa.ec.eudi.pid.1",
+                                                "given_name"
+                                            ]
+                                        },
+                                        {
+                                            "path": [
+                                                "eu.europa.ec.eudi.pid.1",
+                                                "family_name"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "nonce": "findy-wallet-tester",
+                        "request_uri_method": "get",
+                        "intended_use_id": "TEST-01",
+                        "authorization_request_scheme": "openid4vp"
+                    },
+                    "response_field": "authorization_request_uri"
+                }
+            }
+        },
+        "eudi_reference_pid_sdjwt": {
+            "type": "api",
+            "base_url": "https://verifier-backend.eudiw.dev",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "urn:eudi:pid:1"
+            },
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "path": "/ui/presentations/v2",
+                    "body": {
+                        "dcql_query": {
+                            "credentials": [
+                                {
+                                    "id": "pid",
+                                    "format": "dc+sd-jwt",
+                                    "meta": {
+                                        "vct_values": [
+                                            "urn:eudi:pid:1"
+                                        ]
+                                    },
+                                    "claims": [
+                                        {
+                                            "path": [
+                                                "given_name"
+                                            ]
+                                        },
+                                        {
+                                            "path": [
+                                                "family_name"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "nonce": "findy-wallet-tester",
+                        "request_uri_method": "get",
+                        "intended_use_id": "TEST-01",
+                        "authorization_request_scheme": "openid4vp"
+                    },
+                    "response_field": "authorization_request_uri"
+                }
+            }
+        },
+        "eudi_reference_mdl": {
+            "type": "api",
+            "base_url": "https://verifier-backend.eudiw.dev",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Driving License (mDL)",
+                "format": "mso_mdoc",
+                "doctype": "org.iso.18013.5.1.mDL"
+            },
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "path": "/ui/presentations/v2",
+                    "body": {
+                        "dcql_query": {
+                            "credentials": [
+                                {
+                                    "id": "mdl",
+                                    "format": "mso_mdoc",
+                                    "meta": {
+                                        "doctype_value": "org.iso.18013.5.1.mDL"
+                                    },
+                                    "claims": [
+                                        {
+                                            "path": [
+                                                "org.iso.18013.5.1",
+                                                "given_name"
+                                            ]
+                                        },
+                                        {
+                                            "path": [
+                                                "org.iso.18013.5.1",
+                                                "family_name"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "nonce": "findy-wallet-tester",
+                        "request_uri_method": "get",
+                        "intended_use_id": "TEST-01",
+                        "authorization_request_scheme": "openid4vp"
+                    },
+                    "response_field": "authorization_request_uri"
+                }
+            }
+        },
+        "eudi_reference_av_mdoc": {
+            "type": "api",
+            "base_url": "https://verifier-backend.eudiw.dev",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Age Verification as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.av.1"
+            },
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "path": "/ui/presentations/v2",
+                    "body": {
+                        "dcql_query": {
+                            "credentials": [
+                                {
+                                    "id": "av",
+                                    "format": "mso_mdoc",
+                                    "meta": {
+                                        "doctype_value": "eu.europa.ec.av.1"
+                                    },
+                                    "claims": [
+                                        {
+                                            "path": [
+                                                "eu.europa.ec.av.1",
+                                                "age_over_18"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "nonce": "findy-wallet-tester",
+                        "request_uri_method": "get",
+                        "intended_use_id": "TEST-01",
+                        "authorization_request_scheme": "openid4vp"
+                    },
+                    "response_field": "authorization_request_uri"
+                }
+            }
+        },
+        "eudiplo_pid_mdoc": {
+            "type": "api",
+            "base_url": "https://playground.eudi-wallet.org",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.eudi.pid.1"
+            },
+            "notes": "The parcel-pickup use case asks for given_name and family_name from either a PID mDoc (eu.europa.ec.eudi.pid.1) or a German SD-JWT PID (urn:eudi:pid:de:1); only the mDoc option is one of the credential types issued here.",
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "path": "/api/verify",
+                    "body": {
+                        "useCase": "parcel-pickup"
+                    },
+                    "response_field": "uri"
+                }
+            }
+        },
+        "igrant_playground_pid_mdoc": {
+            "type": "api",
+            "base_url": "https://verifier-playground.igrant.io",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as mDoc",
+                "format": "mso_mdoc",
+                "doctype": "eu.europa.ec.eudi.pid.1"
+            },
+            "notes": "by_reference.uri, not by_value: the by-value link carries an unsigned request under an x509_hash client id, which a wallet should reject.",
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "path": "/presentations",
+                    "body": {
+                        "dcql_query": {
+                            "credentials": [
+                                {
+                                    "id": "pid",
+                                    "format": "mso_mdoc",
+                                    "meta": {
+                                        "doctype_value": "eu.europa.ec.eudi.pid.1"
+                                    },
+                                    "claims": [
+                                        {
+                                            "path": [
+                                                "eu.europa.ec.eudi.pid.1",
+                                                "given_name"
+                                            ]
+                                        },
+                                        {
+                                            "path": [
+                                                "eu.europa.ec.eudi.pid.1",
+                                                "family_name"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    "response_field": "by_reference.uri"
+                }
+            }
+        },
+        "igrant_playground_pid_sdjwt": {
+            "type": "api",
+            "base_url": "https://verifier-playground.igrant.io",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "PID as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "urn:eudi:pid:1"
+            },
+            "notes": "by_reference.uri, not by_value: the by-value link carries an unsigned request under an x509_hash client id, which a wallet should reject.",
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "path": "/presentations",
+                    "body": {
+                        "dcql_query": {
+                            "credentials": [
+                                {
+                                    "id": "pid",
+                                    "format": "dc+sd-jwt",
+                                    "meta": {
+                                        "vct_values": [
+                                            "urn:eudi:pid:1"
+                                        ]
+                                    },
+                                    "claims": [
+                                        {
+                                            "path": [
+                                                "given_name"
+                                            ]
+                                        },
+                                        {
+                                            "path": [
+                                                "family_name"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    "response_field": "by_reference.uri"
+                }
+            }
+        },
+        "findynet_ips": {
+            "type": "api",
+            "base_url": "https://ips.digicredential.eu",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "International Patient Summary as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "https://ips.todiste.fi/credentials/v1/PatientSummary.json"
+            },
+            "notes": "The verifier of the same IPS demo deployment (ips.digicredential.eu). Its request asks for the IPS vct with a single required claim, FullData, with holder binding; findynet_ips_issuer's configuration lists that claim, so the two pair. Its request is unsigned under a redirect_uri: client id, which a strict wallet may refuse, and the request object is served as header.payload without the trailing '.' an unsecured JWT needs (RFC 7519 section 6), so a strict JOSE parser may reject it before any consent screen.",
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "path": "/verify",
+                    "body": {
+                        "protocol": "OPENID4VP_FINAL1"
+                    },
+                    "response_field": "url"
+                }
+            }
+        },
+        "lissi_pid_sdjwt": {
+            "type": "api",
+            "base_url": "https://ux-backend-demo.lissi.io",
+            "group": "EUDI credentials",
+            "credential_type": {
+                "name": "Lissi demo PID as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "https://pidissuer.demo.connector.lissi.io/pid"
+            },
+            "notes": "Lissi's own demo PID: its vct is not one of the listed credential types. It pairs only with the other lissi_pid_sdjwt row, and only in a wallet that accepts a vc+sd-jwt credential for a dc+sd-jwt request: the vct and claims match, the format identifiers do not. The www.lissi.id/demo-bank-verification use case, asking for given_name, family_name, birthdate and four address claims. The backend answers with a link into Lissi's own web wallet (https://wallet.lissi.io/lite?client_id=…&request_uri=…&request_uri_method=post), so rewrite_scheme turns it into an openid4vp:// link with the same query. Its request asks for format dc+sd-jwt, while the issuer row's configuration says vc+sd-jwt. The request is unsigned (alg none) under a redirect_uri: client id, which a strict wallet may refuse.",
+            "credentials": {
+                "credential_verification": {
+                    "type": "verification",
+                    "method": "GET",
+                    "path": "/pid-presentation/pwa-credit-card",
+                    "response_field": "redirectUrl",
+                    "rewrite_scheme": "openid4vp"
                 }
             }
         }
