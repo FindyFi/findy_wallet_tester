@@ -21,7 +21,7 @@ A green cell that only went green on a retry says so too: pytest-rerunfailures
 records every attempt, and "passes" and "passes on the third try" are not the
 same finding.
 
-Column headers carry the build under test, and a "Builds under test" table
+Column headers carry the build under test, and a "Test metadata" table
 under the matrix gives the package, version and device per wallet — read from
 the app_info.json each wallet's run already writes.
 
@@ -311,15 +311,17 @@ FLOW_STAGES = (
                     "verification": "the wallet displays what is asked of it"},
     }),
     ("match", {
-        "label": "Match found",
-        "caption": "the wallet holds a credential that satisfies the request",
+        "label": "Matching credential found",
+        "caption": "the wallet finds a credential it holds that satisfies the request",
         # Issuance has nothing to match against: the credential is inbound.
         "suites": ("verification",),
     }),
     ("accept", {
-        "label": "Accepted",
-        "caption": {"issuance": "the wallet takes the credential rather than erroring out",
-                    "verification": "the wallet hands the presentation over rather than erroring out"},
+        "label": "Request for acceptance",
+        "caption": {"issuance": "the wallet asks the user to accept the credential, and saving it "
+                                "goes through without an error",
+                    "verification": "the wallet asks the user to approve sharing, and sending the "
+                                    "presentation goes through without an error"},
     }),
     ("keep", {
         "label": {"issuance": "Credential stored", "verification": "Presentation shared"},
@@ -514,7 +516,8 @@ def parse_test_id(test_id: str):
 
 # Brand-specific name spellings that don't follow simple capitalization.
 # Tokens not listed here are title-cased ("hovi_issuer" -> "Hovi Issuer").
-DISPLAY_OVERRIDES = {"waltid": "walt.id"}
+DISPLAY_OVERRIDES = {"waltid": "walt.id", "eudiplo": "EUDIPLO", "eudi": "EUDI", "lpid": "LPID",
+                     "pid": "PID"}
 
 
 def display_name(name: str) -> str:
@@ -693,6 +696,9 @@ def collect(run_dir: Path) -> dict:
         "no_report": no_report,
         "issuance_agents": sorted(issuance_agents),
         "verification_agents": sorted(verification_agents),
+        # Row -> provider group, from config/providers.json. Carried in data.json too, so the JSON
+        # twin says which rows belong together without a reader needing the registry.
+        "agent_groups": load_agent_groups(),
         "issuance": issuance,
         "verification": verification,
         "totals": totals,
@@ -989,6 +995,18 @@ CSS = """
   --ink-2: #374151;
   --surface: #ffffff;
   --link: #2563eb;
+  /* Findynet brand, from findynet.fi's theme and its logo. The logo runs indigo to cyan, so
+     issuers take one end and verifiers the other: distinct at a glance, and both on-brand.
+     Neither is green, red or amber, which already mean pass, fail and error in the cells —
+     a role colour must never read as an outcome. Cyan is too light to be legible as text
+     (1.8:1 on its tint), so verifier text uses Findynet navy and the cyan carries the band. */
+  --brand: #0901b9;
+  --issuer: #0901b9;
+  --issuer-ink: #0901b9;
+  --issuer-tint: #eceafd;
+  --verifier: #00c6fc;
+  --verifier-ink: #0b064d;
+  --verifier-tint: #e3f8fe;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -1091,6 +1109,27 @@ tr.section th.group {
   font-weight: 700;
 }
 tr.section:first-child th.group { border-top: none; }
+/* A provider group (Pension demo, FIDES Community) is the outermost split. It is marked by the
+   Findynet blue in its text and a thin rule under it, not a solid band: the rest of the report
+   is light, and a dark band drew the eye away from the results it was meant to organise. */
+tr.section th.group { color: var(--brand); font-size: .74rem; padding: 16px 28px 7px;
+  background: var(--card); border-bottom: 2px solid var(--brand); }
+/* Issuers / Verifiers within a group: a tinted band with the role's accent, and the same accent
+   as a bar down every row beneath it, so a row's role reads at a glance even mid-table. */
+tr.subsection th.subgroup {
+  text-align: left;
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  padding: 8px 28px;
+  border-bottom: 1px solid var(--line);
+}
+tr.subsection th.subgroup.issuance { color: var(--issuer-ink); background: var(--issuer-tint);
+  box-shadow: inset 4px 0 0 var(--issuer); }
+tr.subsection th.subgroup.verification { color: var(--verifier-ink);
+  background: var(--verifier-tint); box-shadow: inset 4px 0 0 var(--verifier); }
+td.row-head.issuance { box-shadow: inset 4px 0 0 var(--issuer); }
+td.row-head.verification { box-shadow: inset 4px 0 0 var(--verifier); }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:not(.section):hover td { background: var(--row-hover); }
 tbody tr td:first-child { padding-left: 28px; }
@@ -1287,8 +1326,9 @@ th .ver {
   font-size: .95rem;
 }
 
-/* ── Builds under test ───────────────────────────────────────────── */
+/* ── Test metadata ───────────────────────────────────────────────── */
 .provenance { padding: 20px 28px 4px; }
+.prov-lead { margin: -2px 0 12px; font-size: .76rem; line-height: 1.45; color: var(--muted); }
 .prov-title {
   font-size: .7rem;
   font-weight: 700;
@@ -1533,7 +1573,23 @@ th .ver,
 }
 .history td.tally { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; width: 1%; }
 .history td.tally .ok { color: var(--ok); }
-.history td.tally .fail { color: var(--fail); }
+.history td.tally .all { color: var(--ink-2); }
+/* History by collection: one compact cell per collection, the tally with a short bar. */
+.history th.coll-head {
+  text-align: left; font-size: .7rem; font-weight: 700; color: var(--brand);
+  padding: 4px 10px 6px 0; border-bottom: 2px solid var(--brand);
+}
+.history td.coll { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.history td.coll .ok { color: var(--ok); font-weight: 600; }
+.history td.coll .all { color: var(--ink-2); font-weight: 600; }
+.history td.coll .sep { color: var(--line-strong); margin: 0 3px; }
+.history td.coll .mini {
+  display: inline-block; vertical-align: middle; position: relative; overflow: hidden;
+  width: 64px; height: 6px; margin: 0 8px; border-radius: 999px; background: #eceef1;
+}
+.history td.coll .mini .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ok); }
+.history td.coll .pct { color: var(--muted); }
+.history td.coll.none { color: var(--muted); }
 .history td.tally .sep { color: var(--line-strong); margin: 0 3px; }
 .history td.bar { width: 34%; }
 .history td.bar { position: relative; }
@@ -1640,6 +1696,7 @@ PAGE = """<!doctype html>
     {provenance}
     {flowline}
     {history}
+    {history_groups}
     {info}
     <div class="footer">Generated {generated}</div>
   </div>
@@ -1698,11 +1755,93 @@ def _outcome_td(cell: Optional[dict]) -> str:
     )
 
 
-def _agent_row(agent: str, col_keys: list, data: dict, output_dir: Path, embed: bool) -> str:
+def load_agent_groups(registry: Path = REPO_ROOT / "config" / "providers.json") -> dict:
+    """Map each matrix row ("hovi_issuer") to the group its provider belongs to in the registry.
+
+    The group is provenance ("Pension demo", "FIDES Community"), so it is declared once, next to the
+    provider in config/providers.json, rather than kept in a list here that would drift from it.
+    Insertion order follows the registry, which is what fixes the order the groups render in.
+
+    A missing or unreadable registry yields no groups, and the report renders ungrouped — split
+    by Issuers and Verifiers alone: a report is still worth having without them.
+    """
+    try:
+        data = json.loads(registry.read_text())
+    except (OSError, ValueError):
+        return {}
+    groups = {}
+    for section, suffix in (("issuers", "issuer"), ("verifiers", "verifier")):
+        for name, entry in (data.get(section) or {}).items():
+            if isinstance(entry, dict) and entry.get("group"):
+                groups[f"{name}_{suffix}"] = entry["group"]
+    return groups
+
+
+def group_agents(agents: list, groups: dict) -> list:
+    """Split one section's rows into (group label, rows) pairs, groups in registry order.
+
+    Rows keep their order within a group. A row whose provider has no group — one since removed
+    from the registry, say, when rendering an older run — goes under "Other" at the end rather
+    than being dropped. When no row has a group at all, the section comes back as a single
+    unlabelled block. No rows at all gives no blocks, so an empty flow draws nothing.
+    """
+    if not agents:
+        return []
+    if not any(a in groups for a in agents):
+        return [(None, list(agents))]
+    buckets = {g: [] for g in dict.fromkeys(groups.values())}
+    other = []
+    for a in agents:
+        (buckets[groups[a]] if a in groups else other).append(a)
+    out = [(g, rows) for g, rows in buckets.items() if rows]
+    if other:
+        out.append(("Other", other))
+    return out
+
+
+def table_layout(issuance_agents: list, verification_agents: list, groups: dict) -> list:
+    """The table's sections, as [(heading, [(sub-heading or None, rows, flow), ...]), ...].
+
+    With provider groups the group is the top-level section and the flow ("Issuers",
+    "Verifiers") sits under it, so everything from one source reads as one set: the pension
+    demo providers together, then the FIDES Community ones. Groups come in registry order, with
+    "Other" last for rows whose provider has no group.
+
+    Without groups the flow is the section and there are no sub-headings. A flow with no rows —
+    an issuance-only run, say — gets no heading either way, rather than an empty one.
+    `flow` is "issuance" or "verification", naming the matrix half the rows' cells come from.
+    """
+    flows = (("Issuers", "issuance", issuance_agents),
+             ("Verifiers", "verification", verification_agents))
+    if not any(a in groups for a in list(issuance_agents) + list(verification_agents)):
+        return [(title, [(None, list(agents), flow)]) for title, flow, agents in flows if agents]
+
+    order = list(dict.fromkeys(groups.values())) + ["Other"]
+    sections = {g: [] for g in order}
+    for title, flow, agents in flows:
+        for group, rows in group_agents(agents, groups):
+            sections[group or "Other"].append((title, rows, flow))
+    return [(g, subs) for g, subs in sections.items() if subs]
+
+
+def row_label(agent: str) -> str:
+    """A matrix row's name without its role: "hovi_issuer" -> "Hovi".
+
+    The row already sits under an Issuers or Verifiers heading, so repeating the role on every
+    row only makes the names longer. Everywhere a name appears on its own — the history strip's
+    "new agent" notes, tooltips — keeps the full `display_name`, since there nothing says which
+    of the two a bare "Hovi" means.
+    """
+    return display_name(re.sub(r"_(issuer|verifier)$", "", agent))
+
+
+def _agent_row(agent: str, col_keys: list, data: dict, output_dir: Path, embed: bool,
+               flow: str = "") -> str:
     head = (
-        "<td class='row-head'><div class='label'>"
+        f"<td class='row-head {flow}' title=\"{html.escape(display_name(agent), quote=True)}\">"
+        "<div class='label'>"
         + icon_html(agent, "agents", output_dir, embed)
-        + f"<span>{html.escape(display_name(agent))}</span></div></td>"
+        + f"<span>{html.escape(row_label(agent))}</span></div></td>"
     )
     cells = "".join(_outcome_td(data.get(k, {}).get(agent)) for k in col_keys)
     return f"<tr>{head}{cells}</tr>"
@@ -1756,21 +1895,26 @@ def render_combined_table(matrix: dict, output_dir: Path, embed: bool) -> str:
         )
     header_row = "<tr>" + "".join(head_cells) + "</tr>"
 
-    # Body: section dividers + one row per agent
+    # Body: a section per provider group (or per flow, when the registry has no groups), then a
+    # sub-heading per flow within it, then one row per agent. See table_layout.
     span = len(wallets) + 1
+    cells_for = {"issuance": issuance, "verification": verification}
     body_parts = []
-    if issuance_agents:
+    for heading, subs in table_layout(issuance_agents, verification_agents,
+                                      matrix.get("agent_groups") or {}):
         body_parts.append(
-            f"<tr class='section'><th class='group' colspan='{span}'>Issuance</th></tr>"
+            f"<tr class='section'><th class='group' colspan='{span}'>"
+            f"{html.escape(heading)}</th></tr>"
         )
-        for a in issuance_agents:
-            body_parts.append(_agent_row(a, wallets, issuance, output_dir, embed))
-    if verification_agents:
-        body_parts.append(
-            f"<tr class='section'><th class='group' colspan='{span}'>Verification</th></tr>"
-        )
-        for a in verification_agents:
-            body_parts.append(_agent_row(a, wallets, verification, output_dir, embed))
+        for sub, rows, flow in subs:
+            if sub:
+                body_parts.append(
+                    f"<tr class='subsection'><th class='subgroup {flow}' colspan='{span}'>"
+                    f"{html.escape(sub)}</th></tr>"
+                )
+            body_parts.extend(
+                _agent_row(a, wallets, cells_for[flow], output_dir, embed, flow) for a in rows
+            )
 
     return (
         "<table>"
@@ -2094,6 +2238,10 @@ def render_flow_line(matrix: dict) -> str:
     return (
         '<div class="flowline detail-only">'
         '<div class="prov-title">Where the flow broke down</div>'
+        '<p class="prov-lead">Each line follows one kind of test through its steps, left to '
+        'right. The number under a step is how many tests failed at that step; the last one, '
+        '<em>Complete</em>, counts the tests that passed. Several failures on the same step '
+        'usually share one cause. Hover a step to see what it checks.</p>'
         f'{rows}{note}</div>'
     )
 
@@ -2133,7 +2281,9 @@ def render_provenance(matrix: dict) -> str:
     if not rows:
         return ""
     return (
-        '<div class="provenance detail-only"><div class="prov-title">Builds under test</div>'
+        '<div class="provenance detail-only"><div class="prov-title">Test metadata</div>'
+        '<p class="prov-lead">The exact app build each wallet column was tested with, and the '
+        "device it ran on. A result only holds for the build listed here.</p>"
         "<table><thead><tr><th>Wallet</th>"
         '<th title="The app\'s versionName, with its Android versionCode in '
         'brackets. The code is the build identity Android itself compares.">'
@@ -2287,6 +2437,98 @@ def _history_rows(history: list, current_ts: str):
     return rows, hidden
 
 
+def _history_row_marks(row: dict) -> tuple:
+    """(row class, badge) for one history row: "this run", "baseline", or neither.
+
+    Shared by both history sections so a run is labelled the same way in each.
+    """
+    is_current, is_baseline = row["current"], row["earlier"] is None
+    row_cls = " ".join(c for c in ("current" if is_current else "",
+                                   "baseline" if is_baseline else "") if c)
+    tag = '<span class="tag-now">this run</span>' if is_current else (
+        '<span class="tag-base">baseline</span>' if is_baseline else "")
+    return row_cls, tag
+
+
+def collection_tallies(entry: dict, groups: dict) -> dict:
+    """Passed and all tests per collection for one recorded run, as {collection: (passed, total)}.
+
+    Counted from the run's stored cells rather than its totals, since the totals are not split by
+    provider. "All tests" means passed, failed and errored, the same set the overview's tally
+    counts; skipped cells are left out of both.
+
+    A past run is grouped by today's registry. That is what lets a run from before groups existed
+    be read in the same collections, and a provider no longer in the registry falls under "Other"
+    instead of disappearing. Collections come back in registry order; one with no cells in this
+    run is absent rather than zero, so a reader can tell "not tested" from "all failed".
+    """
+    tallies = {}
+    for section in (entry.get("cells") or {}).values():
+        for agents in section.values():
+            for agent, token in agents.items():
+                outcome = str(token).split(":", 1)[0]
+                if outcome not in ("Passed", "Failed", "Error"):
+                    continue
+                group = groups.get(agent, "Other")
+                passed, total = tallies.get(group, (0, 0))
+                tallies[group] = (passed + (outcome == "Passed"), total + 1)
+    order = list(dict.fromkeys(groups.values())) + ["Other"]
+    return {g: tallies[g] for g in order if g in tallies}
+
+
+def render_history_by_collection(history: list, current_ts: str, groups: dict) -> str:
+    """The same run strip, split into a column per collection of issuers and verifiers.
+
+    The overview's one tally mixes every provider together, so a new collection joining the run
+    moves it in a way that says nothing about the providers already there. Keeping each
+    collection in its own column shows the pension demo trend and the FIDES Community trend
+    separately. It lists exactly the runs the overview lists, so its rows line up with the one
+    above.
+    """
+    if not groups:
+        return ""
+    rows, _ = _history_rows(history, current_ts)
+    if not rows:
+        return ""
+    per_row = [(row, collection_tallies(row["entry"], groups)) for row in rows]
+    order = list(dict.fromkeys(groups.values())) + ["Other"]
+    shown = [g for g in order if any(g in tallies for _, tallies in per_row)]
+    if not shown:
+        return ""
+    head = ("<tr><th></th>"
+            + "".join(f"<th class='coll-head'>{html.escape(g)}</th>" for g in shown) + "</tr>")
+    body = []
+    for row, tallies in per_row:
+        row_cls, tag = _history_row_marks(row)
+        cells = []
+        for group in shown:
+            if group not in tallies:
+                cells.append("<td class='coll none' title='Not part of this run'>&mdash;</td>")
+                continue
+            passed, total = tallies[group]
+            pct = round(100 * passed / total) if total else 0
+            tip = f"{passed} of {total} {group} tests passed"
+            cells.append(
+                f"<td class='coll' title=\"{html.escape(tip, quote=True)}\">"
+                f"<span class='ok'>{passed}</span><span class='sep'>/</span>"
+                f"<span class='all'>{total}</span>"
+                f"<span class='mini'><span class='fill' style='width:{pct}%'></span></span>"
+                f"<span class='pct'>{pct}%</span></td>"
+            )
+        body.append(
+            f'<tr class="{row_cls}">'
+            f'<td class="when">{html.escape(_run_date(row["entry"].get("run_ts", "")))}{tag}</td>'
+            f'{"".join(cells)}</tr>'
+        )
+    return (
+        '<div class="history detail-only"><div class="prov-title">History by collection</div>'
+        '<p class="prov-lead">The same runs as above, split by collection of issuers and '
+        'verifiers: tests passed out of all tests in each collection. A dash means that '
+        'collection was not part of the run.</p>'
+        f'<table><thead>{head}</thead><tbody>{"".join(body)}</tbody></table></div>'
+    )
+
+
 def render_history(history: list, current_ts: str) -> str:
     """A compact strip of the runs that changed something, newest first.
 
@@ -2299,7 +2541,7 @@ def render_history(history: list, current_ts: str) -> str:
         return ""
     out = []
     for row in rows:
-        entry, highlights, is_current = row["entry"], row["highlights"], row["current"]
+        entry, highlights = row["entry"], row["highlights"]
         swing = [h for h in highlights if h[0] in ("up", "down")]
         updates = [h for h in highlights if h[0] not in ("up", "down")]
         totals = entry.get("totals") or {}
@@ -2307,15 +2549,15 @@ def render_history(history: list, current_ts: str) -> str:
         failed = totals.get("Failed", 0) + totals.get("Error", 0)
         total = passed + failed
         pct = round(100 * passed / total) if total else 0
-        row_cls = " ".join(c for c in ("current" if is_current else "",
-                                       "baseline" if row["earlier"] is None else "") if c)
-        tag = '<span class="tag-now">this run</span>' if is_current else (
-            '<span class="tag-base">baseline</span>' if row["earlier"] is None else "")
+        row_cls, tag = _history_row_marks(row)
+        # Passed out of all tests, not passed against failed: "40/104" answers "how much of the
+        # matrix works" directly, where "40/64" made the reader add the two up first.
+        tip = f"{passed} of {total} tests passed"
         out.append(
             f'<tr class="{row_cls}">'
             f'<td class="when">{html.escape(_run_date(entry.get("run_ts", "")))}{tag}</td>'
-            f'<td class="tally"><span class="ok">{passed}</span>'
-            f'<span class="sep">/</span><span class="fail">{failed}</span></td>'
+            f'<td class="tally" title="{html.escape(tip, quote=True)}"><span class="ok">{passed}</span>'
+            f'<span class="sep">/</span><span class="all">{total}</span></td>'
             f'<td class="bar"><span class="fill" style="width:{pct}%"></span></td>'
             f'<td class="pct">{pct}%</td>'
             # The passing delta gets a column of its own, ahead of the list:
@@ -2420,6 +2662,8 @@ def render_html(matrix: dict, output_dir: Path, embed: bool,
         provenance=render_provenance(matrix),
         flowline=render_flow_line(matrix),
         history=render_history(history or [], matrix["run_ts"]),
+        history_groups=render_history_by_collection(history or [], matrix["run_ts"],
+                                                    matrix.get("agent_groups") or {}),
         info=render_info_section(info, generated=(
             # What changed comes before why a cell is red: a returning reader
             # wants the movement since last time first, the full vocabulary

@@ -135,6 +135,8 @@ python runners/run_tests.py example
 ├── providers/
 │   ├── base.py                 # DeeplinkProvider interface
 │   ├── web_provider.py         # Fetches deeplinks from issuer web pages
+│   ├── api_provider.py         # Calls a provider's JSON API; the request is config
+│   ├── multipaz_provider.py    # Walks the Multipaz sandbox issuer's pre-authorized offer form
 │   ├── config_provider.py      # Returns static deeplinks from config
 │   ├── itb_provider.py         # Drives ITB test sessions and retrieves deeplinks via WebSocket
 │   └── factory.py              # Selects the right provider based on config
@@ -255,6 +257,12 @@ describe the interop matrix, not any one wallet, so they are defined once:
 Each entry becomes a test case named `<name>_issuer` / `<name>_verifier` — the names the compact
 report charts as matrix rows, so renaming one breaks continuity with previously published runs.
 
+An entry may also carry a `"group"`, naming where the provider comes from (`"Pension demo"`,
+`"FIDES Community"`), or, for `"EUDI credentials"`, the one-row-per-credential-type matrix it
+belongs to (see [Credential-typed entries](#credential-typed-entries)). The compact report gives
+each group its own section, with *Issuers* and *Verifiers* under it, in the order the groups first appear here, and its run history gets a column
+per group. If no entry has a group, the report is split by *Issuers* and *Verifiers* alone.
+
 A wallet that declares its own `test_cases` block opts out of the registry entirely. That is how
 `wallets/example/` stays a self-contained illustration; no real wallet does it.
 
@@ -279,6 +287,104 @@ HEIDI_VERIFIERS=none            # heidi runs no verification cases at all
 These lists only choose *which* providers run. Everything else about a provider, above all where it
 is deployed, is configured in `config/providers.json` and nowhere else — to test the suite against
 your own instance, change that entry's `base_url`.
+
+### API issuers and verifiers
+
+Most public demo issuers and verifiers are single-page apps: the HTML that arrives over HTTP holds
+no deeplink at all, only the JavaScript that will later ask a backend for one. Those backends are
+plain JSON APIs, so an entry with `type: api` calls one directly and reads the offer out of the
+answer. The request is entirely config — adding a provider that works this way is a registry entry,
+not Python.
+
+```json
+"eudiplo_loyalty": {
+    "type": "api",
+    "base_url": "https://playground.eudi-wallet.org",
+    "credentials": {
+        "credential_issuance": {
+            "type": "issuance",
+            "path": "/api/issue",
+            "body": { "credentialId": "loyalty-card" }
+        }
+    }
+}
+```
+
+| Key | Meaning |
+|:----|:--------|
+| `path` | Required. Appended to `base_url`. |
+| `method` | `POST` (default) or `GET`. |
+| `body` | JSON request body. Omitted for a `GET`. A value that is exactly `"{{uuid}}"` becomes a fresh UUID on every call, and `"{{get:<url>}}"` becomes the text of a GET to `<url>` (a path is joined to `base_url`). A 4xx on that GET fails `[no_retry]`, like one on the request itself, and any other `{{…}}` value is rejected as a typo rather than sent literally. Placeholders work in `body` only. |
+| `headers` | Extra request headers. |
+| `response_field` | JSON field that must hold the deeplink, dotted for a nested one (`by_reference.uri`). If it doesn't, the call fails `[no_retry]` rather than falling back to another link in the response. Leave it out to let the scan find the deeplink: a bare URL, a `uri` field, or the first deeplink anywhere in the JSON. |
+| `rewrite_scheme` | A scheme such as `openid4vp` or `openid-credential-offer`. Written without `://`, and it needs `response_field`. The link in that field is returned as `<scheme>://?<its query>`, the query byte for byte; the link's host, path and fragment are dropped. For Lissi, which answers with a link into its own web wallet (`https://wallet.lissi.io/lite?request_uri=…`): Android would hand that to a browser, never to the wallet under test, and its query is the request itself. |
+
+The two placeholders exist for one provider each. Hovi's playground refuses a `sessionId` it has
+seen in the last hour, so a fixed one fails every run but the first. The Findynet IPS demo posts
+the 50 kB sample bundle its own page fetches from beside it, and fetching the same file keeps it
+out of the registry. They are written `{{…}}` because the config loader expands `${…}` from the
+environment before a provider ever sees the value.
+
+Without `response_field` or `rewrite_scheme`, the response is read with the same scan the web
+provider uses, so an API that answers with a bare URL and one that answers with JSON both work
+without config saying which. A 4xx is raised as
+`[no_retry]`: the provider is rejecting the configured request, and its body says why, so retrying
+an unchanged request twice more only buries that message. The exceptions are 408 and 429, a
+timeout or a rate limit, which stay retryable because that is exactly the transient failure a
+rerun is for.
+
+**A registry entry is not evidence.** That an API mints a well-formed offer says nothing about
+whether a wallet completes the flow. In September 2026 EUDIPLO's PID offer resolved perfectly and
+then died at the token endpoint, because the offer named an authorization server that only
+accepted `authorization_code` while the grant was `pre-authorized_code`. Run the provider against
+real wallets before adding it here, and keep only what a run actually passed. The one exception is
+a row kept on purpose to show when wallets catch up with what the provider requires; its `notes`
+must say so, as the Multipaz rows' do.
+
+### Multipaz issuer
+
+`type: multipaz` mints a pre-authorized offer from the Multipaz sandbox issuer by walking the
+"Pre-authorized Offer Flow" form on its own page: start the flow for a configuration, pick a
+person in the fictional system of record, and read the offer off the page it finishes on. It is a
+class rather than an `api` entry because the people are listed only in a script on that page, with
+ids that change on every visit, and because the person has to hold a record of the requested kind
+(not everyone has a driving licence). If nobody does, it fails `[no_retry]` rather than mint an
+offer with nothing to issue.
+
+As of October 2026 these rows pass on no wallet: the token endpoint requires client
+authentication or a wallet attestation, and the configurations accept only key-attestation
+proofs. They are kept to show when wallets support that.
+
+```json
+"multipaz_mdl": {
+    "type": "multipaz",
+    "base_url": "https://issuer.multipaz.org",
+    "credentials": {
+        "credential_issuance": { "type": "issuance", "configuration_id": "mDL" }
+    }
+}
+```
+
+### Credential-typed entries
+
+The entries in the `"EUDI credentials"` group each cover one credential type from one provider,
+and carry what a report needs to describe that type without asking the provider again:
+
+| Key | Meaning |
+|:----|:--------|
+| `credential_type` | `name` (the display heading, e.g. `PID as mDoc`), `format` as the metadata or request spells it (`mso_mdoc`, `dc+sd-jwt`, or the older `vc+sd-jwt`), and `doctype` or `vct`. On a verifier, the type it requests. A type outside the listed set (Lissi's own PID) says so in `notes`. |
+| `issuer_metadata` | Issuers only. The URL the issuer's metadata was read from. |
+| `credential_configuration_id` | Issuers only. The configuration the offer names, the first one in the metadata that matches the type unless `notes` says why another was chosen. |
+| `notes` | Anything about the entry that would otherwise have to be rediscovered: why it uses the configuration it does, what it depends on, where the provider deviates from the usual. |
+
+The signing and binding details are not copied in. `credential_signing_alg_values_supported` (or
+`cryptographic_suites_supported`) and `cryptographic_binding_methods_supported` are on
+`credential_configurations_supported[<credential_configuration_id>]` in the issuer metadata.
+`dpop_signing_alg_values_supported` is authorization-server metadata: follow the authorization
+server the offer's grant names (`authorization_server`), else `authorization_servers[0]` from the
+issuer metadata, else the `credential_issuer` itself, to `/.well-known/oauth-authorization-server`,
+inserted before the path as RFC 8414 says. Some issuers repeat it in their issuer metadata as well. Procivis serves its metadata only with
+`Accept: application/json`, and answers 406 without it.
 
 ### ITB issuer
 
