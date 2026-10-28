@@ -5,7 +5,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.utils import wait_present
-from wallets.toppan.pages import language_page
+from wallets.toppan.pages import language_page, result_page
 from wallets.toppan.pages.home_page import HomePage, SCREEN_ID as _home_id
 from wallets.toppan.pages.language_page import LanguagePage
 
@@ -28,7 +28,12 @@ def _detect_state(driver, timeout: float = 2) -> str:
 
 
 def _back_to_known_state(driver, package: str) -> str:
-    """Press back up to 8 times trying to reach a known state, then restart as last resort."""
+    """Press back up to 8 times trying to reach a known state, then restart as last resort.
+
+    toppan's verification result screen ignores BACK, so it is closed through its own "Back to
+    Home Page" instead. The verification flow leaves it up on failure so the failure screenshot and
+    dump show toppan's verdict; pressing BACK at it cost 50 s and an app restart on 2026-09-16.
+    """
     for _ in range(8):
         if driver.current_package != package:
             logger.info("[init_flow] App backgrounded — re-activating")
@@ -38,6 +43,11 @@ def _back_to_known_state(driver, package: str) -> str:
         if state != "unknown":
             logger.info(f"[init_flow] Reached known state: {state}")
             return state
+
+        if result_page.on_screen(driver, timeout=1):
+            logger.info("[init_flow] Verification result screen — tapping Back to Home Page")
+            result_page.back_home(driver)
+            continue
 
         driver.back()
 

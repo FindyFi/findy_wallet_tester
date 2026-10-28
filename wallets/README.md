@@ -417,9 +417,11 @@ the root conftest's `_MODULE_ORDER` already sorts last for every wallet, so no m
 wallets accumulate
 credentials across runs forever, which inflates counts and changes what verifiers match against.
 
-**Detect app error screens** — implemented for six wallets, in varying depth: paradym and toppan run
-staged `check_for_error()` between every step (plus crash/ANR overlay detection and `[no_retry]`
-tagging), heidi has two distinct error screens checked before *and* after sharing, gataca has an error
+**Detect app error screens** — implemented for six wallets, in varying depth: paradym runs staged
+`check_for_error()` between every step (plus crash/ANR overlay detection and `[no_retry]`
+tagging); toppan polls for its error dialog throughout every wait instead, anchored on its own
+package, a single `button1` and the label "OK" (any AlertDialog's positive button used to count),
+and declares it in `screens.py`; heidi has two distinct error screens checked before *and* after sharing, gataca has an error
 page plus a separate "Rejected" screen and a backend "Service currently unavailable" dialog, procivis
 reports process-screen failures and dumps all visible text, authbound reports `content_error_root`
 text. hovi gained detection on 2026-08-19 and it fired on real cases the next day. Its only error

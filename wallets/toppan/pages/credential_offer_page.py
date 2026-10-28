@@ -52,3 +52,15 @@ class CredentialOfferPage(BasePage):
     def accept(self):
         self.wait_until_loaded()
         self.click(_accept_btn)
+
+
+# ── Processing overlay ─────────────────────────────────────────────────────────
+# Shown while toppan stores an accepted credential. No XML dump holds it — passing tests save none,
+# and no failure has stopped on it — so screens.py leaves `processing` UNKNOWN. The flow only uses
+# it to wait longer, and to say so if it is still up when the wait runs out.
+
+_processing = (AppiumBy.XPATH, '//*[@text="Adding your credential"]')
+
+
+def processing_on_screen(driver, timeout=1) -> bool:
+    return wait_present(driver, _processing, timeout=timeout)

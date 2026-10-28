@@ -1,19 +1,90 @@
 import logging
+import time
 
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import WebDriverException
 
-from base.android import handle_permission_if_present
-from base.utils import wait_present
-from wallets.toppan.flows import check_for_error, PROCESSING
-from wallets.toppan.pages.credential_offer_page import (
-    ConfirmationPage, confirmation_on_screen,
-    CredentialOfferPage,
-)
-from wallets.toppan.pages.home_page import SCREEN_ID as _home_id
+from base import deeplink, outcome, progress
+from base.flow_context import FlowContext
+from base.outcome import FlowFailure
 from providers.base import DeeplinkProvider
+from wallets.toppan.flows import _failures as failures
+from wallets.toppan.pages.credential_offer_page import (
+    ConfirmationPage,
+    CredentialOfferPage,
+    confirmation_on_screen,
+    on_screen as offer_on_screen,
+    processing_on_screen,
+)
+from wallets.toppan.pages.home_page import on_screen as home_on_screen
+from wallets.toppan.screens import SCREENS
 
 logger = logging.getLogger(__name__)
+
+# How long after Accept toppan's wallet screen is not yet taken as the end of the flow, unless its
+# processing overlay was seen and has cleared. Kept from the old flow, which waited this long for
+# the overlay before looking for home: the wallet screen sits behind the offer, and seeing it
+# before toppan has started storing would let the count run too early.
+_SETTLE = 5.0
+
+# One more look for toppan's error dialog once its wallet screen is back. 70 of the old flow's
+# failures were dialogs found "[after processing]" — authbound_issuer 36, sphereon_issuer 30,
+# paradym_issuer 4, across reports/ and the nightly clone — so the dialog follows the overlay, and
+# no dump shows whether the wallet screen can come back first. It costs 1.5 s on every pass.
+_LAST_ERROR_LOOK = 1.5
+
+
+def _after_accept(driver, ctx: FlowContext, t: float) -> None:
+    """Wait for toppan to finish with an accepted offer. Returns once its wallet screen is back
+    with no error dialog; raises a FlowFailure otherwise — never the shared "nothing appeared",
+    because toppan had already shown the offer and taken the tap.
+    """
+    start = time.monotonic()
+    saw_processing = False
+    error_present = failures.error_probe(ctx)
+
+    def look() -> str:
+        nonlocal saw_processing
+        if error_present(driver, 0.5):
+            return "error"
+        if processing_on_screen(driver, 0.5):
+            if not saw_processing:
+                progress.step("toppan showed its processing overlay")
+            saw_processing = True
+            return "processing"
+        settled = saw_processing or time.monotonic() - start >= _SETTLE
+        if settled and home_on_screen(driver, 1.0):
+            return "home"
+        return ""
+
+    try:
+        seen = look()
+        while seen not in ("error", "home") and time.monotonic() - start < t:
+            seen = look()
+        if seen not in ("error", "home"):
+            seen = look()  # once more after the deadline: a late answer still counts
+        if seen == "home" and error_present(driver, _LAST_ERROR_LOOK):
+            seen = "error"
+    except WebDriverException as exc:
+        raise failures.lost(ctx, "after Accept", exc) from exc
+
+    if seen == "error":
+        raise failures.dialog_failure(driver, ctx, (
+            f"[credential_flow] toppan took the Accept for '{ctx.what}' and then failed"))
+    if seen == "home":
+        progress.reached(progress.ACCEPT,
+                         "toppan returned to its wallet screen with no error dialog")
+        return
+
+    failures.raise_if_crashed(driver, ctx, when="after Accept")
+    if seen == "processing":
+        raise FlowFailure(outcome.PROCESSING, (
+            f"[credential_flow] toppan's processing overlay was still up when checked "
+            f"{t:.0f}s after Accept for '{ctx.what}'"
+        ))
+    raise FlowFailure(outcome.PROCESSING, (
+        f"[credential_flow] toppan showed neither its wallet screen nor an error dialog in the "
+        f"{t:.0f}s after Accept for '{ctx.what}', so whether it stored the credential is unknown"
+    ))
 
 
 def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: str,
@@ -24,49 +95,70 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
       1. Fire deeplink
       2. "Do you want to proceed with OpenID4VCI issuance?" dialog → CONTINUE
       3. "OID4VCI Issuance" credential offer modal → Accept
-      4. Wait for "Adding your credential" processing overlay to clear
-      5. Verify home screen (or raise on error dialog)
+      4. Wait for "Adding your credential" to clear and the wallet screen to return
+
+    Every verdict this flow reaches about toppan is a `base.outcome.FlowFailure` naming what
+    happened, and the progress trail records how far toppan got. Taps through a page object can
+    still raise that page's own generic error when its button cannot be found. toppan has no PIN,
+    so `pin` is unused.
     """
-    timeouts = page_args.get("timeouts", {})
-    credential_offer_timeout = timeouts.get("credential_offer", 30)
-    default_timeout = timeouts.get("default", 10)
+    ctx = FlowContext(
+        flow="credential_flow", wallet=SCREENS.name, what=credential_name,
+        app_package=app_package, pin=pin, page_args=page_args,
+    )
+    ctx.url = provider.get(credential_name)
+    t = ctx.timeout("credential_offer")
 
-    url = provider.get(credential_name)
     logger.info(f"[credential_flow] Opening deeplink for '{credential_name}'")
-    driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
+    try:
+        deeplink.fire(driver, ctx.url, app_package)
+    except WebDriverException as exc:
+        # This used to escape as a bare driver exception. The shared diagnosis names it.
+        logger.info(f"[credential_flow] Android would not route the deeplink: {exc.msg}")
+        outcome.raise_refused(driver, SCREENS, ctx, exc, expected="credential offer")
 
-    handle_permission_if_present(driver)
-    check_for_error(driver, "after deeplink")
+    failures.answer_permission(driver, ctx)
 
-    if confirmation_on_screen(driver, timeout=credential_offer_timeout):
-        logger.info("[credential_flow] Confirmation dialog — tapping CONTINUE")
+    head = (f"[credential_flow] toppan could not process the credential offer for "
+            f"'{credential_name}'")
+    error = [("error", failures.error_probe(ctx), 0.5)]
+    confirm = [("its issuance confirmation", confirmation_on_screen, 1.0)]
+    seen = failures.first_of(driver, ctx, confirm + error, t,
+                             during="while waiting for the issuance confirmation")
+    if seen == "error":
+        progress.reached(progress.OPEN, "toppan was in front, showing its error dialog")
+        raise failures.dialog_failure(driver, ctx, head)
+    if not seen:
+        failures.nothing_appeared(driver, ctx, late=confirm, timeout=t, expected="credential offer",
+                                  waited_for="its issuance confirmation", after="the deeplink",
+                                  head=head)
+
+    progress.reached(progress.OPEN, "toppan asked whether to proceed with OpenID4VCI issuance")
+    logger.info("[credential_flow] Confirmation dialog — tapping CONTINUE")
+    try:
         ConfirmationPage(driver, **page_args).confirm()
-        check_for_error(driver, "after confirmation")
-    else:
-        check_for_error(driver, "after deeplink")
-        raise RuntimeError(
-            f"App did not respond to credential offer deeplink for '{credential_name}' — "
-            "issuer may be using an unsupported protocol [no_retry]"
-        )
+    except WebDriverException as exc:
+        raise failures.lost(ctx, "while tapping CONTINUE", exc) from exc
+    progress.step("tapped CONTINUE")
 
-    logger.info("[credential_flow] Waiting for credential offer screen")
-    CredentialOfferPage(driver, **page_args).accept()
-    logger.info("[credential_flow] Tapped Accept — waiting for processing to complete")
+    offer = [("the credential offer", offer_on_screen, 1.0)]
+    seen = failures.first_of(driver, ctx, offer + error, t,
+                             during="while waiting for the credential offer")
+    if seen == "error":
+        raise failures.dialog_failure(driver, ctx, head)
+    if not seen:
+        failures.nothing_appeared(driver, ctx, late=offer, timeout=t, expected="credential offer",
+                                  waited_for="the credential offer", after="CONTINUE", head=head,
+                                  was_in_front=True)
 
-    # Wait for the processing overlay to disappear, then check for errors.
-    if wait_present(driver, PROCESSING, timeout=5):
-        try:
-            WebDriverWait(driver, credential_offer_timeout).until(
-                lambda d: not wait_present(d, PROCESSING, timeout=0.5)
-            )
-        except TimeoutException:
-            raise RuntimeError(
-                f"Credential processing timed out after {credential_offer_timeout}s"
-            )
+    progress.reached(progress.PRESENT, "toppan showed the credential offer")
+    logger.info("[credential_flow] Credential offer screen — accepting")
+    try:
+        CredentialOfferPage(driver, **page_args).accept()
+    except WebDriverException as exc:
+        raise failures.lost(ctx, "while tapping Accept", exc) from exc
+    progress.step("tapped Accept")
 
-    check_for_error(driver, "after processing")
-
-    if wait_present(driver, _home_id, timeout=default_timeout):
-        logger.info(f"[credential_flow] Credential '{credential_name}' added — home screen reached")
-    else:
-        logger.info(f"[credential_flow] Credential '{credential_name}' accepted")
+    _after_accept(driver, ctx, t)
+    logger.info(f"[credential_flow] Credential '{credential_name}' accepted — "
+                "wallet screen reached")
