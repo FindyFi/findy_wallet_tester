@@ -188,7 +188,7 @@ def test_an_unmapped_error_surface_is_reported_as_unknown_never_as_clean(tmp_pat
 
 
 def test_a_wallet_with_no_screens_module_at_all_is_unmapped_not_clean(tmp_path):
-    """Wallets that have not adopted the contract yet (gataca, paradym) must not read as clean."""
+    """A wallet that has not adopted the contract yet (gataca) must not read as clean."""
     request = _request(tmp_path, params={"driver": "gataca"}, line="RuntimeError: [flow] timed out")
     record_error_screen(Driver(), request, _config(), wallet="gataca")
 
@@ -320,7 +320,7 @@ def test_a_message_less_exception_with_no_location_still_names_the_type(tmp_path
 
 
 def test_a_phase_tag_is_reported_as_a_phase_not_as_the_flow(tmp_path):
-    """paradym and toppan tag the phase, not the flow, and the digest used to conflate them.
+    """paradym and toppan used to tag the phase, not the flow, and the digest conflated them.
 
     The 2026-09-18 run published `flow: after consent` / `after PIN` / `after confirmation` —
     readable, but false: those name where in the flow the wallet was, not which flow ran. `flow:`

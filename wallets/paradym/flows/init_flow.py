@@ -6,13 +6,14 @@ from selenium.common.exceptions import TimeoutException
 from appium.webdriver.common.appiumby import AppiumBy
 
 from base.utils import wait_present
-from wallets.paradym.flows import GO_TO_WALLET as _go_to_wallet
 from wallets.paradym.pages.landing_page import LandingPage, SCREEN_ID as _get_started
 from wallets.paradym.pages.home_page import SCREEN_ID as _home_heading
 from wallets.paradym.pages import pin_page as pin_screen
 from wallets.paradym.pages.pin_page import PinPage
 from wallets.paradym.pages.biometrics_page import BiometricsPage
 from wallets.paradym.pages.protect_data_page import ProtectDataPage
+from wallets.paradym.pages.result_page import GO_TO_WALLET as _go_to_wallet, go_to_wallet_now
+from wallets.paradym.pages.verification_request_page import close_no_match, no_match_now
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,23 @@ _camera_required = (AppiumBy.XPATH, '//*[@text="Please allow camera access"]')
 
 
 def _detect_state(driver) -> str:
-    """Return the current app state: 'landing', 'home', 'pin', 'camera_required', 'credential_success', or 'unknown'."""
+    """Return the current app state: 'no_match', 'landing', 'home', 'pin', 'camera_required',
+    'credential_success', or 'unknown'.
+
+    'credential_success' is any screen with a "Go to wallet" button — paradym's success screen,
+    and also its error screen, which the flows leave up on failure as the evidence. Either way the
+    button is the way home.
+
+    'no_match' is the review screen saying "You don't have the required cards", which the
+    verification flow also leaves up. It and "Go to wallet" are looked for first, each with one
+    lookup and no wait: on those screens every 2 s probe below would otherwise run out before
+    teardown could close or tap anything. The last probe still waits, for a screen that renders
+    late.
+    """
+    if no_match_now(driver):
+        return "no_match"
+    if go_to_wallet_now(driver):
+        return "credential_success"
     if wait_present(driver, _get_started):
         return "landing"
     if wait_present(driver, _home_heading):
@@ -60,6 +77,12 @@ def _tap_go_to_wallet(driver) -> bool:
         return False
 
 
+def _close_no_match(driver) -> None:
+    """Close the no-match review screen the verification flow left up as its failure evidence."""
+    if close_no_match(driver):
+        logger.info("[init_flow] Closed the no-match review screen")
+
+
 def _recover_camera_required(driver, package: str) -> str:
     """Restart the app to recover from the 'Please allow camera access' broken state."""
     logger.warning("[init_flow] Camera access screen detected — restarting app to recover")
@@ -77,6 +100,8 @@ def _back_to_known_state(driver, package: str) -> str:
     3. Press Android back up to 8 times; check state after each press.
     4. If back presses push us out of the app, re-activate it and check state.
     5. Last resort: terminate and re-launch the app.
+
+    The no-match review screen is closed through its own Close rather than with back presses.
     """
     _dismiss_permission_dialog(driver)
     _tap_go_to_wallet(driver)
@@ -87,6 +112,9 @@ def _back_to_known_state(driver, package: str) -> str:
             driver.activate_app(package)
 
         state = _detect_state(driver)
+        if state == "no_match":
+            _close_no_match(driver)
+            continue
         if state != "unknown":
             logger.info(f"[init_flow] Reached known state: {state}")
             return state
@@ -98,7 +126,7 @@ def _back_to_known_state(driver, package: str) -> str:
     driver.terminate_app(package)
     driver.activate_app(package)
     state = _detect_state(driver)
-    if state != "unknown":
+    if state not in ("unknown", "no_match"):
         logger.info(f"[init_flow] Post-restart state: {state}")
         return state
 
@@ -135,9 +163,12 @@ def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **pa
     package = app_package or driver.current_package
 
     state = _detect_state(driver)
+    if state == "no_match":
+        _close_no_match(driver)
+        state = _detect_state(driver)
     if state == "camera_required":
         state = _recover_camera_required(driver, package)
-    if state == "unknown":
+    if state in ("unknown", "no_match"):
         logger.info("[init_flow] App in intermediate state — pressing back to known screen")
         state = _back_to_known_state(driver, package)
     if state == "camera_required":
@@ -149,7 +180,7 @@ def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **pa
         )
 
     if state == "credential_success":
-        logger.info("[init_flow] Credential success screen — navigating to wallet home")
+        logger.info("[init_flow] 'Go to wallet' screen (success or error) — going to wallet home")
         _tap_go_to_wallet(driver)
         return
 

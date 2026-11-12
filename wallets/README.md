@@ -417,9 +417,9 @@ the root conftest's `_MODULE_ORDER` already sorts last for every wallet, so no m
 wallets accumulate
 credentials across runs forever, which inflates counts and changes what verifiers match against.
 
-**Detect app error screens** — implemented for six wallets, in varying depth: paradym runs staged
-`check_for_error()` between every step (plus crash/ANR overlay detection and `[no_retry]`
-tagging); toppan polls for its error dialog throughout every wait instead, anchored on its own
+**Detect app error screens** — implemented for six wallets, in varying depth: paradym polls for its
+"Something went wrong" screen throughout every wait, quotes its Reason (`[no_retry]` except for a
+gateway failure, a consumed offer or an unreadable Reason), and declares it in `screens.py`; toppan polls for its error dialog throughout every wait instead, anchored on its own
 package, a single `button1` and the label "OK" (any AlertDialog's positive button used to count),
 and declares it in `screens.py`; heidi has two distinct error screens checked before *and* after sharing, gataca has an error
 page plus a separate "Rejected" screen and a backend "Service currently unavailable" dialog, procivis
