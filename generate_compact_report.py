@@ -415,29 +415,37 @@ EXC_LINE_RE = re.compile(r"^E\s+((?:[\w.]*(?:Error|Exception|Failure|Failed)\b|a
 # Order matters: the first hit wins, so the specific phrasings come before the
 # catch-all "the wallet showed an error" ones. Message text becoming a contract
 # is the known cost of reading this out of prose, which is why a category from
-# the run's summary.json (see load_summary) always wins over these. Do not widen
-# them for a message our own code raises: type it at the raise site instead. A
-# regex cannot read negation — "neither the success nor the error screen
-# appeared" matches the `rejected` pattern below.
+# the run's summary.json (see load_summary) always wins over these. A regex
+# cannot read negation — "neither the success nor the error screen appeared"
+# matches the `rejected` pattern below. The wrapper messages ("Credential
+# issuance failed for 'x': <wallet's error text>") land in `rejected` too: the
+# flow only raises them after reading an error screen.
+#
+# Every entry is one alternative and carries exactly one tag comment:
+#   # third-party        text Android/Appium/Selenium writes, not us
+#   # old runs           a message our own code wrote before the wallet raised
+#                        typed failures; archived runs and `--backfill` need it
+#                        to regenerate as they did
+#   # pending: <wallet>  a wallet that still raises it untyped today
+# base/tests/test_report_pattern_ratchet.py enforces this: a `# pending:` wallet
+# that gains a screens.py must be re-tagged `# old runs` or deleted, and
+# `# old runs` can only shrink. New entries for our own messages are not
+# accepted: type the failure at the raise site instead.
 REASON_PATTERNS = (
-    # Appium could not hand the URL to any app: Android resolved no activity.
-    ("unroutable", r"Activity not started, unable to resolve Intent|Could not deliver\b"),
-    ("no_match", r"No matching credentials"),
-    ("nothing_to_present", r"does not have the cards required|UNAVAILABLE CARDS"),
-    ("dismissed", r"returned to (?:its )?home (?:screen )?without"),
-    # Wallet-agnostic setup assertions — gataca checks the active DID method
-    # before the flow starts, and that failing is our problem, not the agent's.
-    ("harness", r"Active DID is "),
-    ("processing", r"did not appear within|did not complete within timeout"
-                   r"|No offer/error/home screen after|No success/home screen after"
-                   r"|^selenium\.common\.exceptions\.TimeoutException"),
-    # The wallet surfaced an error of its own. The wrapper messages
-    # ("Credential issuance failed for 'x': <wallet's error text>") land here
-    # too: the flow only raises them after reading an error screen.
-    ("rejected", r"error dialog|error screen|was rejected|Error in OpenID4VCI"
-                 r"|status code is error|error response with status"
-                 r"|Credential issuance failed|Verification failed for"),
-    ("not_stored", r"^assert\s"),
+    ("unroutable", r"Activity not started, unable to resolve Intent"),   # third-party
+    ("no_match", r"No matching credentials"),                            # old runs
+    ("nothing_to_present", r"does not have the cards required"),         # old runs
+    ("dismissed", r"returned to (?:its )?home (?:screen )?without"),     # old runs
+    ("harness", r"Active DID is "),                                      # pending: gataca
+    ("processing", r"No offer/error/home screen after"),                 # pending: gataca
+    ("processing", r"No success/home screen after"),                     # pending: gataca
+    ("processing", r"^selenium\.common\.exceptions\.TimeoutException"),  # third-party
+    ("rejected", r"error dialog"),                                       # old runs
+    ("rejected", r"error screen"),                                       # old runs
+    ("rejected", r"was rejected"),                                       # pending: gataca
+    ("rejected", r"Credential issuance failed"),                         # old runs
+    ("rejected", r"Verification failed for"),                            # old runs
+    ("not_stored", r"^assert\s"),                                        # pending: gataca
 )
 
 # Trailing marker the rerun plugin reads; noise in a published tooltip.
