@@ -103,6 +103,8 @@ def fresh(monkeypatch):
     _Tap.taps = []
     _Process.result, _Process.raises = cap.CLEARED, None
     _Share.result, _Share.raises = True, None
+    _RequestWait.timeouts, _RequestWait.conditions = [], 0
+    _RequestWait.timed_out = False
     monkeypatch.setattr(failures, "biometric_on_screen", lambda d, timeout=2: False)
     monkeypatch.setattr(failures, "pin_screen", SimpleNamespace(on_screen=lambda d, timeout=2: False))
     monkeypatch.setattr(failures, "PinPage", _Pin)
@@ -125,6 +127,29 @@ def fresh(monkeypatch):
     progress.reset()
 
 
+class _RequestWait:
+    """Stands in for WebDriverWait in the verification flow. Calls the condition ONCE and returns
+    what it returned, or raises TimeoutException for a falsy answer; anything the condition raises
+    gets through. Records the timeout asked for, how often the condition was called, and whether
+    the wait timed out."""
+
+    timeouts: list = []
+    conditions = 0
+    timed_out = False
+
+    def __init__(self, driver, timeout):
+        self.driver = driver
+        _RequestWait.timeouts.append(timeout)
+
+    def until(self, condition):
+        _RequestWait.conditions += 1
+        answer = condition(self.driver)
+        if not answer:
+            _RequestWait.timed_out = True
+            raise TimeoutException()
+        return answer
+
+
 PAGE_ARGS = {"timeouts": {"credential_offer": 1}}
 
 
@@ -141,8 +166,8 @@ def _issue(monkeypatch, *waits, process=(False,), offer=(True,), driver=None, pi
 
 def _verify(monkeypatch, shown=True, *, process=(True,), invitation=(False,), driver=None,
             pin="123456"):
-    """`shown` answers the proof-request wait, then its re-probes; `process` the share process
-    screen; `invitation` the invitation process screen."""
+    """`shown` answers the sharing probe in the proof-request wait, then the re-probes; `process`
+    the share process screen; `invitation` the invitation process screen."""
     answers = list(shown) if isinstance(shown, (list, tuple)) else [shown]
 
     def sharing(d, timeout=2):
@@ -152,6 +177,7 @@ def _verify(monkeypatch, shown=True, *, process=(True,), invitation=(False,), dr
         return answer
 
     monkeypatch.setattr(vf, "sharing_on_screen", sharing)
+    monkeypatch.setattr(vf, "WebDriverWait", _RequestWait)
     monkeypatch.setattr(vf, "wait_present", Probes({vf._process_id: process,
                                                      vf._invitation_id: invitation}))
     vf.run(driver or Driver(), provider=SimpleNamespace(get=lambda n: URL),
@@ -640,6 +666,43 @@ def test_a_request_that_was_only_late_is_shared_as_normal(monkeypatch):
     assert progress.snapshot()["stage"] == progress.ACCEPT
 
 
+def test_a_failure_animation_ends_the_request_wait_without_waiting_it_out(monkeypatch):
+    """waltid_verifier on 2026-10-16: procivis failed within a second of the deeplink and the flow
+    noticed 21 s later, because it only waited for the sharing screen."""
+    _failure_up(monkeypatch, details={"Code": "BR_0046", "Message": "Missing"})
+    exc, trail = _raised(_verify, monkeypatch, False, invitation=(True,))
+    assert exc.category == outcome.REJECTED
+    assert wallet_said(exc) == "Connection failed"
+    assert str(exc).endswith(" [no_retry]")
+    assert trail["stage"] == progress.OPEN
+    assert _RequestWait.timeouts == [1] and _RequestWait.conditions == 1
+    assert not _RequestWait.timed_out, "the animation did not end the wait; the timeout did"
+    assert _Tap.taps == []
+
+
+def test_a_failure_flash_before_the_request_still_lets_it_be_shared(monkeypatch):
+    """The wait ends on the failure animation; `_no_request` looks for the sharing screen first."""
+    monkeypatch.setattr(vf, "_failure_on_screen", lambda d, timeout=2: True)
+    _verify(monkeypatch, [False, True])
+    assert _Tap.taps == ["share"]
+    assert any("showed the proof request late" in s for s in progress.snapshot()["steps"])
+
+
+def test_the_sharing_screen_first_is_shared_without_any_second_look(monkeypatch):
+    _failure_up(monkeypatch)
+    _verify(monkeypatch, True)
+    assert _Tap.taps == ["share"]
+    assert _RequestWait.timeouts == [1] and _RequestWait.conditions == 1
+    assert not any("late" in s for s in progress.snapshot()["steps"])
+
+
+def test_nothing_on_screen_times_out_into_the_existing_diagnosis_naming_the_wait(monkeypatch):
+    exc, trail = _raised(_verify, monkeypatch, False, invitation=(True,))
+    assert exc.category == outcome.PROCESSING
+    assert "after 1s" in str(exc)
+    assert _RequestWait.conditions == 1 and _RequestWait.timed_out
+
+
 # --- after Share ---------------------------------------------------------------------------------
 
 def test_the_success_animation_completes_accept(monkeypatch):
@@ -710,9 +773,10 @@ def test_a_dead_session_in_any_verification_wait_is_ours(monkeypatch, dies_in):
 
     if dies_in == "request wait":
         exc, _ = _raised(_verify, monkeypatch, DEAD)
+        assert "mid-wait for the proof request" in str(exc)
     elif dies_in == "after the wait":
-        monkeypatch.setattr(vf, "_failure_on_screen", dead)
-        exc, _ = _raised(_verify, monkeypatch, False)
+        exc, _ = _raised(_verify, monkeypatch, False, invitation=(DEAD,))
+        assert "after the wait for the proof request" in str(exc)
     elif dies_in == "prompts":
         monkeypatch.setattr(failures, "pin_screen", SimpleNamespace(on_screen=dead))
         exc, _ = _raised(_verify, monkeypatch, True)

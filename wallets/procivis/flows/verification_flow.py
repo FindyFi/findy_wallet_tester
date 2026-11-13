@@ -2,7 +2,8 @@ import logging
 import re
 
 from appium.webdriver.common.appiumby import AppiumBy
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.webdriver.support.ui import WebDriverWait
 
 from base import deeplink, outcome, progress
 from base.flow_context import FlowContext
@@ -52,9 +53,19 @@ def _visible_text(driver) -> list:
     return texts
 
 
+def _request_or_failure(driver):
+    """What ended the wait for the proof request: "sharing", "failure", or False (not yet).
+
+    Not `EC.any_of`, which swallows WebDriverException: a dead session must raise here.
+    """
+    if sharing_on_screen(driver, timeout=0):
+        return "sharing"
+    return "failure" if _failure_on_screen(driver, timeout=0) else False
+
+
 def _no_request(driver, ctx: FlowContext, t: float) -> None:
-    """ProofRequestSharingScreen did not appear in time. Returns if it is there after all; otherwise
-    raises the honest diagnosis.
+    """ProofRequestSharingScreen did not appear in time, or the failure animation ended the wait
+    first. Returns if it is there after all; otherwise raises the honest diagnosis.
 
     procivis answers a request it cannot open on InvitationProcessScreen — the same screen, the same
     two failure animations and the same label as issuance ("Connection failed", "No credential
@@ -255,11 +266,16 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
     failures.unlock(driver, ctx)
 
+    # The sharing screen or the failure animation, whichever comes first: a request procivis cannot
+    # open is answered within a second, and waiting out `t` for a screen that will not come cost
+    # about 20 s per rejected verification.
     try:
-        shown = sharing_on_screen(driver, timeout=t)
+        ended_by = WebDriverWait(driver, t).until(_request_or_failure)
+    except TimeoutException:
+        ended_by = None
     except WebDriverException as exc:
         raise failures.lost(ctx, "mid-wait for the proof request", exc) from exc
-    if not shown:
+    if ended_by != "sharing":
         _no_request(driver, ctx, t)
 
     # Not `match`: procivis has no mapped no-match surface, so the sharing screen alone does not
