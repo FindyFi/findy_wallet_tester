@@ -388,6 +388,26 @@ def capture_failure_artifact(app, request):
         request.node._artifact_captured = True
 
 
+def _server_log_disabled(exc):
+    """True when ``exc`` is Appium refusing ``get_log('server')`` because the operator did not
+    start it with ``--allow-insecure=*:get_server_logs``."""
+    text = getattr(exc, "msg", None) or str(exc)
+    return "get_server_logs" in text and "has not been enabled" in text
+
+
+def _appium_server(driver):
+    """The address of the Appium server ``driver`` talks to, or "" when it cannot be told.
+
+    Never raises: it is only used to name the server in a log line, and teardown must not fail
+    over a label. ``command_executor.client_config`` is selenium's public accessor for the
+    ClientConfig the connection was built from.
+    """
+    try:
+        return str(driver.command_executor.client_config.remote_server_addr or "")
+    except Exception:
+        return ""
+
+
 def capture_appium_logs(driver, request, test_name):
     """Append this test's share of the Appium server log to appium.log, once each.
 
@@ -415,12 +435,35 @@ def capture_appium_logs(driver, request, test_name):
     can recover those — only running the Appium server with its own ``--log`` file could.
 
     Timestamps (ms since epoch) are formatted to match ``test.log`` (``YYYY-MM-DD HH:MM:SS``).
+
+    An Appium server started without ``--allow-insecure=*:get_server_logs`` refuses every
+    ``get_log('server')``, and selenium's message for it carries a ~25-line Node stacktrace:
+    reports/2026-11-05_17-08-31/paradym/test.log held it 15 times, once after each attempt (13
+    tests, 2 reruns), because the run's AVD-lane server was started without the flag. The refusal
+    is a property of the server, not of the test, so it is logged once per server with the fix and
+    the fetch is skipped afterwards. The set of refusing servers lives on the pytest config for the
+    same reason as the cursor: each wallet's ``pytest.main()`` has its own ``test.log``. Any
+    other error is still logged in full, every time.
     """
     config = request.config
+    server = _appium_server(driver)
+    refused = getattr(config, "_appium_log_refused", None)
+    if refused is None:
+        refused = config._appium_log_refused = set()
+    if server in refused:
+        return
     try:
         entries = driver.get_log("server")
     except Exception as e:
-        logger.warning(f"[conftest] Could not fetch Appium logs: {e}")
+        if _server_log_disabled(e):
+            refused.add(server)
+            logger.warning(
+                f"[conftest] No appium.log for this run: the Appium server "
+                f"{f'at {server}' if server else 'for this session'} has 'get_server_logs' "
+                "disabled. Start Appium with --allow-insecure=*:get_server_logs to capture it"
+            )
+        else:
+            logger.warning(f"[conftest] Could not fetch Appium logs: {e}")
         return
     if not entries:
         return

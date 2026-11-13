@@ -26,6 +26,9 @@ both: newer than the last entry written, and not older than this wallet's sessio
 from types import SimpleNamespace
 
 import pytest
+from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.remote.client_config import ClientConfig
+from selenium.webdriver.remote.remote_connection import RemoteConnection
 
 from base.conftest_helpers import capture_appium_logs, teardown_test
 
@@ -228,3 +231,96 @@ def test_the_cursor_is_per_wallet_not_per_process(tmp_path):
     assert _blocks(tmp_path / "hovi") == {"test_a": ["hovi's entry"]}
     assert _blocks(tmp_path / "toppan") == {"test_a": ["toppan's entry"]}, \
         "the second wallet inherited the first wallet's entries"
+
+
+# --- a server that refuses get_log('server') is named once, not once per test -------------------
+
+REFUSAL = (
+    "Potentially insecure feature 'get_server_logs' has not been enabled. If you want to enable "
+    "this feature and accept the security ramifications, please do so by following the "
+    "documented instructions at http://appium.io/docs/en/latest/guides/security/"
+)
+STACKTRACE = [
+    "UnknownError: " + REFUSAL,
+    "    at getResponseForW3CError (/opt/homebrew/errors.js:829:36)",
+]
+
+
+def _refusal():
+    return WebDriverException(msg=REFUSAL, stacktrace=STACKTRACE)
+
+
+class RefusingDriver:
+    """Appium started without --allow-insecure=*:get_server_logs."""
+
+    def __init__(self, executor=None):
+        self.calls = 0
+        if executor is not None:
+            self.command_executor = executor
+
+    def get_log(self, kind):
+        self.calls += 1
+        raise _refusal()
+
+
+def _real_executor(addr):
+    """The connection class a real driver carries, so the address lookup is checked against the
+    installed selenium rather than against a stand-in shaped like a guess. Builds no request."""
+    return RemoteConnection(client_config=ClientConfig(remote_server_addr=addr))
+
+
+def _warnings(caplog):
+    return [r for r in caplog.records if r.levelname == "WARNING"]
+
+
+def test_a_refusing_server_is_named_once_and_not_fetched_again(tmp_path, caplog):
+    driver = RefusingDriver(_real_executor("http://127.0.0.1:4724"))
+    request = _request(tmp_path)
+    for name in ("test_a", "test_b", "test_c"):
+        capture_appium_logs(driver, request, name)
+    records = _warnings(caplog)
+    assert len(records) == 1
+    text = records[0].getMessage()
+    assert "--allow-insecure=*:get_server_logs" in text
+    assert "http://127.0.0.1:4724" in text
+    assert "Stacktrace" not in text and "getResponseForW3CError" not in text
+    assert driver.calls == 1
+
+
+def test_two_servers_in_one_session_are_each_named_once(tmp_path, caplog):
+    first = RefusingDriver(_real_executor("http://127.0.0.1:4723"))
+    second = RefusingDriver(_real_executor("http://127.0.0.1:4724"))
+    request = _request(tmp_path)
+    for driver in (first, second, first, second):
+        capture_appium_logs(driver, request, "test_x")
+    texts = [r.getMessage() for r in _warnings(caplog)]
+    assert len(texts) == 2
+    assert "4723" in texts[0] and "4724" in texts[1]
+
+
+def test_the_next_wallets_config_warns_again(tmp_path, caplog):
+    driver = RefusingDriver(_real_executor("http://127.0.0.1:4724"))
+    capture_appium_logs(driver, _request(tmp_path), "test_x")
+    capture_appium_logs(driver, _request(tmp_path), "test_x")
+    assert len(_warnings(caplog)) == 2
+    assert driver.calls == 2
+
+
+def test_a_driver_without_a_command_executor_still_warns_once(tmp_path, caplog):
+    driver = RefusingDriver()
+    request = _request(tmp_path)
+    capture_appium_logs(driver, request, "test_a")
+    capture_appium_logs(driver, request, "test_b")
+    records = _warnings(caplog)
+    assert len(records) == 1
+    assert "this session" in records[0].getMessage()
+    assert driver.calls == 1
+
+
+def test_other_errors_are_still_logged_in_full_every_time(tmp_path, caplog):
+    request = _request(tmp_path)
+    capture_appium_logs(DeadDriver(), request, "test_a")
+    capture_appium_logs(DeadDriver(), request, "test_b")
+    texts = [r.getMessage() for r in _warnings(caplog)]
+    assert len(texts) == 2
+    assert all("Could not fetch Appium logs" in t for t in texts)
