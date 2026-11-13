@@ -132,9 +132,41 @@ _QUOTED = re.compile(r'"([^"]{1,400})"')
 # procivis's "Fetching well known metadata from ..." and walt.id's "Invalid client_id prefix..." —
 # while a quoted XPath, a parenthesised one and a bare `pkg:id/name` all stay suppressed.
 _LOCATORISH = re.compile(r'@resource-id|By\.\w+|^//|^\(//|^[\w.]+:id/[\w.]+$')
+# The content test above cannot see a span whose words are plain but whose context is a locator.
+# base/base_page.py formats `Element {locator} not clickable after {t}s` with the Python tuple repr,
+# so reports/2026-11-05_17-08-31/paradym/app.log published `wallet said: "Yes, archive"` from
+# `Element ('xpath', '//*[@content-desc="Yes, archive"]')`, and `wallet said: "true"` five times
+# from `[@clickable="true" and ...]`. Two context rules close that: the span lies inside a
+# `('strategy', 'value')` repr (single or double quoted, with backslash escapes, as repr picks
+# the quote by content), or it is an XPath predicate value (`@attr=` or `contains(@attr, `).
+# The strategy is matched against the real `By`/`AppiumBy` names, not any word: a message that
+# formats a tuple of the wallet's copy, `('Error', "Can't connect")`, would otherwise lose it.
+_Q = r"""(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")"""
+_STRATEGY = (r"(?:xpath|id|name|class name|css selector|link text|partial link text|tag name"
+             r"|accessibility id|-[a-z][a-z ]*)")
+_LOCATOR_TUPLE = re.compile(r"""\(\s*(['"])""" + _STRATEGY + r"""\1\s*,\s*""" + _Q + r"\s*\)")
+_PREDICATE_BEFORE = re.compile(r"@[\w:.-]+\s*[=,]\s*$")
 _LEADING_TAG = re.compile(r"\s*\[([^\]]+)\]")
 # "TimeoutException: Message:" — an exception type and nothing else.
 _NO_MESSAGE = re.compile(r"^(?:Message:?)?\s*$")
+
+
+def _wallet_words(line: str) -> str:
+    """The first quoted span of a failure line that is the wallet's words, or "".
+
+    A span is rejected when its content looks like a locator (`_LOCATORISH`) or when its context
+    is one: inside a locator tuple repr, or the value of an XPath attribute predicate.
+    """
+    tuples = [m.span() for m in _LOCATOR_TUPLE.finditer(line)]
+    for m in _QUOTED.finditer(line):
+        if _LOCATORISH.search(m.group(1)):
+            continue
+        if any(a <= m.start() < b for a, b in tuples):
+            continue
+        if _PREDICATE_BEFORE.search(line[:m.start()]):
+            continue
+        return m.group(1)
+    return ""
 
 
 def _error_line(line: str, where: str) -> str:
@@ -268,8 +300,7 @@ def record_error_screen(driver, request, config, *, wallet: str = "", evidence=(
         # be gone (hovi's error is a banner, suspected to be a timed toast).
         # The first quoted span that is not a locator: a message can carry both, and a wallet's
         # own words are worth more than the first match.
-        said = next((m.group(1) for m in _QUOTED.finditer(line)
-                     if not _LOCATORISH.search(m.group(1))), "")
+        said = _wallet_words(line)
         said = said or _read_error_text(driver, wallet)
 
         surface = _error_surface(wallet)

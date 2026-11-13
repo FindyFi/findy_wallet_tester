@@ -25,6 +25,7 @@ import pytest
 from base.screens import Screens
 from base.conftest_helpers import (
     _leading_tags,
+    _wallet_words,
     record_error_screen,
     save_failure_artifacts,
 )
@@ -448,3 +449,62 @@ def test_a_first_attempt_is_not_cluttered_with_an_attempt_number(tmp_path):
     request = _request(tmp_path, params={"driver": "hovi"}, line="RuntimeError: boom")
     record_error_screen(Driver(), request, _config(), wallet="hovi")
     assert "attempt" not in _digest(tmp_path)
+
+
+# --- context rule: a locator is a locator even when its content is plain words ---------------
+
+def test_a_paradym_xpath_literal_is_not_published_as_the_wallets_words(tmp_path):
+    """reports/2026-11-05_17-08-31/paradym/app.log, test_reset_credentials: `wallet said:
+    "Yes, archive"` was our own XPath literal from base_page's `Element {locator} not clickable`,
+    not paradym's copy. The content filter cannot see it; the tuple context can."""
+    request = _request(
+        tmp_path, params={"driver": "paradym"},
+        line=("Exception: Element ('xpath', '//*[@content-desc=\"Yes, archive\"]') "
+              "not clickable after 10s"),
+    )
+    record_error_screen(Driver(), request, _config(), wallet="paradym")
+
+    assert "Yes, archive" not in _field(_digest(tmp_path), "wallet said")
+
+
+@pytest.mark.parametrize("line", [
+    # `wallet said: "true"` was published 5 times across reports/ from this shape.
+    "Element ('xpath', '//android.view.View[@clickable=\"true\" and .//android.widget.TextView]')"
+    " not clickable after 10s",
+    "no match for //*[@text=\"Retry\"]",
+    "no match for //*[@resource-id=\"x:id/y\"]",
+    'no match for //*[contains(@text, "Next")]',
+    "no match for //*[@text = \"Next\"]",
+    "Element " + repr(("xpath", "//*[@text=\"Don't\"]")) + " not clickable",
+    "Element " + repr(("xpath", "//*[@text=\"Don't\" and @x='y']")) + " not clickable",
+    "Element " + repr(("-android uiautomator", 'new UiSelector().text("Go")')) + " not found",
+    # Both quote kinds, so repr escapes the apostrophe as \' and only the tuple rule applies.
+    "Element " + repr(("-android uiautomator", 'new UiSelector().text("Don\'t")')) + " not found",
+    "Element " + repr(("accessibility id", "Back")) + " not found",
+    # repr double-quotes a value holding an apostrophe, and plain words give the content filter
+    # nothing to go on.
+    "Element " + repr(("accessibility id", "Don't allow")) + " not found",
+])
+def test_a_locator_by_context_yields_no_wallet_words(line):
+    assert _wallet_words(line) == ""
+
+
+def test_copy_after_a_locator_tuple_wins():
+    line = "Element ('id', 'x') missing; wallet showed \"Try again later\""
+    assert _wallet_words(line) == "Try again later"
+
+
+@pytest.mark.parametrize("line, expected", [
+    ("FlowFailure: [rejected] [credential_flow] Element ('xpath', '//*[@text=\"Retry\"]') "
+     "shown with \"Connection failed\"", "Connection failed"),
+    ('RuntimeError: wallet said "Send to user@example.com failed"',
+     "Send to user@example.com failed"),
+    ('RuntimeError: wallet said "Error: code=500"', "Error: code=500"),
+    ('RuntimeError: wallet said "Could not reach https://issuer.example/offer"',
+     "Could not reach https://issuer.example/offer"),
+    # A tuple of the wallet's own copy is not a locator: repr double-quotes the apostrophe.
+    ("FlowFailure: [rejected] [credential_flow] hovi showed " + repr(("Error", "Can't connect")),
+     "Can't connect"),
+])
+def test_wallet_copy_is_still_quoted_next_to_locator_like_text(line, expected):
+    assert _wallet_words(line) == expected
