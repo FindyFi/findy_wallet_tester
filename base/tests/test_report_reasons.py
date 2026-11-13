@@ -98,13 +98,14 @@ def test_a_typed_category_beats_what_the_prose_would_say():
     said = "FlowFailure: [processing] [credential_flow] 'x' was accepted, then nothing for 30s"
     cell = report.make_cell(recs, {"category": "processing", "error": said})
     assert cell["reason"] == "processing"
-    assert cell["detail"] == said, "a disagreeing log line must not be published under the reason"
+    assert cell["detail"] == "'x' was accepted, then nothing for 30s", \
+        "a disagreeing log line must not be published under the reason"
 
 
 def test_when_prose_and_record_agree_the_log_headline_is_the_detail():
     headline = "base.outcome.FlowFailure: [rejected] [credential_flow] hovi said no"
     cell = report.make_cell(_failed(headline), {"category": "rejected", "error": "short form"})
-    assert cell["detail"] == headline
+    assert cell["detail"] == "hovi said no"
 
 
 def test_a_teardown_error_after_a_typed_failure_does_not_become_its_detail():
@@ -118,7 +119,7 @@ def test_a_teardown_error_after_a_typed_failure_does_not_become_its_detail():
     cell = report.make_cell(recs, {"category": "rejected", "error": call})
     assert cell["reason"] == "rejected"
     assert "InvalidSessionId" not in cell["detail"]
-    assert cell["detail"] == call
+    assert cell["detail"] == "hovi refused the offer"
 
 
 def test_an_untyped_record_falls_back_to_the_prose():
@@ -140,7 +141,7 @@ def test_the_detail_comes_from_the_record_when_the_log_has_none():
     cell = report.make_cell([{"result": "Failed", "log": ""}],
                             {"category": "absent", "error": "FlowFailure: [absent] nothing came"})
     assert cell["reason"] == "absent"
-    assert cell["detail"] == "FlowFailure: [absent] nothing came"
+    assert cell["detail"] == "nothing came"
 
 
 def _run_dir(tmp_path, headline, summary=None):

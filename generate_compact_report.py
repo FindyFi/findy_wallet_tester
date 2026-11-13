@@ -405,6 +405,10 @@ TYPED_CATEGORY_RE = re.compile(
     r"^[\w.]*(?:Error|Exception|Failure|Failed):\s*\[([a-z_]+)\]"
 )
 
+# The flow's own name, which follows the category: "[credential_flow]". Only dropped from a
+# tooltip when it directly follows a known category (see `_detail`).
+FLOW_TAG_RE = re.compile(r"\[[a-z_]+\]\s*")
+
 # The exception headline inside a pytest failure block: a line starting with
 # "E" whose text opens with an exception class or a bare assert. Skips the
 # stack frames, source echo and assertion diffs that also carry the E prefix.
@@ -492,8 +496,20 @@ def classify_failure(log: Optional[str]):
 
 
 def _detail(headline: str) -> str:
-    """Tidy one exception headline for a tooltip."""
+    """Tidy one exception headline for a tooltip.
+
+    A typed headline loses its exception class, its `[category]` tag and at most one `[flow]`
+    tag before the length cut: the cell already names the category, and the ~45 characters they
+    take are better spent on the wallet's own words. An untyped headline is kept as it is,
+    because there the class is often the only signal and nothing marks a bracket as a flow name.
+    """
     text = NO_RETRY_RE.sub("", headline).strip()
+    typed = TYPED_CATEGORY_RE.match(text)
+    if typed and typed.group(1) in FAILURE_CATEGORIES:
+        rest = text[typed.end():].lstrip()
+        flow = FLOW_TAG_RE.match(rest)
+        rest = rest[flow.end():] if flow else rest
+        text = rest.strip() or text
     if len(text) > DETAIL_MAX:
         text = text[:DETAIL_MAX - 1].rstrip() + "\u2026"
     return text
