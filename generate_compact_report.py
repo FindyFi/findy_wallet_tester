@@ -264,8 +264,9 @@ FAILURE_CATEGORIES = {
         "stage": None,
         "label": "Session lost",
         "short": "session lost",
-        "description": "The test harness lost its connection to the device mid-test. The cell "
-                       "says nothing about interoperability.",
+        "description": "The test framework lost its connection to the device mid-test. The cell "
+                       "says nothing about interoperability. It is not counted in the pass "
+                       "and fail totals.",
     },
     "harness": {
         # No stage: the flow never started, so it cannot have stopped in one.
@@ -273,7 +274,8 @@ FAILURE_CATEGORIES = {
         "label": "Test setup",
         "short": "setup",
         "description": "The test setup failed before the flow could run. The cell says "
-                       "nothing about interoperability.",
+                       "nothing about interoperability. It is not counted in the pass and "
+                       "fail totals.",
     },
 }
 
@@ -707,7 +709,7 @@ def collect(run_dir: Path) -> dict:
     verification: dict[str, dict[str, dict]] = {}
     issuance_agents: set = set()
     verification_agents: set = set()
-    totals = {"Passed": 0, "Failed": 0, "Error": 0, "Skipped": 0}
+    totals = {"Passed": 0, "Failed": 0, "Error": 0, "Skipped": 0, "Framework": 0}
     # wallet -> variants seen in this run; empty set means "no extra dimension"
     variants: dict[str, set] = {}
     no_report: list = []
@@ -757,7 +759,11 @@ def collect(run_dir: Path) -> dict:
                 cell["reached_label"] = stage_text(_STAGE_TEXT[cell["stage"]], "label", flow)
             bucket = target.setdefault(col, {})
             bucket[agent] = merge_cells(bucket.get(agent), cell)
-            if cell["outcome"] in totals:
+            if cell["outcome"] in ("Failed", "Error") and cell["reason"] in OFF_FLOW_REASONS:
+                # The cell still shows, labelled; a failure of the test framework itself is
+                # not counted in the pass and fail totals.
+                totals["Framework"] += 1
+            elif cell["outcome"] in totals:
                 totals[cell["outcome"]] += 1
 
     columns = []
@@ -1148,6 +1154,7 @@ h1 { margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: -.01em; }
 .pill.fail { background: rgba(212,69,44,.12); color: var(--fail); }
 .pill.err  { background: rgba(214,138,23,.14); color: var(--err); }
 .pill.skip { background: #eef0f3; color: var(--skip); }
+.pill.framework { background: #eef0f3; color: var(--skip); }
 .pill svg { width: 12px; height: 12px; }
 
 .table-wrap { padding: 6px 0 0; overflow-x: auto; }
@@ -2095,6 +2102,7 @@ def render_change_key(matrix: dict) -> str:
 # got: drawing a lost Appium session at "Wallet opens" would publish it as a finding about the
 # vendor, which is what keeping them apart is for. A crash is the wallet's, so a measured stage
 # places it — that is exactly where it crashed.
+# The same reasons are kept out of the pass and fail totals (see `collect`).
 OFF_FLOW_REASONS = ("harness", "lost_session")
 
 
@@ -2517,20 +2525,32 @@ def _logo_html(output_dir: Path, embed: bool) -> str:
     return f'<img class="logo" src="{html.escape(src, quote=True)}" alt="" />'
 
 
+_FRAMEWORK_TIP = (
+    "Failures of the test framework itself (a lost device session, a failed test setup). "
+    "Their cells are shown and labelled, but not counted in the pass and fail totals."
+)
+
+
 def _pills_html(totals: dict, flaky_cells: int = 0) -> str:
     parts = [
-        ("ok",   SVG_PASS, totals.get("Passed", 0),  "passing"),
-        ("fail", SVG_FAIL, totals.get("Failed", 0),  "failing"),
+        ("ok",   SVG_PASS, totals.get("Passed", 0),  "passing", ""),
+        ("fail", SVG_FAIL, totals.get("Failed", 0),  "failing", ""),
     ]
     if totals.get("Error"):
-        parts.append(("err",  SVG_ERR,  totals["Error"],   "errored"))
+        parts.append(("err",  SVG_ERR,  totals["Error"],   "errored", ""))
     if totals.get("Skipped"):
-        parts.append(("skip", SVG_SKIP, totals["Skipped"], "skipped"))
+        parts.append(("skip", SVG_SKIP, totals["Skipped"], "skipped", ""))
+    if totals.get("Framework"):
+        parts.append(("framework", SVG_SKIP, totals["Framework"], "not counted", _FRAMEWORK_TIP))
     if flaky_cells:
-        parts.append(("flaky", SVG_PASS, flaky_cells, "on retry"))
+        parts.append(("flaky", SVG_PASS, flaky_cells, "on retry", ""))
+
+    def title(tip: str) -> str:
+        return f' title="{html.escape(tip, quote=True)}"' if tip else ""
+
     return "".join(
-        f'<span class="pill {cls}">{svg}<span>{n} {label}</span></span>'
-        for cls, svg, n, label in parts
+        f'<span class="pill {cls}"{title(tip)}>{svg}<span>{n} {label}</span></span>'
+        for cls, svg, n, label, tip in parts
     )
 
 
