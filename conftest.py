@@ -23,8 +23,10 @@ from base.android import (handle_biometric_if_present, handle_permission_if_pres
 from base.base_test import BaseTest, UpdateNotFinished
 from base import progress
 from base.conftest_helpers import (
+    archive_previous_attempt,
     capture_appium_logs,
     node_failed,
+    note_attempt_file,
     save_failure_artifacts,
     screen_is_protected,
 )
@@ -713,8 +715,10 @@ def pytest_runtest_setup(item):
     param every one of these tests carries.
 
     Also where each attempt's progress trail starts empty. A conftest hook runs before pytest's own
-    setup, so this is before any fixture of the attempt, and it runs again for every rerun.
+    setup, so this is before any fixture of the attempt, and it runs again for every rerun. That
+    is also where a finished attempt's evidence files are renamed out of the next one's way.
     """
+    archive_previous_attempt(item)
     progress.reset()
     callspec = getattr(item, "callspec", None)
     params = getattr(callspec, "params", {})
@@ -851,11 +855,12 @@ def pytest_runtest_makereport(item, call):
     if rep.when == "setup":
         # A rerun re-runs the *same* item object, and pytest-rerunfailures only relabels reports
         # as "rerun" after the protocol returns — so each attempt looks like a genuine failure and
-        # `save_failure_artifacts` runs again, overwriting the screenshot and XML dump. The `app`
-        # fixture resets its own three capture flags at the top of each attempt; these four were
-        # not reset at all, so the digest
-        # kept attempt 1's cause while the files on disk became attempt 3's, and a test that failed
-        # once and then passed still left a failure block contradicting summary.json.
+        # `save_failure_artifacts` runs again. `pytest_runtest_setup` has already renamed the
+        # previous attempt's files (`archive_previous_attempt`). The `app` fixture resets its own
+        # three capture flags at the top of each attempt; the failure fields below must be
+        # reset here, or the digest would keep attempt 1's cause for attempt 3, and a test that
+        # failed once and then passed would still leave a failure block contradicting
+        # summary.json.
         item._attempt = getattr(item, "_attempt", 0) + 1
         for stale in ("_failure_line", "_failure_category", "_failure_where", "_failure_trail",
                       "_error_screen_logged"):
@@ -1067,6 +1072,7 @@ def _save_recording(driver, request, app_name: str) -> None:
             test_name = sanitize_test_name(node.name)
             path = recordings_dir / f"{test_name}.mp4"
             path.write_bytes(base64.b64decode(video_b64))
+            note_attempt_file(node, f"recordings/{path.name}")
             if screen_is_protected(request, app_name):
                 # FLAG_SECURE blanks the video as well as screenshots — confirmed 2026-09-04
                 # by extracting frames from a heidi recording: the wallet's own screens are

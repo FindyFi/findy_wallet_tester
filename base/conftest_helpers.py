@@ -8,6 +8,7 @@ wallet conftest to avoid repeating the same ~40 lines.
 import importlib
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 
@@ -245,9 +246,9 @@ def record_error_screen(driver, request, config, *, wallet: str = "", evidence=(
     if getattr(request.node, "_error_screen_logged", False):
         return
     request.node._error_screen_logged = True
-    # One block per *attempt*, not per test. A rerun overwrites the screenshot and XML dump, so
-    # the last block is the one whose `evidence:` files are still on disk; the earlier blocks are
-    # the earlier causes, which a retried failure often does not share.
+    # One block per *attempt*, not per test: the earlier blocks are the earlier causes, which a
+    # retried failure often does not share. When a rerun starts, `archive_previous_attempt` renames
+    # the finished attempt's files and re-points its block's `evidence:` line at them.
     attempt = getattr(request.node, "_attempt", 1)
 
     try:
@@ -318,6 +319,101 @@ def _wallet_version(request) -> str:
         return ""
 
 
+def note_attempt_file(node, rel: str) -> None:
+    """Remember a run-dir-relative file this attempt wrote, for `archive_previous_attempt`."""
+    try:
+        files = getattr(node, "_attempt_files", None)
+        if files is None:
+            files = node._attempt_files = []
+        if rel not in files:
+            files.append(rel)
+    except Exception as e:
+        logger.warning(f"[conftest] Could not note {rel} as attempt evidence: {e}")
+
+
+def _with_attempt(rel: str, attempt: int) -> str:
+    """`xml_dumps/t.xml` -> `xml_dumps/t.attempt2.xml`."""
+    stem, ext = os.path.splitext(rel)
+    return f"{stem}.attempt{attempt}{ext}"
+
+
+def _repoint_block(log: str, header: str, attempt: int, renames: dict):
+    """`log` with the last `header` block's `evidence:` entries swapped per `renames`.
+
+    None when there is nothing to change: no such block, a block of another attempt, or no
+    entry of the evidence line is in `renames`.
+    """
+    lines = log.split("\n")
+    starts = [i for i, ln in enumerate(lines) if ln == header]
+    if not starts:
+        return None
+    first = starts[-1]
+    end = next((i for i in range(first + 1, len(lines)) if lines[i].startswith("--- TEST: ")),
+               len(lines))
+    when = next((ln for ln in lines[first:end] if ln.startswith("when:")), "")
+    found = re.search(r"\(attempt (\d+)\)\s*$", when)
+    if (int(found.group(1)) if found else 1) != attempt:
+        return None
+    for i in range(first, end):
+        if lines[i].startswith("evidence:"):
+            head, _, tail = lines[i].partition(":")
+            pad = tail[:len(tail) - len(tail.lstrip())]
+            entries = [e.strip() for e in tail.split(",")]
+            swapped = [renames.get(e, e) for e in entries]
+            if swapped == entries:
+                return None
+            lines[i] = f"{head}:{pad}{', '.join(swapped)}"
+            return "\n".join(lines)
+    return None
+
+
+def archive_previous_attempt(item) -> None:
+    """Keep the evidence of an attempt that is being rerun, under `.attempt<N>` names.
+
+    pytest-rerunfailures re-runs the same item, and every attempt writes the same filenames, so
+    attempts 1 and 2 used to point at attempt 3's files from their app.log blocks. An attempt
+    cannot know at capture time whether a rerun follows, so its files are renamed when one
+    actually starts; the final attempt keeps the plain names and a run without reruns is
+    unchanged. Called first in the root conftest's `pytest_runtest_setup`, which runs for every
+    test, so the no-op path is one getattr.
+
+    The app.log rewrite is a read-modify-write. It is safe because only this process appends to
+    this wallet's app.log between attempts; two xdist workers sharing one run dir could
+    interleave, and this repo documents xdist as unsupported for the run's reports (see
+    `write_summary`). Never raises: it runs in setup, and a failure here must not fail the test.
+    """
+    files = getattr(item, "_attempt_files", None)
+    if not files:
+        return
+    try:
+        attempt = item._attempt
+        run_dir = item.config._run_dir
+        name = sanitize_test_name(item.name)
+        renames = {}
+        for rel in files:
+            src = run_dir / rel
+            if src.exists():
+                new = _with_attempt(rel, attempt)
+                os.replace(src, run_dir / new)
+                renames[rel] = new
+        if not renames:
+            return
+        app_log = run_dir / "app.log"
+        if app_log.exists():
+            updated = _repoint_block(app_log.read_text(encoding="utf-8"),
+                                     f"--- TEST: {name} ---", attempt, renames)
+            if updated is not None:
+                tmp = app_log.with_name("app.log.tmp")
+                tmp.write_text(updated, encoding="utf-8")
+                os.replace(tmp, app_log)
+        logger.info(f"[conftest] Rerun of {name}: kept attempt {attempt}'s evidence as "
+                    f"{', '.join(renames.values())}")
+    except Exception as e:
+        logger.warning(f"[conftest] Could not archive the previous attempt's evidence: {e}")
+    finally:
+        item._attempt_files = []
+
+
 def save_failure_artifacts(driver, request, config, *, wallet: str = "") -> bool:
     """Dump the page XML and try a screenshot for a failed test. Returns True if anything saved.
 
@@ -343,6 +439,7 @@ def save_failure_artifacts(driver, request, config, *, wallet: str = "") -> bool
             path.write_text(driver.page_source, encoding="utf-8")
             logger.info(f"[conftest] XML dump saved: {path}")
             evidence.append(f"xml_dumps/{path.name}")
+            note_attempt_file(request.node, evidence[-1])
             saved = True
         except Exception as e:
             logger.warning(f"[conftest] Could not save XML dump: {e}")
@@ -355,6 +452,7 @@ def save_failure_artifacts(driver, request, config, *, wallet: str = "") -> bool
             driver.save_screenshot(str(path))
             logger.info(f"[conftest] Screenshot saved: {path}")
             evidence.append(f"screenshots/{path.name}")
+            note_attempt_file(request.node, evidence[-1])
             saved = True
         except Exception as e:
             if is_secure_screen_refusal(e):

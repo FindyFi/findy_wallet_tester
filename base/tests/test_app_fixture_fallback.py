@@ -58,6 +58,17 @@ def _blocks(path: Path, test: str) -> int:
     return path.read_text().count(f"--- TEST: {test}_fakewallet ---")
 
 
+def _evidence(run_dir: Path, test: str) -> list:
+    """The `evidence:` entries of each of a test's app.log blocks, in order."""
+    out, inside = [], False
+    for line in (run_dir / "app.log").read_text().splitlines():
+        if line.startswith("--- TEST: "):
+            inside = line == f"--- TEST: {test}_fakewallet ---"
+        elif inside and line.startswith("evidence:"):
+            out.append([e.strip() for e in line.split(":", 1)[1].split(",")])
+    return out
+
+
 def _has(run_dir: Path, sub: str, test: str, ext: str) -> bool:
     return (run_dir / sub / f"{test}_fakewallet.{ext}").exists()
 
@@ -121,6 +132,36 @@ def test_a_rerun_that_dies_early_is_not_skipped_on_the_previous_attempts_flags(c
         "attempt 2 captured nothing: it inherited attempt 1's flags"
     )
     assert _blocks(run_dir / "appium.log", test) == 2, "one block per attempt"
+
+    # Attempt 1's files were renamed when the rerun started; attempt 2's keep the plain names.
+    for sub, ext, text in (("xml_dumps", "xml", "attempt='{}'"),
+                           ("screenshots", "png", "attempt={}"),
+                           ("recordings", "mp4", "attempt={}")):
+        first = run_dir / sub / f"{test}_fakewallet.attempt1.{ext}"
+        last = run_dir / sub / f"{test}_fakewallet.{ext}"
+        assert text.format(1) in first.read_text(), f"{first.name} is not attempt 1's"
+        assert text.format(2) in last.read_text(), f"{last.name} is not attempt 2's"
+    assert _evidence(run_dir, test) == [
+        [f"xml_dumps/{test}_fakewallet.attempt1.xml",
+         f"screenshots/{test}_fakewallet.attempt1.png"],
+        [f"xml_dumps/{test}_fakewallet.xml", f"screenshots/{test}_fakewallet.png"],
+    ], "each app.log block must name its own attempt's files"
+
+
+def test_a_failure_that_then_passes_keeps_its_evidence_under_attempt_names(child):
+    run_dir, test = child["run_dir"], "test_fails_then_passes"
+    assert sorted(child["attempts"][test]) == [1, 2], "the rerun did not happen"
+
+    first = f"{test}_fakewallet.attempt1"
+    assert "attempt='1'" in (run_dir / "xml_dumps" / f"{first}.xml").read_text()
+    assert "attempt=1" in (run_dir / "screenshots" / f"{first}.png").read_text()
+    assert not _has(run_dir, "xml_dumps", test, "xml"), "a canonical dump would be attempt 1's"
+    assert not _has(run_dir, "screenshots", test, "png")
+    assert "attempt=2" in (run_dir / "recordings" / f"{test}_fakewallet.mp4").read_text()
+    assert _evidence(run_dir, test) == [
+        [f"xml_dumps/{test}_fakewallet.attempt1.xml",
+         f"screenshots/{test}_fakewallet.attempt1.png"],
+    ]
 
 
 def test_a_fallback_whose_captures_raise_does_not_bury_the_original_failure(child):

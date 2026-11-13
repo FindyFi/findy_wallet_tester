@@ -40,8 +40,9 @@ class FakeDriver:
     capabilities = {"udid": "fake-serial", "deviceName": "fake-serial", "platformName": "Android",
                     "platformVersion": "14", "deviceModel": "fake"}
 
-    def __init__(self, calls, *, dies=False, captures_raise=False):
+    def __init__(self, calls, *, dies=False, captures_raise=False, attempt=1):
         self.calls = calls
+        self.attempt = attempt  # stamped into every file, so a test can tell whose it is
         self.dies = dies
         self.captures_raise = captures_raise
 
@@ -55,7 +56,7 @@ class FakeDriver:
 
     def stop_recording_screen(self):
         self._capture("stop_recording_screen")
-        return base64.b64encode(b"not really an mp4").decode()
+        return base64.b64encode(f"mp4 attempt={self.attempt}".encode()).decode()
 
     def press_keycode(self, code):
         self.calls.append(f"press_keycode:{code}")
@@ -74,11 +75,11 @@ class FakeDriver:
     @property
     def page_source(self):
         self._capture("page_source")
-        return "<hierarchy><node text='fake'/></hierarchy>"
+        return f"<hierarchy attempt='{self.attempt}'><node text='fake'/></hierarchy>"
 
     def save_screenshot(self, path):
         self._capture("save_screenshot")
-        Path(path).write_bytes(b"not really a png")
+        Path(path).write_bytes(f"png attempt={self.attempt}".encode())
         return True
 
     def get_log(self, kind):
@@ -108,6 +109,7 @@ class _FakeBaseTest:
 _MODES = {
     "test_dies_before_yield": ["dies"],
     "test_rerun_then_dies": ["normal", "dies"],
+    "test_fails_then_passes": ["normal"],
     "test_fallback_with_a_raising_driver": ["dies_and_captures_raise"],
 }
 
@@ -140,7 +142,8 @@ def driver(request, monkeypatch):
 
     calls = []
     fake = FakeDriver(calls, dies=mode in ("dies", "dies_and_captures_raise"),
-                      captures_raise=mode == "dies_and_captures_raise")
+                      captures_raise=mode == "dies_and_captures_raise",
+                      attempt=_ATTEMPTS[request.node.nodeid])
 
     if mode == "dies_and_captures_raise":
         # The real helpers already swallow driver errors, so a raising driver alone never reaches
@@ -196,6 +199,14 @@ def test_passes(app):
 @pytest.mark.parametrize("driver", [WALLET], indirect=True)
 def test_rerun_then_dies(app):
     raise AssertionError("attempt 1 fails in the body")
+
+
+# Fails on attempt 1 only. Its failure files must be kept as `.attempt1.*` once the rerun starts.
+@pytest.mark.flaky(reruns=1)
+@pytest.mark.parametrize("driver", [WALLET], indirect=True)
+def test_fails_then_passes(app, request):
+    if _ATTEMPTS[request.node.nodeid] == 1:
+        raise AssertionError("attempt 1 fails in the body")
 
 
 @pytest.mark.parametrize("driver", [WALLET], indirect=True)
