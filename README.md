@@ -258,8 +258,9 @@ Each entry becomes a test case named `<name>_issuer` / `<name>_verifier` — the
 report charts as matrix rows, so renaming one breaks continuity with previously published runs.
 
 An entry may also carry a `"group"`, naming the kind of credential it issues or requests (`"PID"`,
-`"mDL"`, `"Legal PID"`, `"Age Verification"`, `"IPS"`, `"Pension Credential"`,
-`"Loyalty card and membership"`). The compact report gives each group its own section, with *Issuers* and
+`"mDL"`, `"Legal PID"`, `"Age Verification"`, `"International Patient Summary"`,
+`"Pension Credential"`, `"Student status"`, `"Open badge"`, `"Loyalty card and membership"`).
+The compact report gives each group its own section, with *Issuers* and
 *Verifiers* under it, in the order the groups first appear here, which is why the entries are kept
 sorted by group. Rows inside a section are alphabetical.
 The run history gets a column per group. An entry with no group is charted under a final *Other*
@@ -321,10 +322,12 @@ not Python.
 | `response_field` | JSON field that must hold the deeplink, dotted for a nested one (`by_reference.uri`). If it doesn't, the call fails `[no_retry]` rather than falling back to another link in the response. Leave it out to let the scan find the deeplink: a bare URL, a `uri` field, or the first deeplink anywhere in the JSON. |
 | `rewrite_scheme` | A scheme such as `openid4vp` or `openid-credential-offer`. Written without `://`, and it needs `response_field`. The link in that field is returned as `<scheme>://?<its query>`, the query byte for byte; the link's host, path and fragment are dropped. For Lissi, which answers with a link into its own web wallet (`https://wallet.lissi.io/lite?request_uri=…`): Android would hand that to a browser, never to the wallet under test, and its query is the request itself. |
 
-The two placeholders exist for one provider each. Hovi's playground refuses a `sessionId` it has
-seen in the last hour, so a fixed one fails every run but the first. The Findynet IPS demo posts
-the 50 kB sample bundle its own page fetches from beside it, and fetching the same file keeps it
-out of the registry. They are written `{{…}}` because the config loader expands `${…}` from the
+Hovi's playground refuses a `sessionId` it has seen in the last hour, so a fixed one fails every
+run but the first. The Findynet IPS demo posts the 50 kB sample bundle its own page fetches from
+beside it, and fetching the same file keeps it out of the registry. The Opintotodiste demo mints an
+offer only for records that `GET /demo` has loaded into a cookie session; the GET runs in the same
+session as the request, so `{{get:/demo}}` in an otherwise ignored body field sets the cookie.
+The placeholders are written `{{…}}` because the config loader expands `${…}` from the
 environment before a provider ever sees the value.
 
 Without `response_field` or `rewrite_scheme`, the response is read with the same scan the web
