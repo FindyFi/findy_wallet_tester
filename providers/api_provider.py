@@ -71,11 +71,6 @@ class ApiDeeplinkProvider(DeeplinkProvider):
                         in response_field. Lissi answers with a link into its own web wallet
                         (`https://wallet.lissi.io/lite?request_uri=…`), which Android hands to
                         a browser, never to the wallet under test; its query is the request.
-        setup           requests sent first, in order, in the same session, each with its own
-                        path / method / body / headers. Their responses are not read; what
-                        carries over is the session's cookies. The Opintotodiste demo needs
-                        POST /demo to load its sample records into a cookie session before
-                        POST /credentials/<ref>/offer will mint an offer for one of them.
 
     Two body values are filled in per call rather than sent as written:
         "{{uuid}}"        a fresh UUID. Hovi's playground refuses a sessionId it has seen in
@@ -111,14 +106,18 @@ class ApiDeeplinkProvider(DeeplinkProvider):
                 f"add 'path' under credentials.{name} in the api provider config [no_retry]"
             )
 
-        url = self._url(path)
+        url = f"{self._base_url}/{path.lstrip('/')}"
         method = str(cred.get("method", "POST")).upper()
+        headers = cred.get("headers") or {}
         field = cred.get("response_field")
 
-        for step in self._setup_steps(cred.get("setup"), name):
-            self._send(step, f"setup step for '{name}'")
+        logger.info(f"[api_provider] {method} {url}")
+        if method == "GET":
+            resp = self._session.get(url, headers=headers, timeout=30)
+        else:
+            body = self._fill(cred.get("body"))
+            resp = self._session.request(method, url, json=body, headers=headers, timeout=30)
 
-        resp = self._send(cred, "")
         raise_for_rejection(resp, f"{method} {url}")
 
         scheme = cred.get("rewrite_scheme")
@@ -145,43 +144,6 @@ class ApiDeeplinkProvider(DeeplinkProvider):
             f"No deeplink in the response from {url} — expected a bare offer URL or a JSON "
             f"body holding one, got: {resp.text[:200]} [no_retry]"
         )
-
-    def _url(self, path: str) -> str:
-        if path.startswith(("http://", "https://")):
-            return path
-        return f"{self._base_url}/{path.lstrip('/')}"
-
-    def _send(self, request: dict, what: str):
-        """One configured request in this provider's session. With `what`, a rejection raises.
-
-        The main request leaves `what` empty and checks the response itself, so its error names
-        the request exactly as before; a setup step has nothing else to check, so it raises here.
-        """
-        url = self._url(request["path"])
-        method = str(request.get("method", "POST")).upper()
-        headers = request.get("headers") or {}
-        logger.info(f"[api_provider] {method} {url}" + (f" ({what})" if what else ""))
-        if method == "GET":
-            resp = self._session.get(url, headers=headers, timeout=30)
-        else:
-            body = self._fill(request.get("body"))
-            resp = self._session.request(method, url, json=body, headers=headers, timeout=30)
-        if what:
-            raise_for_rejection(resp, f"{method} {url} ({what})")
-        return resp
-
-    @staticmethod
-    def _setup_steps(setup, name: str) -> list:
-        """The `setup` requests, checked before any is sent. A malformed list is a config error."""
-        if setup is None:
-            return []
-        if not isinstance(setup, list) or not all(
-                isinstance(step, dict) and step.get("path") for step in setup):
-            raise ValueError(
-                f"credentials.{name}.setup must be a list of requests, each with a 'path' "
-                f"[no_retry]"
-            )
-        return setup
 
     @staticmethod
     def _rewritten(text: str, field, scheme: str, url: str) -> str:
