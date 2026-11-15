@@ -435,7 +435,7 @@
         "findynet_ips": {
             "type": "api",
             "base_url": "https://ips.digicredential.eu",
-            "group": "IPS",
+            "group": "International Patient Summary",
             "credential_type": {
                 "name": "International Patient Summary as SD-JWT",
                 "format": "dc+sd-jwt",
@@ -514,6 +514,66 @@
                 "credential_issuance": {
                     "type": "issuance",
                     "path": "pensioncredential.json"
+                }
+            }
+        },
+        "opintotodiste_student_status_sdjwt": {
+            "type": "api",
+            "base_url": "https://opintotodiste.findy.fi",
+            "group": "Student status",
+            "credential_type": {
+                "name": "Student status as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "https://openbadge.digicredential.eu/credentials/student-status/v1/StudentStatusVCT"
+            },
+            "issuer_metadata": "https://issuer.opintotodiste.findy.fi/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "StudentStatusSdJwtVc",
+            "notes": "Minted through the opintotodiste.findy.fi demo: the setup step POST /demo loads the sample student's Koski records into a cookie session, then POST /credentials/<ref>/offer mints a pre-authorized offer (no tx_code, 600 s, single use) for one record. The ref is the demo's student-status record; refs were the same across demo sessions on 2026-11-15, and a stale one fails 404 'Todistetta ei löytynyt'. The token endpoint allows anonymous pre-authorized access (token_endpoint_auth_methods_supported: none). The issuer also lists an ldp_vc OpenBadgeCredential configuration, which the demo never offers.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "setup": [
+                        {
+                            "method": "POST",
+                            "path": "/demo",
+                            "body": {
+                                "lang": "en"
+                            }
+                        }
+                    ],
+                    "path": "/credentials/H7hG124VtPeyu-pFAEXgAS/offer",
+                    "body": {},
+                    "response_field": "offerUri"
+                }
+            }
+        },
+        "opintotodiste_openbadge_sdjwt": {
+            "type": "api",
+            "base_url": "https://opintotodiste.findy.fi",
+            "group": "Open badge",
+            "credential_type": {
+                "name": "Open Badge as SD-JWT",
+                "format": "dc+sd-jwt",
+                "vct": "https://openbadge.digicredential.eu/credentials/v2/OpenBadgeVCT"
+            },
+            "issuer_metadata": "https://issuer.opintotodiste.findy.fi/.well-known/openid-credential-issuer",
+            "credential_configuration_id": "OpenBadgeCredentialSdJwtVc",
+            "notes": "Same demo flow as opintotodiste_student_status_sdjwt. The ref is the sample student's Matriculation Examination record; every record other than the student status is offered as OpenBadgeCredentialSdJwtVc.",
+            "credentials": {
+                "credential_issuance": {
+                    "type": "issuance",
+                    "setup": [
+                        {
+                            "method": "POST",
+                            "path": "/demo",
+                            "body": {
+                                "lang": "en"
+                            }
+                        }
+                    ],
+                    "path": "/credentials/kxL64zjJRbuNAkxbfMz7DZ/offer",
+                    "body": {},
+                    "response_field": "offerUri"
                 }
             }
         },
@@ -953,7 +1013,7 @@
         "findynet_ips": {
             "type": "api",
             "base_url": "https://ips.digicredential.eu",
-            "group": "IPS",
+            "group": "International Patient Summary",
             "credential_type": {
                 "name": "International Patient Summary as SD-JWT",
                 "format": "dc+sd-jwt",

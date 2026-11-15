@@ -258,8 +258,9 @@ Each entry becomes a test case named `<name>_issuer` / `<name>_verifier` — the
 report charts as matrix rows, so renaming one breaks continuity with previously published runs.
 
 An entry may also carry a `"group"`, naming the kind of credential it issues or requests (`"PID"`,
-`"mDL"`, `"Legal PID"`, `"Age Verification"`, `"IPS"`, `"Pension Credential"`,
-`"Loyalty card and membership"`). The compact report gives each group its own section, with *Issuers* and
+`"mDL"`, `"Legal PID"`, `"Age Verification"`, `"International Patient Summary"`,
+`"Pension Credential"`, `"Student status"`, `"Open badge"`, `"Loyalty card and membership"`).
+The compact report gives each group its own section, with *Issuers* and
 *Verifiers* under it, in the order the groups first appear here, which is why the entries are kept
 sorted by group. Rows inside a section are alphabetical.
 The run history gets a column per group. An entry with no group is charted under a final *Other*
@@ -320,6 +321,7 @@ not Python.
 | `headers` | Extra request headers. |
 | `response_field` | JSON field that must hold the deeplink, dotted for a nested one (`by_reference.uri`). If it doesn't, the call fails `[no_retry]` rather than falling back to another link in the response. Leave it out to let the scan find the deeplink: a bare URL, a `uri` field, or the first deeplink anywhere in the JSON. |
 | `rewrite_scheme` | A scheme such as `openid4vp` or `openid-credential-offer`. Written without `://`, and it needs `response_field`. The link in that field is returned as `<scheme>://?<its query>`, the query byte for byte; the link's host, path and fragment are dropped. For Lissi, which answers with a link into its own web wallet (`https://wallet.lissi.io/lite?request_uri=…`): Android would hand that to a browser, never to the wallet under test, and its query is the request itself. |
+| `setup` | Requests sent first, in order, in the same session: a list of objects with their own `path` (required), `method`, `body` and `headers`, read the same way as above. Their responses are not read; what carries over is the session's cookies. A 4xx on one fails `[no_retry]`. For Opintotodiste, whose demo answers `POST /credentials/<ref>/offer` only after `POST /demo` has loaded its sample records into a cookie session. |
 
 The two placeholders exist for one provider each. Hovi's playground refuses a `sessionId` it has
 seen in the last hour, so a fixed one fails every run but the first. The Findynet IPS demo posts

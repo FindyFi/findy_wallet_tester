@@ -211,6 +211,47 @@ def test_a_missing_path_is_a_config_error_not_a_flake():
         provider.get("case")
 
 
+def test_setup_requests_run_first_in_order_in_the_same_session():
+    # Opintotodiste: POST /demo loads the sample records into a cookie session, then the offer.
+    provider = _provider(
+        {"type": "issuance", "path": "/credentials/abc/offer", "body": {},
+         "setup": [{"method": "POST", "path": "/demo", "body": {"lang": "en"}},
+                   {"method": "GET", "path": "https://other.example/warmup", "body": {"x": 1}}],
+         "response_field": "offerUri"},
+        FakeResponse(text='{"offerUri": "%s"}' % OFFER),
+    )
+    assert provider.get("case") == OFFER
+    calls = provider._session.calls
+    assert [(m, u) for m, u, _ in calls] == [
+        ("POST", "https://api.example/demo"),
+        ("GET", "https://other.example/warmup"),
+        ("POST", "https://api.example/credentials/abc/offer"),
+    ]
+    assert calls[0][2]["json"] == {"lang": "en"}
+    assert "json" not in calls[1][2]
+
+
+def test_a_rejected_setup_request_is_not_retried_and_says_it_was_setup():
+    provider = _provider(
+        {"type": "issuance", "path": "/offer", "setup": [{"path": "/demo"}]},
+        FakeResponse(404, "no such demo"),
+    )
+    with pytest.raises(ValueError) as err:
+        provider.get("case")
+    assert "[no_retry]" in str(err.value)
+    assert "setup step" in str(err.value)
+    assert len(provider._session.calls) == 1
+
+
+@pytest.mark.parametrize("setup", [{"path": "/demo"}, [{"method": "POST"}], ["/demo"]])
+def test_a_malformed_setup_is_a_config_error_and_sends_nothing(setup):
+    provider = _provider({"type": "issuance", "path": "/offer", "setup": setup},
+                         FakeResponse(text=OFFER))
+    with pytest.raises(ValueError, match=r"setup.*\[no_retry\]"):
+        provider.get("case")
+    assert provider._session.calls == []
+
+
 def test_the_factory_routes_type_api_to_the_api_provider():
     config = {"test_cases": {"x_issuer": {
         "type": "api", "base_url": "https://api.example",
@@ -497,9 +538,11 @@ def test_every_registry_entry_gets_the_provider_its_type_names(section, row, ent
 
 # Their request names the credential in the vendor's own terms (Hovi's playground type, the IPS
 # demo's protocol) or not at all (Lissi's issuance call takes no body; its id "pid" only appears
-# in the minted offer), so the recorded configuration id cannot be checked in it.
+# in the minted offer; Opintotodiste names a demo record, and the issuer picks the configuration
+# from that record's kind), so the recorded configuration id cannot be checked in it.
 _ID_NOT_IN_REQUEST = {"hovi_playground_pid_mdoc", "hovi_playground_pid_sdjwt", "findynet_ips",
-                      "lissi_pid_sdjwt"}
+                      "lissi_pid_sdjwt", "opintotodiste_student_status_sdjwt",
+                      "opintotodiste_openbadge_sdjwt"}
 
 
 @pytest.mark.parametrize("name,entry",
