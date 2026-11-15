@@ -357,11 +357,13 @@ describe the interop matrix, not any one wallet, so they are defined once:
 Each entry becomes a test case named `<name>_issuer` / `<name>_verifier` — the names the compact
 report charts as matrix rows, so renaming one breaks continuity with previously published runs.
 
-An entry may also carry a `"group"`, naming where the provider comes from (`"Pension demo"`,
-`"FIDES Community"`), or, for `"EUDI credentials"`, the one-row-per-credential-type matrix it
-belongs to (see [Credential-typed entries](#credential-typed-entries)). The compact report gives
-each group its own section, with *Issuers* and *Verifiers* under it, in the order the groups first appear here, and its run history gets a column
-per group. If no entry has a group, the report is split by *Issuers* and *Verifiers* alone.
+An entry may also carry a `"group"`, naming the kind of credential it issues or requests (`"PID"`,
+`"mDL"`, `"Legal PID"`, `"Age Verification"`, `"IPS"`, `"Pension Credential"`,
+`"Loyalty card and membership"`). The compact report gives each group its own section, with *Issuers* and
+*Verifiers* under it, in the order the groups first appear here, which is why the entries are kept
+sorted by group. Rows inside a section are alphabetical.
+The run history gets a column per group. An entry with no group is charted under a final *Other*
+section, and if no entry has a group, the report is split by *Issuers* and *Verifiers* alone.
 
 A wallet that declares its own `test_cases` block opts out of the registry entirely. That is how
 `wallets/example/` stays a self-contained illustration; no real wallet does it.
@@ -467,7 +469,7 @@ proofs. They are kept to show when wallets support that.
 
 ### Credential-typed entries
 
-The entries in the `"EUDI credentials"` group each cover one credential type from one provider,
+An entry with a `credential_type` covers one credential type from one provider,
 and carry what a report needs to describe that type without asking the provider again:
 
 | Key | Meaning |
