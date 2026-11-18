@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from base.android import (
+    authenticate_device,
     authenticate_with_pin,
     dismiss_biometric_enrollment,
     handle_biometric_if_present,
@@ -88,21 +89,21 @@ def biometric_fingerprint(*, detect_timeout: float = 0.4, max_fires: int = 4) ->
     )
 
 
-def device_pin_prompt(*, detect_timeout: float = 0.4, max_fires: int = 4,
-                      extends: float = 10.0) -> Interstitial:
-    """The system auth sheet, answered with the device lock PIN rather than a fingerprint.
+def _device_auth(name: str, authenticate: Callable[[Any, Any], bool], *, max_fires: int,
+                 extends: float) -> Interstitial:
+    """A system auth sheet answered by `authenticate(driver, ctx)`, enrolment wizard absorbed.
 
-    Preferred where fingerprint simulation is unreliable or locks out. It also absorbs Android's
-    biometric-enrolment wizard, which authbound discovered the hard way: the PIN is accepted and
-    Android *then* offers to enrol a fingerprint, which makes the dismissal wait fail even though
-    authentication succeeded. That says nothing about the wallet, so it must not surface as one.
+    It absorbs Android's biometric-enrolment wizard, which authbound discovered the hard way: the
+    PIN is accepted and Android *then* offers to enrol a fingerprint, which makes the dismissal
+    wait fail even though authentication succeeded. That says nothing about the wallet, so it must
+    not surface as one.
 
     `extends` because answering a prompt is progress — the wallet asked us for something and got
     it, so the wait has earned more time.
     """
     def handle(driver, ctx) -> bool:
         try:
-            acted = authenticate_with_pin(driver, ctx.device_pin, detect_timeout=detect_timeout)
+            acted = authenticate(driver, ctx)
         except Exception:
             if not in_biometric_enrollment(driver):
                 raise
@@ -113,7 +114,34 @@ def device_pin_prompt(*, detect_timeout: float = 0.4, max_fires: int = 4,
             return True
         return acted
 
-    return Interstitial("device-pin", handle, max_fires=max_fires, extends=extends)
+    return Interstitial(name, handle, max_fires=max_fires, extends=extends)
+
+
+def device_pin_prompt(*, detect_timeout: float = 0.4, max_fires: int = 4,
+                      extends: float = 10.0) -> Interstitial:
+    """The system auth sheet, answered with the device lock PIN rather than a fingerprint.
+
+    Preferred where fingerprint simulation is unreliable or locks out.
+    """
+    return _device_auth(
+        "device-pin",
+        lambda driver, ctx: authenticate_with_pin(
+            driver, ctx.device_pin, detect_timeout=detect_timeout),
+        max_fires=max_fires, extends=extends)
+
+
+def device_auth_prompt(*, detect_timeout: float = 0.4, max_fires: int = 4,
+                       extends: float = 10.0) -> Interstitial:
+    """The system auth sheet, answered the way the device allows.
+
+    A simulated fingerprint on an emulator's fingerprint sheet, the device PIN anywhere else
+    (see `authenticate_device`).
+    """
+    return _device_auth(
+        "device-auth",
+        lambda driver, ctx: authenticate_device(
+            driver, ctx.device_pin, detect_timeout=detect_timeout),
+        max_fires=max_fires, extends=extends)
 
 
 def app_chooser(app_label: str, *, max_fires: int = 2) -> Interstitial:

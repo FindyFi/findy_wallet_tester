@@ -6,7 +6,7 @@ from selenium.common.exceptions import TimeoutException
 
 from appium.webdriver.common.appiumby import AppiumBy
 
-from base.android import handle_biometric_if_present, authenticate_with_pin
+from base.android import authenticate_device
 from base.utils import wait_present
 from wallets.gataca.pages.landing_page import SCREEN_ID as _landing_id, LandingPage, has_open_wallet_button
 from wallets.gataca.pages.home_page import SCREEN_ID as _home_id
@@ -62,8 +62,8 @@ def _back_to_known_state(driver, package: str) -> str:
 
 def _unlock_biometric(driver, pin, default_timeout: float):
     """Authenticate via PIN on the biometric unlock prompt and wait for home."""
-    logger.info("[init_flow] Biometric unlock screen — authenticating with PIN")
-    authenticate_with_pin(driver, pin)
+    logger.info("[init_flow] Biometric unlock screen — answering the system auth prompt")
+    authenticate_device(driver, pin)
     try:
         WebDriverWait(driver, default_timeout).until(
             EC.presence_of_element_located(_home_id)
@@ -88,11 +88,11 @@ def _unlock_from_landing(driver, page_args: dict, device_pin, default_timeout: f
     """
     logger.info("[init_flow] Returning-user landing — tapping 'Open your wallet'")
     LandingPage(driver, **page_args).open_wallet()
-    # "Open your wallet" raises the system biometric prompt — authenticate with PIN. The
+    # "Open your wallet" raises the system biometric prompt — answer it. The
     # bottom-sheet can take a couple of seconds to surface, so use a wider detection window
     # than the speculative default.
-    logger.info("[init_flow] Authenticating with PIN for biometric unlock")
-    authenticate_with_pin(driver, device_pin, detect_timeout=default_timeout)
+    logger.info("[init_flow] Answering the system auth prompt for biometric unlock")
+    authenticate_device(driver, device_pin, detect_timeout=default_timeout)
     try:
         WebDriverWait(driver, default_timeout).until(
             EC.presence_of_element_located(_home_id)
@@ -108,8 +108,8 @@ def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **pa
     device_pin = page_args.get("device_pin", "") or pin
     package = app_package or driver.current_package
 
-    # Handle Android system biometric prompt first (may appear over the app) via PIN.
-    authenticate_with_pin(driver, device_pin)
+    # Handle Android system biometric prompt first (may appear over the app).
+    authenticate_device(driver, device_pin)
 
     state = _detect_state(driver)
     if state == "unknown":
@@ -149,7 +149,7 @@ def run(driver, pin: str, skip_if_done: bool = True, app_package: str = "", **pa
         logger.warning("[init_flow] Landing unlock stalled — restarting app and retrying once")
         driver.terminate_app(package)
         driver.activate_app(package)
-        authenticate_with_pin(driver, device_pin)
+        authenticate_device(driver, device_pin)
 
         state = _detect_state(driver)
         if state == "home":

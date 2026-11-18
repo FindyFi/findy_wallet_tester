@@ -4,7 +4,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 # Gataca uses biometric (fingerprint) as its primary unlock method.
-# This heading appears on the app-internal biometric prompt screen.
+# This heading matches the SYSTEM biometric sheet title (systemui), not an in-app screen.
 HEADING = (AppiumBy.XPATH, '//*[@text="Perform biometric verification"]')
 
 

@@ -8,7 +8,7 @@ from selenium.common.exceptions import TimeoutException
 from appium.webdriver.common.appiumby import AppiumBy
 
 from providers.base import DeeplinkProvider
-from base.android import authenticate_with_pin, BIOMETRIC_PROMPT
+from base.android import authenticate_device, BIOMETRIC_PROMPT
 from base.utils import wait_present
 from wallets.gataca.pages.home_page import SCREEN_ID as _home_id
 from wallets.gataca.pages.credential_offer_page import CredentialOfferPage, on_screen as _offer_on_screen
@@ -26,14 +26,14 @@ def _wait_for_result(driver, offer_timeout: float, device_pin: str):
 
     Some verifiers raise a system biometric prompt *before* showing the request screen. That
     prompt is not request/error/home, so without handling it the poll would just time out while
-    the wallet is actually waiting on us. Authenticate it via PIN as soon as it appears, then
-    keep polling for the real result.
+    the wallet is actually waiting on us. Answer it (fingerprint on an emulator, PIN on a phone)
+    as soon as it appears, then keep polling for the real result.
     """
     deadline = time.time() + offer_timeout
     while time.time() < deadline:
         if wait_present(driver, BIOMETRIC_PROMPT, timeout=1):
-            logger.info("[verification_flow] Biometric prompt before request — authenticating with PIN")
-            authenticate_with_pin(driver, device_pin)
+            logger.info("[verification_flow] Biometric prompt before request — answering it")
+            authenticate_device(driver, device_pin)
             continue
         if _offer_on_screen(driver, timeout=1):
             return "request"
@@ -46,12 +46,12 @@ def _wait_for_result(driver, offer_timeout: float, device_pin: str):
 
 
 def _handle_biometric_and_confirm(driver, offer_timeout: float, **page_args):
-    """After tapping Share: authenticate the system biometric prompt via PIN,
+    """After tapping Share: answer the system auth prompt (fingerprint or PIN),
     then confirm the Login Successful dialog."""
     device_pin = page_args.get("device_pin", "")
     time.sleep(2)
-    logger.info("[verification_flow] Authenticating biometric prompt with PIN")
-    authenticate_with_pin(driver, device_pin)
+    logger.info("[verification_flow] Answering the system auth prompt")
+    authenticate_device(driver, device_pin)
 
     deadline = time.time() + offer_timeout
     while time.time() < deadline:

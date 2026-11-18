@@ -28,7 +28,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
-from base.android import authenticate_with_pin
+from base.android import authenticate_device
 from base.utils import wait_present
 from wallets.gataca.pages.home_page import SCREEN_ID as _home_id
 from wallets.gataca.pages.settings_page import SettingsPage, SETTINGS_TAB
@@ -202,9 +202,9 @@ def _activate_existing_alias(driver, default_timeout: float, page_args: dict, sp
     logger.info(f"[setup_flow] Found existing alias: {alias_name} — activating")
     alias_el.click()
 
-    # Biometric prompt appears to confirm the DID switch — authenticate via PIN.
+    # Biometric prompt appears to confirm the DID switch — answer the system auth prompt.
     time.sleep(2)
-    authenticate_with_pin(driver, _device_pin(page_args))
+    authenticate_device(driver, _device_pin(page_args))
 
     # The selected row expands to include its did prefix once the switch registers.
     deadline = time.time() + default_timeout
@@ -265,7 +265,8 @@ def _enable_advanced_and_multi_did(driver, default_timeout: float, page_args: di
 def _create_profile(driver, default_timeout: float, page_args: dict, spec: dict):
     """From Personal Information, tap "+" and create a profile for the `spec` DID method.
 
-    Handles the biometric prompt that appears after tapping Create (via PIN).
+    Handles the system auth prompt that appears after tapping Create (fingerprint on an
+    emulator, PIN on a phone).
     """
     personal_info = PersonalInfoPage(driver, **page_args)
     personal_info.open_create_profile()
@@ -276,9 +277,9 @@ def _create_profile(driver, default_timeout: float, page_args: dict, spec: dict)
     create_profile.create()
 
     # System biometric prompt appears. The prompt is rendered by com.android.systemui and
-    # takes a moment to surface. Give it time then authenticate via PIN.
+    # takes a moment to surface. Give it time then answer the system auth prompt.
     time.sleep(2)
-    authenticate_with_pin(driver, _device_pin(page_args))
+    authenticate_device(driver, _device_pin(page_args))
 
     # Wait for return to Personal Information.
     try:

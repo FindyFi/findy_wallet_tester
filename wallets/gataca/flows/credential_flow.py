@@ -7,7 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from providers.base import DeeplinkProvider
-from base.android import authenticate_with_pin, BIOMETRIC_PROMPT
+from base.android import authenticate_device, BIOMETRIC_PROMPT
 from base.utils import wait_present
 from wallets.gataca.pages.home_page import SCREEN_ID as _home_id
 
@@ -31,9 +31,9 @@ def _wait_for_result(driver, offer_timeout: float, device_pin: str, page_args: d
 
     Some issuers (e.g. procivis, authorization_code grant) raise a system biometric prompt
     *before* showing any offer screen, and then issue the credential directly — landing on the
-    "Credentials Shared" success screen without an offer to accept. So we authenticate the prompt
-    via PIN as soon as it appears, and treat that success screen as a terminal result, not just the
-    offer screen.
+    "Credentials Shared" success screen without an offer to accept. So we answer the prompt
+    (fingerprint on an emulator, PIN on a phone) as soon as it appears, and treat that success
+    screen as a terminal result, not just the offer screen.
 
     **Only "Credentials Shared" ends the wait.** "Login Successful" wears the same dialog but is
     the OIDC step, which happens *before* the offer on this very path — so returning "success" for
@@ -43,8 +43,8 @@ def _wait_for_result(driver, offer_timeout: float, device_pin: str, page_args: d
     deadline = time.time() + offer_timeout
     while time.time() < deadline:
         if wait_present(driver, BIOMETRIC_PROMPT, timeout=1):
-            logger.info("[credential_flow] Biometric prompt before offer — authenticating with PIN")
-            authenticate_with_pin(driver, device_pin)
+            logger.info("[credential_flow] Biometric prompt before offer — answering it")
+            authenticate_device(driver, device_pin)
             continue
         if _issued_on_screen(driver, timeout=1):
             return "success"
@@ -64,12 +64,12 @@ def _wait_for_result(driver, offer_timeout: float, device_pin: str, page_args: d
 
 
 def _handle_biometric_and_confirm(driver, offer_timeout: float, **page_args):
-    """After tapping Share: authenticate the system biometric prompt via PIN,
+    """After tapping Share: answer the system auth prompt (fingerprint or PIN),
     then confirm the Login Successful dialog."""
     device_pin = page_args.get("device_pin", "")
     time.sleep(2)
-    logger.info("[credential_flow] Authenticating biometric prompt with PIN")
-    authenticate_with_pin(driver, device_pin)
+    logger.info("[credential_flow] Answering the system auth prompt")
+    authenticate_device(driver, device_pin)
 
     # Wait for Login Successful dialog or home
     deadline = time.time() + offer_timeout
@@ -80,8 +80,8 @@ def _handle_biometric_and_confirm(driver, offer_timeout: float, **page_args):
             # Pension flow uses authorization_code grant: after OIDC auth completes,
             # the wallet pops a SECOND biometric prompt to sign the credential request.
             time.sleep(2)
-            logger.info("[credential_flow] Authenticating post-auth issuance prompt with PIN")
-            authenticate_with_pin(driver, device_pin)
+            logger.info("[credential_flow] Answering the post-auth issuance prompt")
+            authenticate_device(driver, device_pin)
             return
         if wait_present(driver, _home_id, timeout=1):
             return

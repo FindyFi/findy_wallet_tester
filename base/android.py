@@ -400,6 +400,31 @@ def authenticate_with_pin(driver, pin, detect_timeout=2, dismiss_timeout=10) -> 
     return True
 
 
+def authenticate_device(driver, pin, detect_timeout=2, dismiss_timeout=10) -> bool:
+    """Answer whichever system auth sheet is up: a fingerprint on an emulator, the PIN otherwise.
+
+    Detects the sheet ONCE and branches on what it shows, because a "fingerprint first, else PIN"
+    chain races: a sheet that surfaces after the first detect window sends the PIN path onto a
+    fingerprint-only sheet, which has no "Use PIN" and raises.
+
+    - fingerprint sheet (biometric_icon) on an emulator: inject a fingerprint. Never goes on to the
+      PIN from here; a fingerprint that did not register is retried by the caller's next poll.
+    - anything else (phone, or a PIN-only view): ``authenticate_with_pin`` unchanged.
+
+    Returns True if a sheet was detected and handled, False if none was present.
+    """
+    if not wait_present(driver, _AUTH_PROMPT, timeout=detect_timeout):
+        return False
+
+    if (wait_present(driver, BIOMETRIC_PROMPT, timeout=0.5)
+            and fingerprint_emulation_available(driver)):
+        return handle_biometric_if_present(
+            driver, dismiss_timeout=dismiss_timeout, detect_timeout=0.5)
+
+    return authenticate_with_pin(
+        driver, pin, detect_timeout=0.5, dismiss_timeout=dismiss_timeout)
+
+
 def _current_screen(driver) -> str:
     """"package/activity" for diagnostics, or "unknown" if the driver can't say."""
     try:

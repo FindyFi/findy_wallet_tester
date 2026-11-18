@@ -36,7 +36,7 @@ class CredentialDetailPage(BasePage):
         """Tap the trash button and confirm 'Yes, delete'.
 
         This then triggers an Android system biometric prompt; the caller must authenticate
-        (e.g. via ``base.android.authenticate_with_pin(driver, pin)``) for the deletion to complete.
+        (e.g. via ``base.android.authenticate_device(driver, pin)``) for the deletion to complete.
         """
         self.click(_TRASH_BUTTON)
         self.click(_CONFIRM_DELETE)

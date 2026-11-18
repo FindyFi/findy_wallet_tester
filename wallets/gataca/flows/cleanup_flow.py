@@ -11,9 +11,9 @@ from wallets.gataca.pages.credential_detail_page import CredentialDetailPage
 from wallets.gataca.pages.home_page import HomePage
 
 # Deleting is confirmed on the system auth sheet. Declaring it as an interstitial rather than
-# calling authenticate_with_pin inline means the prune loop services it wherever it appears, which
+# calling authenticate_device inline means the prune loop services it wherever it appears, which
 # matters because gataca does not always raise it at the same point.
-_INTERSTITIALS = (interstitials.device_pin_prompt(),)
+_INTERSTITIALS = (interstitials.device_auth_prompt(),)
 
 
 def prune_credentials(driver, max_count: int = 0, **page_args) -> int:
