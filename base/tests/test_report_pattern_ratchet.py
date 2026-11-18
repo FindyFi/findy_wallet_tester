@@ -146,7 +146,7 @@ def test_a_typed_failure_for_a_deleted_shape_is_still_classified_by_its_tag():
     ("selenium.common.exceptions.TimeoutException: Message:", "processing"),
     ("RuntimeError: [credential_flow] No offer/error/home screen after 30s for"
      " 'credential_issuance'", "processing"),
-    ("AssertionError: Active DID is '', expected 'JWK Identity' for did_method 'jwk'", "harness"),
+    ("AssertionError: Active DID is '', expected 'JWK Identity' for did_method 'jwk'", "setup"),
     ("RuntimeError: [verification_flow] Credential verification was rejected"
      " (wrong DID method?)", "rejected"),
     ("RuntimeError: [after deeplink] Paradym error screen. Reason: Credential information"

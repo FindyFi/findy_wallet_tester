@@ -388,11 +388,11 @@ def test_an_error_dialog_after_continue_is_rejected_after_the_tap(phone):
     assert trail["steps"][-1].endswith("tapped CONTINUE")
 
 
-def test_the_tamper_check_is_a_harness_failure_not_a_verdict_on_the_issuer(phone):
+def test_the_tamper_check_is_a_setup_failure_not_a_verdict_on_the_issuer(phone):
     phone.dialog_text = failures.THREAT
     phone.show(("error", None))
     exc, _ = _raised(_issue, phone)
-    assert exc.category == outcome.HARNESS
+    assert exc.category == outcome.SETUP
     assert wallet_said(exc) == "Threat detected"
     assert "[no_retry]" not in str(exc)
 

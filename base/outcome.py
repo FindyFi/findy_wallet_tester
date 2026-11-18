@@ -17,7 +17,7 @@ gained on the way out, each from a hand-written loop somewhere else that already
 - **deadline extension** — from authbound's `wait_for_outcome`: a visible spinner is the wallet
   telling us it is still working, so it buys time instead of running the clock out.
 - **lost session** — from authbound and heidi: a dead UiAutomator2 session is not a wallet verdict.
-  hovi reported it as `absent`, which blames the wallet for the harness falling over.
+  hovi reported it as `absent`, which blames the wallet for the framework falling over.
 - **crash / ANR** — from paradym's and toppan's `check_for_error`.
 
 `ABSENT` and `UNROUTABLE` look identical on screen, since in both cases nothing came forward, but
@@ -46,10 +46,10 @@ NO_MATCH = "no_match"          # showed the request, holds nothing that satisfie
 PROMPT_LOOP = "prompt_loop"    # kept re-asking for the same thing instead of progressing
 CRASHED = "crashed"            # the app died or stopped responding
 
-# Harness-decided: not a statement about the wallet at all. Kept separate so a report can exclude
+# Framework-decided: not a statement about the wallet at all. Kept separate so a report can exclude
 # it rather than publishing our own breakage as a vendor's failure.
 LOST_SESSION = "lost_session"
-HARNESS = "harness"            # a precondition of ours or the device's was not met (config, DID, PIN)
+SETUP = "setup"                # a precondition of ours or the device's was not met (config, DID, PIN)
 
 # Test-decided: what the wallet did with the credential.
 NOT_STORED = "not_stored"                    # accepted, but the count did not move
@@ -228,7 +228,7 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
     if state == LOST_SESSION:
         raise FlowFailure(LOST_SESSION, (
             f"[{flow}] The Appium session died while waiting for {_a(expected)} {expected} for '{what}'. "
-            f"This is a harness failure, not a verdict about {wallet} or the provider"
+            f"This is a framework failure, not a verdict about {wallet} or the provider"
         ))
 
     if state == CRASHED:
@@ -314,7 +314,7 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
         progress.reached(progress.OPEN, f"{wallet} was in front, on a screen not recognised")
         raise FlowFailure(PROCESSING, (
             f"[{flow}] {wallet} was in front when the {timeout:.0f}s wait for '{what}' ran out, "
-            f"but showed {nothing} that this harness recognises.{used}{stale}{unmapped}{enrolled}"
+            f"but showed {nothing} that this framework recognises.{used}{stale}{unmapped}{enrolled}"
         ))
 
     raise FlowFailure(ABSENT, (
@@ -403,7 +403,7 @@ def raise_refused(driver, screens, ctx, exc, *, expected: str):
     if "unable to resolve intent" not in said.lower():
         raise FlowFailure(LOST_SESSION, (
             f"[{flow}] Firing the deeplink for '{what}' failed without Android resolving it "
-            f"({_one_line(said)[:160]}). Recorded as a harness failure, not a verdict about "
+            f"({_one_line(said)[:160]}). Recorded as a framework failure, not a verdict about "
             f"{wallet} or the provider"
         )) from exc
 

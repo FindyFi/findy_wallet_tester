@@ -400,7 +400,7 @@ def test_a_missing_pin_is_our_configuration_not_the_wallet(monkeypatch, prompt):
     else:
         monkeypatch.setattr(failures, "pin_screen", SimpleNamespace(on_screen=lambda d, timeout=2: True))
     exc, _ = _raised(_issue, monkeypatch, True, True, pin="")
-    assert exc.category == outcome.HARNESS
+    assert exc.category == outcome.SETUP
     assert "pass pin= to credential_flow.run()" in str(exc)
 
 
@@ -795,7 +795,7 @@ def test_a_missing_pin_in_verification_is_our_configuration(monkeypatch, prompt)
     else:
         monkeypatch.setattr(failures, "pin_screen", SimpleNamespace(on_screen=lambda d, timeout=2: True))
     exc, _ = _raised(_verify, monkeypatch, True, pin="")
-    assert exc.category == outcome.HARNESS
+    assert exc.category == outcome.SETUP
     assert "pass pin= to verification_flow.run()" in str(exc)
 
 

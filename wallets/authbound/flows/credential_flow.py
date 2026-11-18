@@ -213,7 +213,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
             # that is the likeliest reason and it needs a human — a precondition of the device,
             # not a verdict on the wallet. Otherwise the wait ran out with no verdict either way.
             if saw_enrollment:
-                raise FlowFailure(outcome.HARNESS, _ENROLLMENT_REQUIRED.format(what=credential_name))
+                raise FlowFailure(outcome.SETUP, _ENROLLMENT_REQUIRED.format(what=credential_name))
             # `processing`, not `rejected`: the prose reading of this sentence filed it as a
             # rejection because it contains the words "error screen".
             how = ("accepted and authenticated" if _authenticated_since(_TAPPED_STEP)

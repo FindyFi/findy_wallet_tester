@@ -1,6 +1,6 @@
 """annotate_changes: the "What moved" marks against the previous run.
 
-Cells kept out of the pass and fail totals (a lost session, a framework failure) get no
+Cells kept out of the pass and fail totals (a lost session, a test setup failure) get no
 "Newly failing" / "Newly passing" mark, on either side of the comparison.
 """
 import pytest
@@ -26,13 +26,17 @@ def _run(outcome, reason=None, was="Passed"):
     # Not counted now: a lost session after a pass did not newly fail.
     ("Passed", "Failed", "lost_session", None),
     ("Passed", "Error", "lost_session", None),
-    ("Passed", "Error", "harness", None),
+    ("Passed", "Error", "setup", None),
     # Not counted last time: a pass after a lost session did not newly pass.
     ("Failed:lost_session", "Passed", None, None),
     ("Error:harness", "Passed", None, None),
+    ("Error:setup", "Passed", None, None),
     # Red both times keeps its "different reason" mark, counted or not.
     ("Failed:rejected", "Failed", "lost_session", "reason"),
     ("Failed:lost_session", "Failed", "rejected", "reason"),
+    # History written under the old name reads as the new one: no spurious "reason" mark.
+    ("Error:harness", "Error", "setup", None),
+    ("Error:setup", "Error", "setup", None),
     # Same reading as last time: unmarked.
     ("Failed:lost_session", "Failed", "lost_session", None),
 ])
@@ -40,3 +44,9 @@ def test_change_mark(was, outcome, reason, change):
     cell, counts = _run(outcome, reason, was)
     assert cell.get("change") == change
     assert counts == ({change: 1} if change else {})
+
+
+def test_an_old_name_in_history_is_reported_under_its_current_name():
+    cell, _ = _run("Failed", "rejected", "Failed:harness")
+    assert cell["change"] == "reason"
+    assert cell["previous_reason"] == "setup"

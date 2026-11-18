@@ -48,12 +48,12 @@ def lost(ctx: FlowContext, during: str, exc) -> FlowFailure:
 def unlock(driver, ctx: FlowContext) -> None:
     """Answer procivis's biometric prompt (USE PIN CODE) and its PIN screen after a deeplink.
 
-    A missing PIN is our configuration, not the wallet's behaviour: `harness`.
+    A missing PIN is our configuration, not the wallet's behaviour: `setup`.
     """
     try:
         if biometric_on_screen(driver):
             if not ctx.pin:
-                raise FlowFailure(outcome.HARNESS, (
+                raise FlowFailure(outcome.SETUP, (
                     f"[{ctx.flow}] App showed biometric prompt after deeplink — pass pin= to "
                     f"{ctx.flow}.run()"
                 ))
@@ -65,7 +65,7 @@ def unlock(driver, ctx: FlowContext) -> None:
             # PinCodeCheckScreen is procivis's own screen, so it was in front after the delivery.
             progress.reached(progress.OPEN, "procivis showed its PIN screen")
             if not ctx.pin:
-                raise FlowFailure(outcome.HARNESS, (
+                raise FlowFailure(outcome.SETUP, (
                     f"[{ctx.flow}] App showed PIN screen after deeplink — pass pin= to "
                     f"{ctx.flow}.run()"
                 ))

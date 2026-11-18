@@ -169,7 +169,7 @@ def test_a_prompt_loop_keeps_its_no_retry_tag(monkeypatch):
 def test_an_enrollment_wizard_is_a_precondition_not_the_wallets_verdict(monkeypatch):
     monkeypatch.setattr(cf, "in_biometric_enrollment", lambda *a, **k: True)
     exc, _ = _raised(_issue, monkeypatch, "offer", "timeout")
-    assert exc.category == outcome.HARNESS
+    assert exc.category == outcome.SETUP
     assert str(exc).endswith("[no_retry]")
 
 
@@ -302,7 +302,7 @@ def test_a_shared_presentation_completes_accept(monkeypatch):
 def test_an_enrollment_wizard_after_sharing_is_a_precondition(monkeypatch):
     monkeypatch.setattr(vf, "in_biometric_enrollment", lambda *a, **k: True)
     exc, _ = _raised(_verify, monkeypatch, "request", "success")
-    assert exc.category == outcome.HARNESS
+    assert exc.category == outcome.SETUP
     assert str(exc).endswith("[no_retry]")
 
 
@@ -314,7 +314,7 @@ def test_an_enrollment_wizard_that_breaks_authentication_is_a_precondition(monke
     monkeypatch.setattr(vf, "authenticate_with_pin", fails)
     monkeypatch.setattr(vf, "in_biometric_enrollment", lambda *a, **k: True)
     exc, _ = _raised(_verify, monkeypatch, "request", "success")
-    assert exc.category == outcome.HARNESS
+    assert exc.category == outcome.SETUP
     assert str(exc).endswith("[no_retry]")
 
 

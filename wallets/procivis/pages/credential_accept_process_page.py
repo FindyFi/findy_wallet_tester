@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 #   request is shown. Where it fails when the invitation itself cannot be fetched: authbound and
 #   paradym issuance ("Connection failed"), and paradym and waltid verification.
 # CredentialAcceptProcessScreen — the screen for accepting an offer ("Credential offering").
-#   waltid's issuance fails here ("Issuance failed") without the harness ever seeing the offer.
+#   waltid's issuance fails here ("Issuance failed") without the framework ever seeing the offer.
 INVITATION_SCREEN_ID = (AppiumBy.XPATH, '//*[@resource-id="InvitationProcessScreen"]')
 ACCEPT_SCREEN_ID = (AppiumBy.XPATH, '//*[@resource-id="CredentialAcceptProcessScreen"]')
 SCREEN_ID = (AppiumBy.XPATH, '//*[@resource-id="InvitationProcessScreen" or @resource-id="CredentialAcceptProcessScreen"]')

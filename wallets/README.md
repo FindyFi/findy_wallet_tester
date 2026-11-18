@@ -470,8 +470,8 @@ same `dumpsys package` dump it already reads for the version, and every run reco
 behind it.
 
 There is no longer any exception to this. Paradym used to publish both directions wrapped in
-`https://paradym.id/invitation?...`, an app-link only its own wallet verifies, and the harness
-unwrapped it — first privately inside the authbound and gataca flows, which published a harness
+`https://paradym.id/invitation?...`, an app-link only its own wallet verifies, and the framework
+unwrapped it — first privately inside the authbound and gataca flows, which published a framework
 choice as a wallet property, then once for every wallet equally in a `ParadymProvider`. As of
 2026-09-11 the pensiondemo endpoints emit the standard schemes themselves: the issuer answers with
 an `offerDeeplinkUri` of `openid-credential-offer://…` and the verifier page links
@@ -509,7 +509,7 @@ Provided by the root `conftest.py`, `base/conftest_helpers.py` and `base/android
   - `appium.log` — the Appium server log, each entry once, under the test that produced it.
     The dedup cursor is per worker, so a parallel `-n` run sharing **one** Appium server
     duplicates entries; give each lane its own server (see `env.example`)
-  - `test.log` — this wallet's pytest log: the timeline of what the harness did, in order
+  - `test.log` — this wallet's pytest log: the timeline of what the framework did, in order
   - `crashes.log` — this wallet's crashes and ANRs from Android's DropBox, read *after* the
     session, so it survives a crash that kills the session. Absent when nothing crashed
   - `summary.json` — machine-readable outcome per test (outcome, attempts, duration, provider,

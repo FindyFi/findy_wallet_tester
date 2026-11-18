@@ -222,12 +222,12 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         # to be checked on the failure path too — not only when auth never started.
         if in_biometric_enrollment(driver):
             # A precondition of the device, not a verdict on the wallet.
-            raise FlowFailure(outcome.HARNESS,
+            raise FlowFailure(outcome.SETUP,
                               _ENROLLMENT_REQUIRED.format(what=credential_name)) from exc
         raise
 
     if in_biometric_enrollment(driver):
-        raise FlowFailure(outcome.HARNESS, _ENROLLMENT_REQUIRED.format(what=credential_name))
+        raise FlowFailure(outcome.SETUP, _ENROLLMENT_REQUIRED.format(what=credential_name))
 
     # Sharing ends on the wallet's success screen ("You successfully shared the following…"),
     # the same screen issuance ends on — not on the dashboard. Waiting for home here reported

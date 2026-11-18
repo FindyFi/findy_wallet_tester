@@ -124,6 +124,6 @@ def test_the_other_pills_are_unchanged():
 
 
 def test_both_framework_descriptions_say_they_are_not_counted():
-    for key in ("lost_session", "harness"):
+    for key in ("lost_session", "setup"):
         assert report.FAILURE_CATEGORIES[key]["description"].endswith(
             "It is not counted in the pass and fail totals.")

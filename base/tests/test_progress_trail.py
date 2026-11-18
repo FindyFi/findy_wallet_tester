@@ -302,7 +302,7 @@ def test_an_uncategorised_failure_is_still_placed_when_its_stage_is_known():
     assert data["off_flow"] == 0
 
 
-@pytest.mark.parametrize("reason", ["lost_session", "harness"])
+@pytest.mark.parametrize("reason", ["lost_session", "setup"])
 def test_our_own_failures_stay_off_the_diagram_however_far_the_trail_got(reason):
     """A lost Appium session drawn at "Wallet opens" would be published as the vendor's."""
     cell = report.make_cell(

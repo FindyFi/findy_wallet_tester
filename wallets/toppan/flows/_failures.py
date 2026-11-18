@@ -102,12 +102,12 @@ def keeps_no_retry(said: str) -> bool:
 def dialog_failure(driver, ctx: FlowContext, head: str) -> FlowFailure:
     """toppan's error dialog as a FlowFailure, quoting toppan. `head` says where in the flow.
 
-    `rejected`, except toppan's tamper check, which is about the device and so `harness`.
+    `rejected`, except toppan's tamper check, which is about the device and so `setup`.
     """
     said = error_dialog.message(driver, package=ctx.app_package)
     logger.error(f"[{ctx.flow}] toppan's error dialog for '{ctx.what}': {said or '(unreadable)'}")
     if said == THREAT:
-        return FlowFailure(outcome.HARNESS, (
+        return FlowFailure(outcome.SETUP, (
             f"[{ctx.flow}] toppan refused to run '{ctx.what}' on this device: \"{said}\". Its "
             "tamper check has flagged only emulators so far, so this is a verdict about the "
             "device, not about the provider"

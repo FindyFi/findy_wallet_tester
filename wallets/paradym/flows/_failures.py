@@ -201,10 +201,10 @@ def error_failure(driver, ctx: FlowContext, head: str) -> FlowFailure:
 
 def enter_pin(driver, ctx: FlowContext, when: str) -> None:
     """Unlock paradym's PIN screen. A missing PIN is our configuration, not the wallet's
-    behaviour: `harness`. The screen is paradym's own, so it was in front."""
+    behaviour: `setup`. The screen is paradym's own, so it was in front."""
     progress.reached(progress.OPEN, f"paradym asked for its PIN {when}")
     if not ctx.pin:
-        raise FlowFailure(outcome.HARNESS, (
+        raise FlowFailure(outcome.SETUP, (
             f"[{ctx.flow}] App showed PIN screen {when} — pass pin= to {ctx.flow}.run()"
         ))
     logger.info(f"[{ctx.flow}] PIN screen {when} — entering PIN")
@@ -247,12 +247,12 @@ def finish(driver, ctx: FlowContext, seen: str, *, after: str, head: str) -> boo
 def _asked_again(ctx: FlowContext, name: str, timeout: float, after: str) -> FlowFailure:
     """A screen this flow had already answered was up again when the wait ran out.
 
-    Its PIN screen is `harness`: paradym asking again for the PIN it was just given says the
+    Its PIN screen is `setup`: paradym asking again for the PIN it was just given says the
     configured PIN was not accepted, which is ours to fix, not the provider's. Any other screen is
     `prompt_loop` — paradym re-asking instead of progressing — which is what that outcome names.
     """
     if name == "its PIN screen":
-        return FlowFailure(outcome.HARNESS, (
+        return FlowFailure(outcome.SETUP, (
             f"[{ctx.flow}] paradym was showing its PIN screen again {timeout:.0f}s after {after} "
             f"for '{ctx.what}', after the PIN had been entered: the configured PIN was likely not "
             "accepted (PARADYM_APP_PIN)"

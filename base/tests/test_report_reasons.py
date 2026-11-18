@@ -47,7 +47,7 @@ def _failed(headline: str) -> list:
 # --- every outcome renders -----------------------------------------------------------------------
 
 @pytest.mark.parametrize("name", _outcome_names())
-def test_every_outcome_the_harness_can_raise_has_a_label(name):
+def test_every_outcome_the_framework_can_raise_has_a_label(name):
     """The report only honours categories it lists; an unlisted one renders as a plain red cell."""
     assert name in report.FAILURE_CATEGORIES, (
         f"base/outcome.py can raise [{name}] but the report has no entry for it, so the cell "
@@ -66,7 +66,7 @@ def test_a_typed_failure_in_the_log_is_read_as_its_category(name):
 
 def test_a_lost_session_is_never_ranked_above_a_wallet_finding():
     """Our own breakage must not outrank a sibling case's real interop reason in a merged cell."""
-    wallet_findings = [c for c in report.FAILURE_CATEGORIES if c not in ("lost_session", "harness")]
+    wallet_findings = [c for c in report.FAILURE_CATEGORIES if c not in ("lost_session", "setup")]
     assert all(report.CATEGORY_RANK["lost_session"] < report.CATEGORY_RANK[c]
                for c in wallet_findings)
     assert report.FAILURE_CATEGORIES["lost_session"]["stage"] is None
@@ -248,3 +248,36 @@ def test_a_not_stored_failure_reaches_the_record_the_report_reads(tmp_path):
         "the category did not reach the node — a bare assert used to leave it empty, so "
         "summary.json and app.log recorded every not_stored as uncategorised"
     )
+
+
+# Runs recorded before the category was renamed say "harness"; they are read as "setup".
+@pytest.mark.parametrize("old_or_new", ["harness", "setup"])
+def test_classify_failure_reads_the_old_category_name_as_setup(old_or_new):
+    reason, detail = report.classify_failure(f"E   base.outcome.FlowFailure: [{old_or_new}] x\n")
+    assert reason == "setup"
+    assert detail == "x"
+
+
+def test_detail_strips_the_old_category_tag_and_the_flow_tag():
+    assert report._detail("FlowFailure: [harness] [credential_flow] msg") == "msg"
+
+
+def test_an_old_summary_record_category_is_read_as_setup():
+    cell = report.make_cell(
+        [{"result": "Error", "log": "E   RuntimeError: boom\n"}],
+        {"category": "harness"})
+    assert cell["reason"] == "setup"
+
+
+def test_a_setup_failure_ranks_below_a_real_interop_reason_in_either_order():
+    def cell(reason):
+        return {"outcome": "Failed", "reason": reason, "attempts": 1, "flaky": False}
+    assert report.merge_cells(cell("setup"), cell("processing"))["reason"] == "processing"
+    assert report.merge_cells(cell("processing"), cell("setup"))["reason"] == "processing"
+
+
+def test_every_alias_points_at_a_current_category_and_no_alias_is_one():
+    """An alias to a missing category, or from a live one, would silently do nothing or shadow it."""
+    for old, new in report.CATEGORY_ALIASES.items():
+        assert new in report.FAILURE_CATEGORIES
+        assert old not in report.FAILURE_CATEGORIES

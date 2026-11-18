@@ -1,6 +1,6 @@
 """The FLAG_SECURE guard, with fake drivers — no device.
 
-A wallet that sets FLAG_SECURE on its credential screens is protecting the holder. The harness
+A wallet that sets FLAG_SECURE on its credential screens is protecting the holder. The framework
 must record that as a wallet property and fall back to the XML dump, not report it as a broken
 screenshot. By decision (2026-09-04) it never fails a test.
 """

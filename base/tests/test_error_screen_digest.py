@@ -16,7 +16,7 @@ Two properties matter more than the formatting, and both are regressions waiting
     file people read as evidence.
 
   * **It cannot mask the failure it describes.** It runs inside the teardown of an already-failed
-    test, so an exception raised here would replace a real wallet failure with a harness one.
+    test, so an exception raised here would replace a real wallet failure with a framework one.
 """
 from types import SimpleNamespace
 

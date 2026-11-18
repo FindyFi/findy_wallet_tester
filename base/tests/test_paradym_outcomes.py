@@ -756,7 +756,7 @@ def test_a_pin_screen_without_a_configured_pin_is_ours(phone):
     exc, trail = _raised(cf.run, phone, provider=SimpleNamespace(get=lambda n: URL),
                          credential_name="credential_issuance", app_package=PACKAGE, pin="",
                          **PAGE_ARGS)
-    assert exc.category == outcome.HARNESS
+    assert exc.category == outcome.SETUP
     assert "pass pin= to credential_flow.run()" in str(exc)
     assert phone.taps == [], "no PIN is typed when none is configured"
     assert trail["stage"] == progress.OPEN
@@ -838,7 +838,7 @@ def test_a_pin_screen_that_lingers_after_entry_is_not_answered_twice(phone):
 def test_a_pin_screen_still_up_after_entry_is_the_configured_pin_not_unrecognised(phone):
     phone.show(("pin", None))
     exc, trail = _raised(_issue, phone)
-    assert exc.category == outcome.HARNESS
+    assert exc.category == outcome.SETUP
     assert "showing its PIN screen again 30s after the PIN" in str(exc)
     assert "recognises" not in str(exc)
     assert phone.taps == ["PIN"]

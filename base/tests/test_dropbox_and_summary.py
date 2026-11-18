@@ -315,7 +315,7 @@ def test_a_failing_teardown_does_not_overwrite_what_the_test_failed_on():
     `_record_result` runs for every phase, so a test that failed `[rejected]` in `call` and then
     raised a second time during teardown was republished as `error`/`teardown` — while still
     carrying the call phase's message and category. A genuine wallet rejection then left
-    `totals.failed` and arrived in `totals.error`, where it reads as a harness problem.
+    `totals.failed` and arrived in `totals.error`, where it reads as a framework problem.
     """
     item = _item()
     item._failure_line = "FlowFailure: [rejected] hovi refused the offer"

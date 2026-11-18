@@ -180,7 +180,7 @@ TESTID_RE = re.compile(
 # A red cell that only says "Failed" is not an actionable finding: "your URL
 # never reached this wallet" and "this wallet rejected your credential" point
 # at opposite parties. These are the shared outcome names the flows already
-# raise, plus "harness" for the case where the test itself fell over.
+# raise, plus "setup" for the case where the test itself fell over.
 #
 # label       shown in the reason key under the matrix
 # short       the caption printed inside a matrix cell (kept narrow on purpose)
@@ -268,7 +268,7 @@ FAILURE_CATEGORIES = {
                        "says nothing about interoperability. It is not counted in the pass "
                        "and fail totals.",
     },
-    "harness": {
+    "setup": {
         # No stage: the flow never started, so it cannot have stopped in one.
         "stage": None,
         "label": "Test setup",
@@ -386,10 +386,10 @@ def stage_applies(meta: dict, suite: str) -> bool:
 # Precedence when several test cases share one matrix cell. Highest wins, in
 # the same spirit as OUTCOME_RANK: prefer the reason that names a concrete
 # party. "unroutable" tops the list because it is the most definitive — the
-# flow never started. "harness" sits at the bottom: a real interop reason from
+# flow never started. "setup" sits at the bottom: a real interop reason from
 # a sibling case is always worth more than our own setup falling over.
 CATEGORY_RANK = {
-    None: 0, "lost_session": 5, "harness": 10, "processing": 20, "absent": 30,
+    None: 0, "lost_session": 5, "setup": 10, "processing": 20, "absent": 30,
     "dismissed": 35, "prompt_loop": 38, "not_stored": 40, "nothing_to_present": 45,
     "no_match": 50, "rejected": 60, "crashed": 65, "unroutable": 70,
 }
@@ -404,6 +404,26 @@ CATEGORY_RANK = {
 TYPED_CATEGORY_RE = re.compile(
     r"^[\w.]*(?:Error|Exception|Failure|Failed):\s*\[([a-z_]+)\]"
 )
+
+# The old name of a category, read from old runs (summary.json, report text, history) and
+# nowhere else: the only place the old name may still appear. New runs write the new name.
+CATEGORY_ALIASES = {"harness": "setup"}
+
+
+def canonical_category(name):
+    """The current name of a category, given a current or an old one."""
+    return CATEGORY_ALIASES.get(name, name)
+
+
+def _typed_category(text: str):
+    """The known category a typed headline names, as (match, canonical name), else (None, None)."""
+    typed = TYPED_CATEGORY_RE.match(text)
+    if typed:
+        name = canonical_category(typed.group(1))
+        if name in FAILURE_CATEGORIES:
+            return typed, name
+    return None, None
+
 
 # The flow's own name, which follows the category: "[credential_flow]". Only dropped from a
 # tooltip when it directly follows a known category (see `_detail`).
@@ -442,7 +462,7 @@ REASON_PATTERNS = (
     ("no_match", r"No matching credentials"),                            # old runs
     ("nothing_to_present", r"does not have the cards required"),         # old runs
     ("dismissed", r"returned to (?:its )?home (?:screen )?without"),     # old runs
-    ("harness", r"Active DID is "),                                      # pending: gataca
+    ("setup", r"Active DID is "),                                       # pending: gataca
     ("processing", r"No offer/error/home screen after"),                 # pending: gataca
     ("processing", r"No success/home screen after"),                     # pending: gataca
     ("processing", r"^selenium\.common\.exceptions\.TimeoutException"),  # third-party
@@ -484,9 +504,9 @@ def classify_failure(log: Optional[str]):
     # WebDriverException, say) and ends with the flow's own diagnosis, which is
     # the sentence worth publishing.
     for headline in headlines:
-        typed = TYPED_CATEGORY_RE.match(headline)
-        if typed and typed.group(1) in FAILURE_CATEGORIES:
-            return typed.group(1), _detail(headline)
+        typed, name = _typed_category(headline)
+        if typed:
+            return name, _detail(headline)
 
     for category, pattern in REASON_PATTERNS:
         for headline in headlines:
@@ -504,8 +524,8 @@ def _detail(headline: str) -> str:
     because there the class is often the only signal and nothing marks a bracket as a flow name.
     """
     text = NO_RETRY_RE.sub("", headline).strip()
-    typed = TYPED_CATEGORY_RE.match(text)
-    if typed and typed.group(1) in FAILURE_CATEGORIES:
+    typed, _ = _typed_category(text)
+    if typed:
         rest = text[typed.end():].lstrip()
         flow = FLOW_TAG_RE.match(rest)
         rest = rest[flow.end():] if flow else rest
@@ -662,6 +682,8 @@ def make_cell(recs: list, record: Optional[dict] = None) -> dict:
     if outcome not in ("Passed", "Skipped", None):
         reason, detail = classify_failure(last.get("log"))
         typed = (record or {}).get("category")
+        if isinstance(typed, str):
+            typed = canonical_category(typed)
         if isinstance(typed, str) and typed in FAILURE_CATEGORIES:
             # When the prose agrees, its headline is the sentence that justified it. When it does
             # not, the log's line may be about something else entirely: a failed teardown gets
@@ -1044,6 +1066,7 @@ def annotate_changes(matrix: dict, previous: Optional[dict]) -> None:
                     counts["new"] = counts.get("new", 0) + 1
                     continue
                 was_outcome, _, was_reason = was.partition(":")
+                was_reason = canonical_category(was_reason)
                 passed_before = was_outcome == "Passed"
                 passes_now = outcome == "Passed"
                 both_counted = counted(outcome, cell.get("reason")) and counted(was_outcome, was_reason)
@@ -2125,7 +2148,7 @@ def render_change_key(matrix: dict) -> str:
 # vendor, which is what keeping them apart is for. A crash is the wallet's, so a measured stage
 # places it — that is exactly where it crashed.
 # The same reasons are kept out of the pass and fail totals (see `collect`).
-OFF_FLOW_REASONS = ("harness", "lost_session")
+OFF_FLOW_REASONS = ("setup", "lost_session")
 
 
 def counted(outcome: Optional[str], reason: Optional[str]) -> bool:
