@@ -775,7 +775,7 @@ def collect(run_dir: Path) -> dict:
                 cell["reached_label"] = stage_text(_STAGE_TEXT[cell["stage"]], "label", flow)
             bucket = target.setdefault(col, {})
             bucket[agent] = merge_cells(bucket.get(agent), cell)
-            if cell["outcome"] in ("Failed", "Error") and cell["reason"] in OFF_FLOW_REASONS:
+            if not counted(cell["outcome"], cell["reason"]):
                 # The cell still shows, labelled; a failure of the test framework itself is
                 # not counted in the pass and fail totals.
                 totals["Framework"] += 1
@@ -1020,7 +1020,10 @@ def annotate_changes(matrix: dict, previous: Optional[dict]) -> None:
       reason       it failed both times, for a different reason
       new          there is no previous result for this cell
     Cells that read the same as last time are left unmarked — the page should
-    draw the eye to what moved, not to everything.
+    draw the eye to what moved, not to everything. A cell kept out of the pass
+    and fail totals, now or last time, gets no broke/fixed mark either: a lost
+    session after a pass did not newly fail, and a pass after one did not newly
+    pass.
     """
     matrix["compared_to"] = previous.get("run_ts") if previous else None
     matrix["change_counts"] = {}
@@ -1043,12 +1046,15 @@ def annotate_changes(matrix: dict, previous: Optional[dict]) -> None:
                 was_outcome, _, was_reason = was.partition(":")
                 passed_before = was_outcome == "Passed"
                 passes_now = outcome == "Passed"
+                both_counted = counted(outcome, cell.get("reason")) and counted(was_outcome, was_reason)
                 if passed_before and not passes_now:
-                    cell["change"] = "broke"
-                    counts["broke"] = counts.get("broke", 0) + 1
+                    if both_counted:
+                        cell["change"] = "broke"
+                        counts["broke"] = counts.get("broke", 0) + 1
                 elif passes_now and not passed_before:
-                    cell["change"] = "fixed"
-                    counts["fixed"] = counts.get("fixed", 0) + 1
+                    if both_counted:
+                        cell["change"] = "fixed"
+                        counts["fixed"] = counts.get("fixed", 0) + 1
                 elif not passes_now and was_reason != (cell.get("reason") or ""):
                     cell["change"] = "reason"
                     counts["reason"] = counts.get("reason", 0) + 1
@@ -2120,6 +2126,12 @@ def render_change_key(matrix: dict) -> str:
 # places it — that is exactly where it crashed.
 # The same reasons are kept out of the pass and fail totals (see `collect`).
 OFF_FLOW_REASONS = ("harness", "lost_session")
+
+
+def counted(outcome: Optional[str], reason: Optional[str]) -> bool:
+    """Whether a cell counts in the pass and fail totals: not when the framework, not the
+    wallet, failed it."""
+    return not (outcome in ("Failed", "Error") and reason in OFF_FLOW_REASONS)
 
 
 def stopped_after(completed: str, suite: str) -> str:
