@@ -32,6 +32,7 @@ from base.conftest_helpers import (
 )
 from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
                         sanitize_test_name, device_locale)
+from base.video import shrink_run_recordings
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +299,15 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
                 logger.info("[conftest] app.log: no failures to record this session")
         except Exception as e:
             logger.warning(f"[conftest] Could not summarise app.log: {e}")
+
+    # Shrink the wallet's recordings once the reruns are over (no rename race with
+    # archive_previous_attempt). Skipped on Ctrl-C, and when the app fixture never stashed the
+    # flag. Own guard: a failure here must not stop the handler detach below.
+    if run_dir is not None and exitstatus != pytest.ExitCode.INTERRUPTED:
+        try:
+            shrink_run_recordings(run_dir, getattr(config, "_shrink_recordings", False))
+        except Exception as e:
+            logger.warning(f"[recording] Could not shrink recordings: {e}")
 
     # Detach this wallet's file log, so the next pytest.main() in the same process starts with
     # only its own handler. Last, so anything logged above still reaches the file.
@@ -1109,7 +1119,11 @@ def app(driver, request):
     if update_failure:
         pytest.fail(f"Wallet update did not complete: {update_failure}", pytrace=False)
 
-    recording_enabled = config.get("recording", {}).get("enabled", False)
+    recording_config = config.get("recording", {})
+    recording_enabled = recording_config.get("enabled", False)
+    # Read by pytest_sessionfinish, which does not load the config itself. Under xdist the stash
+    # lands on the worker's config, so the controller never shrinks (like the summary.json note).
+    request.config._shrink_recordings = recording_config.get("reencode", True)
     if recording_enabled:
         try:
             driver.start_recording_screen(timeLimit=180)

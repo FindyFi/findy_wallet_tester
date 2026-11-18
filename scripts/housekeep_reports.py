@@ -55,12 +55,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+# Run directly, sys.path[0] is scripts/; the shared recording helpers live under the repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from base.video import (DURATION_TOLERANCE_S, ENCODE, TARGET_HEIGHT, count_frames,  # noqa: E402,F401
+                        probe_video, verify_video)
+
 RUN_NAME = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 LOG_NAMES = ("appium.log", "logcat.log")
 EXTRA_LOG = re.compile(r"^(logcat|appium).*\.log$")
 EXTRA_MIN_BYTES = 1 << 20
-TARGET_HEIGHT = 806
-DURATION_TOLERANCE_S = 0.5
 LOCK_FILE = Path.home() / ".local/state/llm/nightly.lock"
 APPLY_LOCK = Path.home() / ".local/state/housekeep_reports/apply.lock"
 PROBE_THREADS = 8
@@ -72,17 +75,6 @@ TEST_ARG = re.compile(r"^(run_tests\.py|pytest|py\.test)$")
 LOG_RATIO = 100
 VIDEO_RATIO = 37
 VIDEO_SPEED = 70  # seconds of video encoded per CPU second at -preset slow
-# "-bf 0": with B-frames the mp4 muxer can drop the hold of a screen recording's last frame from the
-# container duration (a unime recording: 10.54 s became 9.30 s with all 102 frames intact), which
-# fails the duration check (6 of 40 sampled recordings). Without B-frames all 40 passed; the files
-# are ~9% larger but still ~98% smaller than the originals.
-# "-enc_time_base demux": left to itself the encoder derives a time base from the odd frame rates
-# of screen recordings (121/6 fps gave 1/98010000). Long recordings then overflow the mp4's 32-bit
-# timestamps and the muxer aborts ("Invalid argument"), and others drift past the duration
-# tolerance. The source's own time base keeps every timestamp exact.
-ENCODE = ["-map", "0:v:0", "-an", "-fps_mode", "passthrough", "-vf", f"scale=-2:{TARGET_HEIGHT}",
-          "-c:v", "libx264", "-preset", "slow", "-crf", "30", "-bf", "0",
-          "-enc_time_base", "demux", "-pix_fmt", "yuv420p", "-f", "mp4"]
 
 
 @dataclass
@@ -111,31 +103,6 @@ def discover_runs(root):
 def finished_wallets(run):
     return [w for w in sorted(run.iterdir())
             if w.is_dir() and not w.is_symlink() and (w / "report.html").is_file()]
-
-
-def probe_video(path):
-    """(height, duration) of the first video stream, or None when ffprobe cannot read it."""
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-         "stream=height:format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True)
-    if out.returncode:
-        return None
-    try:
-        info = json.loads(out.stdout)
-        return int(info["streams"][0]["height"]), float(info["format"]["duration"])
-    except (KeyError, IndexError, ValueError):
-        return None
-
-
-def count_frames(path):
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
-         "stream=nb_read_frames", "-of", "csv=p=0", str(path)], capture_output=True, text=True)
-    try:
-        return int(out.stdout.strip().rstrip(","))
-    except ValueError:
-        return None
 
 
 def new_budget(limit):
@@ -247,17 +214,6 @@ def verify_zstd(src, tmp):
     if subprocess.run(["zstd", "-t", "-q", str(tmp)], capture_output=True).returncode:
         return False
     return _sha256_zstd(tmp) == _sha256_file(src)
-
-
-def verify_video(src, tmp):
-    """Same frame count, duration within tolerance, and the target height."""
-    before, after = probe_video(src), probe_video(tmp)
-    if not before or not after or after[0] != TARGET_HEIGHT:
-        return False
-    if abs(before[1] - after[1]) > DURATION_TOLERANCE_S:
-        return False
-    frames = count_frames(src)
-    return frames is not None and frames == count_frames(tmp)
 
 
 def compress_log(src):

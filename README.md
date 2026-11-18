@@ -199,6 +199,7 @@ values in `.env` as shown in Setup). Beyond the Appium/device keys, it carries t
 | Key | Meaning |
 |:----|:--------|
 | `recording.enabled` | Save an `.mp4` screen recording per test under `reports/<ts>/<wallet>/recordings/`. |
+| `recording.reencode` | Optional, default `true`. When the wallet's pytest session ends, shrink its recordings in place to 806 px height (x264, every frame kept, niced, 2 threads). Set `false` to keep them at full size. |
 | `updates.enabled` | Before the first test of each wallet, check the Play Store and install a pending update, recording the outcome in `app_info.json`. Set `false` to test whatever build is on the device. |
 | `updates.timeout` | Wall-clock seconds to wait for an update to finish installing. If it can't be confirmed within this budget the whole wallet session fails, since the app would be mid-replacement — so keep it generous. |
 
