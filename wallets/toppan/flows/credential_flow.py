@@ -1,4 +1,5 @@
 import logging
+from typing import NoReturn
 import time
 
 from selenium.common.exceptions import WebDriverException
@@ -87,6 +88,23 @@ def _after_accept(driver, ctx: FlowContext, t: float) -> None:
     ))
 
 
+def _tap_failed(driver, ctx: FlowContext, exc: Exception, *, late, waited_for: str, after: str,
+                head: str) -> NoReturn:
+    """A tap's button could not be found, though its screen had shown a moment before. Raises.
+
+    `BasePage.click` raises exactly `Exception` when the button is not clickable in time; anything
+    else is not that and propagates untouched. The screen is then looked at once more, as after
+    any wait that ran out: what is there now is the diagnosis. If it is the same screen, the
+    button alone is missing and the page's own error stands.
+    """
+    if type(exc) is not Exception:
+        raise exc
+    failures.nothing_appeared(driver, ctx, late=late, timeout=ctx.timeout("default"),
+                              expected="credential offer", waited_for=waited_for, after=after,
+                              head=head, was_in_front=True)
+    raise exc
+
+
 def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: str,
         pin: str = "", **page_args):
     """Open a credential offer deeplink and accept it in the Toppan wallet.
@@ -98,9 +116,10 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
       4. Wait for "Adding your credential" to clear and the wallet screen to return
 
     Every verdict this flow reaches about toppan is a `base.outcome.FlowFailure` naming what
-    happened, and the progress trail records how far toppan got. Taps through a page object can
-    still raise that page's own generic error when its button cannot be found. toppan has no PIN,
-    so `pin` is unused.
+    happened, and the progress trail records how far toppan got. A tap on CONTINUE or Accept whose
+    button is gone is diagnosed like any other wait that ran out (`_tap_failed`); only a button
+    that is missing while its screen is still up stays the page's own generic error. toppan has no
+    PIN, so `pin` is unused.
     """
     ctx = FlowContext(
         flow="credential_flow", wallet=SCREENS.name, what=credential_name,
@@ -139,6 +158,9 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         ConfirmationPage(driver, **page_args).confirm()
     except WebDriverException as exc:
         raise failures.lost(ctx, "while tapping CONTINUE", exc) from exc
+    except Exception as exc:
+        _tap_failed(driver, ctx, exc, late=confirm, waited_for="its CONTINUE button",
+                    after="the issuance confirmation showed", head=head)
     progress.step("tapped CONTINUE")
 
     offer = [("the credential offer", offer_on_screen, 1.0)]
@@ -157,6 +179,9 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         CredentialOfferPage(driver, **page_args).accept()
     except WebDriverException as exc:
         raise failures.lost(ctx, "while tapping Accept", exc) from exc
+    except Exception as exc:
+        _tap_failed(driver, ctx, exc, late=offer, waited_for="its Accept button",
+                    after="the credential offer showed", head=head)
     progress.step("tapped Accept")
 
     _after_accept(driver, ctx, t)

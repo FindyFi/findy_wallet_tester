@@ -1,4 +1,5 @@
 import logging
+from typing import NoReturn
 
 from selenium.common.exceptions import WebDriverException
 
@@ -49,16 +50,18 @@ def _no_retry(exc: FlowFailure) -> FlowFailure:
                                      " [no_retry]")
 
 
-def _ended_early(driver, ctx: FlowContext):
+def _ended_early(driver, ctx: FlowContext, when: str = "before showing the request"):
     """toppan answered with its result screen instead of the request. Raises; never returns.
 
     "Request docType … is not available" is toppan saying it holds nothing of the type asked for:
     `no_match`. Anything else it says there — older builds said "No document shared" — is its
     verdict on the request: `rejected`. The screen is left up for the failure screenshot and dump;
     init_flow closes it through its own button in teardown, since it ignores BACK.
+
+    `when` says where in the flow it ended; the default is the request never having shown.
     """
     said = result_page.message(driver)
-    logger.error(f"[verification_flow] toppan ended '{ctx.what}' before any request: "
+    logger.error(f"[verification_flow] toppan ended '{ctx.what}' {when}: "
                  f"{said or '(unreadable)'}")
     if result_page.is_no_match(said):
         # Deterministic: the 2026-09-14, -15 and -16 nightlies all ended authbound_verifier on
@@ -71,12 +74,12 @@ def _ended_early(driver, ctx: FlowContext):
         # Every rerun of this case failed at this step: authbound_verifier, nightly 2026-08-19 to
         # 2026-09-01 (reports/ from 2026-06-29). From 2026-09-02 toppan went home here instead.
         raise FlowFailure(outcome.REJECTED, (
-            f"[verification_flow] toppan ended the verification for '{ctx.what}' before showing "
-            f"the request: \"{said}\" [no_retry]"
+            f"[verification_flow] toppan ended the verification for '{ctx.what}' {when}: "
+            f"\"{said}\" [no_retry]"
         ))
     raise FlowFailure(outcome.REJECTED, (
         f"[verification_flow] toppan ended the verification for '{ctx.what}' on its result screen "
-        "before showing the request; its message could not be read"
+        f"{when}; its message could not be read"
     ))
 
 
@@ -154,6 +157,27 @@ def _after_share(driver, ctx: FlowContext, t: float) -> str:
     ))
 
 
+def _tap_failed(driver, ctx: FlowContext, exc: Exception, *, late, waited_for: str, after: str,
+                head: str, ended: str = "before showing the request") -> NoReturn:
+    """A tap's button could not be found, though its screen had shown a moment before. Raises.
+
+    `BasePage.click` raises exactly `Exception` when the button is not clickable in time; anything
+    else is not that and propagates untouched. The screen is then looked at once more, as after
+    any wait that ran out. If toppan has gone on to its result screen, that is its answer to the
+    request (`_ended_early`); if the same screen is still up, the button alone is missing and the
+    page's own error stands.
+    """
+    if type(exc) is not Exception:
+        raise exc
+    seen = failures.nothing_appeared(driver, ctx, late=late, timeout=ctx.timeout("default"),
+                                     expected=_EXPECTED, waited_for=waited_for, after=after,
+                                     head=head, was_in_front=True)
+    if seen == "its result screen":
+        progress.reached(progress.OPEN, "toppan was in front, on its result screen")
+        _ended_early(driver, ctx, ended)
+    raise exc
+
+
 def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: str,
         pin: str = "", **page_args):
     """Open a presentation request deeplink and share credentials in the Toppan wallet.
@@ -166,9 +190,10 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
          browser (the verifier's redirect); anything else fails
 
     Every verdict this flow reaches about toppan is a `base.outcome.FlowFailure` naming what
-    happened, and the progress trail records how far toppan got. Taps through a page object can
-    still raise that page's own generic error when its button cannot be found. toppan has no PIN,
-    so `pin` is unused.
+    happened, and the progress trail records how far toppan got. A tap on CONTINUE or Share whose
+    button is gone is diagnosed like any other wait that ran out (`_tap_failed`); only a button
+    that is missing while its screen is still up stays the page's own generic error. toppan has no
+    PIN, so `pin` is unused.
     """
     ctx = FlowContext(
         flow="verification_flow", wallet=SCREENS.name, what=credential_name,
@@ -213,6 +238,9 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
             VerificationConfirmationPage(driver, **page_args).confirm()
         except WebDriverException as exc:
             raise failures.lost(ctx, "while tapping CONTINUE", exc) from exc
+        except Exception as exc:
+            _tap_failed(driver, ctx, exc, late=[first[0], first[2]],
+                        waited_for="its CONTINUE button", after="the verification confirmation showed", head=head)
         progress.step("tapped CONTINUE")
 
         seen = failures.first_of(driver, ctx, request + error, t,
@@ -235,6 +263,10 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         VerificationRequestPage(driver, **page_args).share()
     except WebDriverException as exc:
         raise failures.lost(ctx, "while tapping Share", exc) from exc
+    except Exception as exc:
+        _tap_failed(driver, ctx, exc, late=request, waited_for="its Share button",
+                    after="the verification request showed", head=head,
+                    ended="after showing the request, when Share was tapped")
     progress.step("tapped Share")
 
     ended = _after_share(driver, ctx, t_share)

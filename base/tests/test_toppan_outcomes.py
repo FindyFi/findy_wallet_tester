@@ -13,6 +13,7 @@ Two layers, neither touching a device:
   of screens and keeps a virtual clock, so a 30-second wait costs nothing and every timeout the
   flow passes is visible.
 """
+import inspect
 import time
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
@@ -956,3 +957,197 @@ def test_a_dead_session_reading_the_foreground_after_share_is_ours(phone):
     _share_then_front(phone, DEAD)
     exc, _ = _raised(_verify, phone)
     assert exc.category == outcome.LOST_SESSION
+
+
+# --- a tap whose button is gone ------------------------------------------------------------------
+#
+# `BasePage.click` raises exactly `Exception` when a button is not clickable in time. The screen
+# had shown a moment before, so the flows look again and say what is there now.
+
+def _failing_page(phone, method, exc, becomes):
+    """A page whose tap fails with `exc` after the screen has changed to `becomes`."""
+    class Page:
+        def __init__(self, driver, **kw):
+            pass
+
+    def tap(self):
+        # "dead": the session is gone by the time the flow looks at the screen again
+        phone.show(*(becomes if becomes != "dead" else [("", None)]))
+        phone.dead_after = len(phone.asked) if becomes == "dead" else None
+        raise exc
+    setattr(Page, method, tap)
+    return Page
+
+
+def _start_continue(phone):
+    phone.show(("confirm", None))
+
+
+def _start_issue_accept(phone):
+    phone.show(("confirm", None))
+    phone.then = {"CONTINUE": [("offer", None)]}
+
+
+def _start_verify_share(phone):
+    phone.show(("confirm", None))
+    phone.then = {"CONTINUE": [("request", None)]}
+
+
+# name -> (module, page class, method, screen the tap needs, how to start, run, stage)
+TAPS = {
+    "issue CONTINUE": (cf, "ConfirmationPage", "confirm", "confirm", _start_continue,
+                       _issue, progress.OPEN),
+    "issue Accept": (cf, "CredentialOfferPage", "accept", "offer", _start_issue_accept,
+                     _issue, progress.PRESENT),
+    "verify CONTINUE": (vf, "VerificationConfirmationPage", "confirm", "confirm",
+                        _start_continue, _verify, progress.OPEN),
+    "verify Share": (vf, "VerificationRequestPage", "share", "request", _start_verify_share,
+                     _verify, progress.PRESENT),
+}
+tap_cases = pytest.mark.parametrize("tap", list(TAPS))
+
+
+def _break_tap(phone, monkeypatch, tap, becomes, exc=None):
+    module, page, method, screen, start, run, stage = TAPS[tap]
+    exc = exc or Exception(f"Element ('xpath', '//*[@text=\"x\"]') not clickable after 10s")
+    monkeypatch.setattr(module, page, _failing_page(phone, method, exc, becomes))
+    start(phone)
+    return run, screen, stage, exc
+
+
+@tap_cases
+def test_a_tap_that_finds_toppans_error_dialog_is_rejected_quoting_it(phone, monkeypatch, tap):
+    run, _, stage, _ = _break_tap(phone, monkeypatch, tap, [("error", None)])
+    exc, trail = _raised(run, phone)
+    assert exc.category == outcome.REJECTED
+    assert "Unsupported client_id prefix" in str(exc)
+    assert "[no_retry]" in str(exc)
+    assert trail["stage"] == stage
+
+
+@tap_cases
+def test_a_tap_that_finds_the_wallet_screen_is_dismissed(phone, monkeypatch, tap):
+    run, _, stage, _ = _break_tap(phone, monkeypatch, tap, [("home", None)])
+    exc, trail = _raised(run, phone)
+    assert exc.category == outcome.DISMISSED
+    assert "showed its wallet screen" in str(exc)
+    assert "when checked 10s after the" in str(exc)
+    assert trail["stage"] == stage
+
+
+@tap_cases
+def test_a_tap_that_finds_toppan_gone_says_it_left_not_that_it_never_came(phone, monkeypatch, tap):
+    run, _, stage, _ = _break_tap(phone, monkeypatch, tap, [("", None)])
+    phone.front = "com.android.chrome"
+    exc, trail = _raised(run, phone)
+    assert exc.category == outcome.ABSENT
+    assert "had left the foreground" in str(exc)
+    assert "did not come to the foreground" not in str(exc)
+    assert trail["stage"] == stage
+
+
+@tap_cases
+def test_a_session_that_dies_while_the_screen_is_looked_at_again_is_ours(phone, monkeypatch, tap):
+    run, _, stage, _ = _break_tap(phone, monkeypatch, tap, "dead")
+    exc, trail = _raised(run, phone)
+    assert exc.category == outcome.LOST_SESSION
+    assert trail["stage"] == stage
+
+
+@tap_cases
+def test_a_tap_whose_screen_is_still_up_keeps_the_pages_own_error(phone, monkeypatch, tap):
+    module, page, method, screen, *_ = TAPS[tap]
+    # the screen the tap needed is still showing afterwards: only the button is missing
+    run, _, _, original = _break_tap(phone, monkeypatch, tap, [(screen, None)])
+    with pytest.raises(Exception) as raised:
+        run(phone)
+    assert raised.value is original
+    assert not isinstance(raised.value, outcome.FlowFailure)
+
+
+@tap_cases
+def test_a_tap_failing_in_any_other_way_is_not_diagnosed(phone, monkeypatch, tap):
+    """Only the page's own "not clickable" Exception is read as a vanished screen."""
+    boom = TypeError("not a tap that timed out")
+    run, _, _, _ = _break_tap(phone, monkeypatch, tap, [("home", None)], exc=boom)
+    with pytest.raises(TypeError) as raised:
+        run(phone)
+    assert raised.value is boom
+
+
+def test_a_share_that_finds_the_result_screen_is_ended_early_in_its_words(phone, monkeypatch):
+    phone.result_text = NO_DOCTYPE
+    run, _, _, _ = _break_tap(phone, monkeypatch, "verify Share", [("result", None)])
+    exc, trail = _raised(run, phone)
+    assert exc.category == outcome.NO_MATCH
+    assert NO_DOCTYPE in str(exc)
+    assert trail["stage"] == progress.PRESENT
+
+
+@pytest.mark.parametrize("tap, when, stage", [
+    ("verify Share", "after showing the request, when Share was tapped", progress.PRESENT),
+    ("verify CONTINUE", "before showing the request", progress.OPEN),
+])
+def test_a_tap_that_finds_the_result_screen_says_where_it_ended(phone, monkeypatch, tap, when,
+                                                                stage):
+    phone.result_text = "Something else entirely"
+    run, _, _, _ = _break_tap(phone, monkeypatch, tap, [("result", None)])
+    exc, trail = _raised(run, phone)
+    assert exc.category == outcome.REJECTED
+    assert f"for 'pension_verification' {when}: \"Something else entirely\" [no_retry]" in str(exc)
+    assert trail["stage"] == stage
+
+
+@pytest.mark.parametrize("tap, when", [
+    ("verify Share", "after showing the request, when Share was tapped"),
+    ("verify CONTINUE", "before showing the request"),
+])
+def test_an_unreadable_result_screen_after_a_tap_says_where_it_ended(phone, monkeypatch, tap,
+                                                                     when):
+    run, _, _, _ = _break_tap(phone, monkeypatch, tap, [("result", None)])
+    exc, _ = _raised(run, phone)
+    assert exc.category == outcome.REJECTED
+    assert f"on its result screen {when}; its message could not be read" in str(exc)
+
+
+@pytest.mark.parametrize("tap", ["verify Share", "verify CONTINUE"])
+def test_a_tap_that_finds_the_result_screen_without_a_request_is_no_match_after_either(
+        phone, monkeypatch, tap):
+    phone.result_text = NO_DOCTYPE
+    run, _, _, _ = _break_tap(phone, monkeypatch, tap, [("result", None)])
+    exc, _ = _raised(run, phone)
+    assert exc.category == outcome.NO_MATCH
+
+
+@tap_cases
+def test_a_tap_that_finds_toppan_on_an_unrecognised_screen_is_processing(phone, monkeypatch, tap):
+    run, _, stage, _ = _break_tap(phone, monkeypatch, tap, [("", None)])
+    exc, trail = _raised(run, phone)
+    assert exc.category == outcome.PROCESSING
+    assert trail["stage"] == stage
+
+
+@tap_cases
+def test_a_tap_that_finds_a_crash_dialog_is_crashed(phone, monkeypatch, tap):
+    run, _, stage, _ = _break_tap(phone, monkeypatch, tap, [("", None)])
+    phone.crash = SystemOverlay.APP_CRASH
+    exc, trail = _raised(run, phone)
+    assert exc.category == outcome.CRASHED
+    assert trail["stage"] == stage
+
+
+def test_the_taps_look_again_for_the_default_timeout_after_their_screen(phone, monkeypatch):
+    _break_tap(phone, monkeypatch, "issue Accept", [("home", None)])
+    exc, _ = _raised(_issue, phone)
+    assert "10s after the credential offer showed" in str(exc)
+
+
+def test_the_pages_hold_no_second_wait_of_their_own():
+    """The flows own the wait before each tap; the pages' own copy only ever fired in a race and
+    said nothing about what had happened."""
+    from wallets.toppan.pages import credential_offer_page, verification_request_page
+    for module in (credential_offer_page, verification_request_page):
+        source = inspect.getsource(module)
+        assert "wait_until_loaded" not in source
+        assert "did not appear within" not in source
+        assert "WebDriverWait" not in source

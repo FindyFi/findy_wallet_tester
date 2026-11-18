@@ -1,7 +1,4 @@
 from appium.webdriver.common.appiumby import AppiumBy
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
 from base.utils import wait_present
@@ -37,20 +34,7 @@ def on_screen(driver, timeout=3) -> bool:
 
 
 class CredentialOfferPage(BasePage):
-    def wait_until_loaded(self, timeout=None):
-        t = timeout if timeout is not None else self._get_timeout("credential_offer", fallback=30)
-        try:
-            WebDriverWait(self.driver, t).until(
-                EC.presence_of_element_located(_offer_screen)
-            )
-        except TimeoutException:
-            raise RuntimeError(
-                f"Credential offer screen ('OID4VCI Issuance') did not appear within {t}s — "
-                "check that the deeplink was handled by the app"
-            )
-
     def accept(self):
-        self.wait_until_loaded()
         self.click(_accept_btn)
 
 
