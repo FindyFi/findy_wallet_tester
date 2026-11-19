@@ -3,6 +3,7 @@ import logging
 import pytest
 from pathlib import Path
 
+from base import credential_count
 from base.config import as_list, wallet_config
 from base.test_cases import issuance_cases
 from providers.factory import get_provider
@@ -35,22 +36,20 @@ if _unknown:
 @pytest.mark.parametrize("did_method", _did_methods)
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
 @pytest.mark.parametrize("issuer_name,test_case", _issuance_cases)
-def test_credential_issuance(app, issuer_name, test_case, did_method):
+def test_credential_issuance(app, request, issuer_name, test_case, did_method):
     logger.info(f"[test] Issuance '{test_case}' from '{issuer_name}' under DID method '{did_method}'")
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
 
     home = HomePage(app.driver, **app.page_args)
 
-    # Verify the wallet is actually on the DID this test is meant to run under (it reverts to the
-    # default on the app's cold start, so a failed re-switch must not silently pass on the wrong DID).
-    expected_alias = setup_flow.DID_METHODS[did_method]["alias"]
-    active_alias = home.active_did_alias()
-    assert active_alias == expected_alias, (
-        f"Active DID is '{active_alias}', expected '{expected_alias}' for did_method '{did_method}'"
-    )
-
-    count_before = home.count_credentials()
+    # Credentials are listed per active DID, and gataca reverts to its default DID on the app's
+    # cold start: so before EVERY count the DID this test issues to must be the active one, or the
+    # count is of a different set of cards. A DID that cannot be made active is `setup`.
+    setup_flow.ensure_active_did(app.driver, app_package=app_package, did_method=did_method,
+                                 **app.page_args)
+    home.wait_until_loaded()
+    count_before = credential_count.read(home, when="before issuance")
 
     provider = get_provider(app.config, issuer_name)
     credential_flow.run(
@@ -63,15 +62,9 @@ def test_credential_issuance(app, issuer_name, test_case, did_method):
     )
 
     home.wait_until_loaded()
-    count_after = home.count_credentials()
-    added = count_after - count_before
-    logger.info(
-        f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
-        f"(wallet: {count_before} → {count_after}, +{added})"
-    )
-    assert added > 0, (
-        f"Wallet reported the issuance flow as successful but credential count did not "
-        f"increase ({count_before} → {count_after}). The Gataca wallet may have completed "
-        f"OIDC authentication ('Login Successful') without actually storing the issued "
-        f"credential — check the wallet UI and notifications."
-    )
+    setup_flow.ensure_active_did(app.driver, app_package=app_package, did_method=did_method,
+                                 **app.page_args)
+    home.wait_until_loaded()
+    count_after = credential_count.read(home, when="after issuance")
+    credential_count.assert_increased(count_before, count_after, request=request,
+                                      wallet=APP_NAME, issuer=issuer_name, case=test_case)

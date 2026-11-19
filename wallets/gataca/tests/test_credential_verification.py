@@ -6,7 +6,6 @@ from pathlib import Path
 from base.config import as_list, wallet_config
 from base.test_cases import verification_cases
 from providers.factory import get_provider
-from wallets.gataca.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +28,11 @@ def test_credential_verification(app, issuer_name, test_case, did_method):
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
 
-    # Verify the wallet is on the DID this test is meant to run under (it reverts to the default on
-    # the app's cold start, so a failed re-switch must not silently pass on the wrong DID).
-    expected_alias = setup_flow.DID_METHODS[did_method]["alias"]
-    active_alias = HomePage(app.driver, **app.page_args).active_did_alias()
-    assert active_alias == expected_alias, (
-        f"Active DID is '{active_alias}', expected '{expected_alias}' for did_method '{did_method}'"
-    )
+    # The DID this test is meant to run under must be the active one (gataca reverts to its default
+    # on the app's cold start, so a failed re-switch must not silently pass on the wrong DID). A DID
+    # that cannot be made active is `setup`.
+    setup_flow.ensure_active_did(app.driver, app_package=app_package, did_method=did_method,
+                                 **app.page_args)
 
     provider = get_provider(app.config, issuer_name)
     verification_flow.run(

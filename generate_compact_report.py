@@ -462,16 +462,16 @@ REASON_PATTERNS = (
     ("no_match", r"No matching credentials"),                            # old runs
     ("nothing_to_present", r"does not have the cards required"),         # old runs
     ("dismissed", r"returned to (?:its )?home (?:screen )?without"),     # old runs
-    ("setup", r"Active DID is "),                                       # pending: gataca
-    ("processing", r"No offer/error/home screen after"),                 # pending: gataca
-    ("processing", r"No success/home screen after"),                     # pending: gataca
+    ("setup", r"Active DID is "),                                       # old runs
+    ("processing", r"No offer/error/home screen after"),                 # old runs
+    ("processing", r"No success/home screen after"),                     # old runs
     ("processing", r"^selenium\.common\.exceptions\.TimeoutException"),  # third-party
     ("rejected", r"error dialog"),                                       # old runs
     ("rejected", r"error screen"),                                       # old runs
-    ("rejected", r"was rejected"),                                       # pending: gataca
+    ("rejected", r"was rejected"),                                       # old runs
     ("rejected", r"Credential issuance failed"),                         # old runs
     ("rejected", r"Verification failed for"),                            # old runs
-    ("not_stored", r"^assert\s"),                                        # pending: gataca
+    ("not_stored", r"^assert\s"),                                        # old runs
 )
 
 # Trailing marker the rerun plugin reads; noise in a published tooltip.

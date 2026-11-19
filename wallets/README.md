@@ -257,6 +257,19 @@ which cannot show a ceiling of three. The fix is to scroll and accumulate unique
 wallet-reported total; until then, clean-slate is not a tidiness preference for these wallets, it is
 what makes their numbers mean anything.
 
+**gataca now scrolls (2026-11-18).** Its count scrolls the list a little at a time and counts each
+card once, so a saturated list is no longer a false `not_stored`. gataca lists credentials **per
+active DID** (measured on emulator-5554: "Gataca" lists "Gataca Attest" and "Self-attested", "JWK
+Identity" only "Self-attested"; a cold start resets the active DID to "Gataca"), so the issuance
+test makes the DID it issues to active before *every* count, and a DID that cannot be made active
+is `setup`. Several cards share a title ("OmaKela Pensiondemo" x3), so cards are told apart by
+position: two readings of the list are joined by the distance it moved between them, and the steps
+stay below the spacing of identical cards so that distance is unambiguous. When it is not (a
+gesture that moved the list less accurately than asked, with identical cards) the count is
+`CredentialCountUnavailable`, never a guess; the issuance cell then carries `count_evidence:
+unavailable` and cleanup falls back to the cards on screen rather than stop pruning. Not yet
+confirmed on a device: that `mobile: scrollGesture` moves the list by `percent` of its height.
+
 **Assert the count changed** — the actual pass criterion. Re-measured 2026-09-03: **all eight now
 assert**, where on 2026-08-20 only four did. gataca, heidi and paradym used to compute
 `count_before`/`count_after` and merely log the delta, so a no-op issuance passed; procivis asserted

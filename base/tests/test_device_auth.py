@@ -127,3 +127,21 @@ def test_no_gataca_flow_answers_the_prompt_with_the_pin_alone():
     assert "device_auth_prompt" in (ROOT / "wallets/gataca/flows/cleanup_flow.py").read_text()
     init = (ROOT / "wallets/gataca/flows/init_flow.py").read_text()
     assert "authenticate_device(driver, device_pin, detect_timeout=default_timeout)" in init
+
+
+def test_a_missing_pin_field_is_a_typed_runtime_error_with_the_same_text(monkeypatch):
+    """A fingerprint-only sheet on a phone: callers match the type, not the prose, and callers
+    that catch RuntimeError are unaffected."""
+    assert issubclass(android.PinFieldMissing, RuntimeError)
+
+    class Driver:
+        pass
+
+    monkeypatch.setattr(android, "wait_present",
+                        lambda d, locator, timeout=2: locator == android._AUTH_PROMPT)
+    try:
+        android.authenticate_with_pin(Driver(), "1234")
+    except android.PinFieldMissing as exc:
+        assert str(exc) == "[android] PIN entry field did not appear after switching to PIN"
+    else:
+        raise AssertionError("authenticate_with_pin should have raised")

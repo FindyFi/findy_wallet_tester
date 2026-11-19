@@ -189,12 +189,14 @@ def test_an_unmapped_error_surface_is_reported_as_unknown_never_as_clean(tmp_pat
 
 
 def test_a_wallet_with_no_screens_module_at_all_is_unmapped_not_clean(tmp_path):
-    """A wallet that has not adopted the contract yet (gataca) must not read as clean."""
-    request = _request(tmp_path, params={"driver": "gataca"}, line="RuntimeError: [flow] timed out")
-    record_error_screen(Driver(), request, _config(), wallet="gataca")
+    """A wallet that has not adopted the contract yet must not read as clean. Every real wallet
+    has a screens.py now, so this one is made up."""
+    request = _request(tmp_path, params={"driver": "newwallet"},
+                       line="RuntimeError: [flow] timed out")
+    record_error_screen(Driver(), request, _config(), wallet="newwallet")
 
     assert _field(_digest(tmp_path), "wallet said") == \
-        "(unknown — no error screen is mapped for gataca)"
+        "(unknown — no error screen is mapped for newwallet)"
 
 
 def test_a_mapped_surface_that_reads_nothing_says_so(tmp_path, monkeypatch):

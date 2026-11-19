@@ -1,11 +1,11 @@
 """The report's regex fallback is a contract on message prose, and it may only shrink.
 
 `REASON_PATTERNS` in `generate_compact_report.py` reads a failure category out of an exception's
-wording when a run has no typed category. Every wallet but gataca now raises typed failures, so
-what is left matters for archived runs and for gataca until it is converted. This ratchet keeps
-it that way: every entry carries exactly one tag (`# third-party`, `# old runs`,
-`# pending: <wallet>`), a pending wallet that has gained a `screens.py` must be re-tagged or
-deleted, and the set of entries standing for our own prose cannot grow.
+wording when a run has no typed category. Every wallet now raises typed failures, so what is left
+matters for archived runs only. This ratchet keeps it that way: every entry carries exactly one
+tag (`# third-party`, `# old runs`, `# pending: <wallet>`), a pending wallet that has gained a
+`screens.py` must be re-tagged or deleted, and the set of entries standing for our own prose
+cannot grow.
 
 The tags are read from the source with `ast` and `tokenize`, not from the runtime tuple, because
 comments do not survive into it.
@@ -25,8 +25,9 @@ SOURCE = ROOT / "generate_compact_report.py"
 TAG_RE = re.compile(r"^#\s*(third-party|old runs|pending: [a-z_]+)\s*$")
 
 # The archive's needs as measured on 2026-11-12 (all 309 runs archived in the checkout it was
-# written in): the seven entries tagged `# old runs` plus the five still pending. Growing this
-# set means our own prose became a contract again; type the failure at the raise site instead.
+# written in): the seven entries tagged `# old runs` plus the five that gataca's typing
+# (2026-11-18) re-tagged from pending. Growing this set means our own prose became a contract
+# again; type the failure at the raise site instead.
 OLD_RUN_PATTERNS = frozenset({
     r"No matching credentials",
     r"does not have the cards required",

@@ -28,9 +28,13 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
+from base import outcome
 from base.android import authenticate_device
+from base.flow_context import FlowContext
+from base.outcome import FlowFailure
 from base.utils import wait_present
-from wallets.gataca.pages.home_page import SCREEN_ID as _home_id
+from wallets.gataca.flows import _failures as failures
+from wallets.gataca.pages.home_page import HomePage, SCREEN_ID as _home_id
 from wallets.gataca.pages.settings_page import SettingsPage, SETTINGS_TAB
 from wallets.gataca.pages.personal_info_page import PersonalInfoPage, SCREEN_ID as _personal_info_id
 from wallets.gataca.pages.advanced_page import AdvancedPage
@@ -59,6 +63,15 @@ DID_METHODS = {
 
 DEFAULT_DID_METHOD = "jwk"
 
+# After a DID switch gataca syncs for a few seconds before its list shows the new DID's credentials.
+_SYNC_WAIT = 8
+
+
+def _ctx(app_package: str, did_method: str, page_args: dict) -> FlowContext:
+    return FlowContext(flow="setup_flow", wallet="gataca", what=f"DID method '{did_method}'",
+                       app_package=app_package, device_pin=page_args.get("device_pin", ""),
+                       page_args=page_args)
+
 
 def _device_pin(page_args: dict) -> str:
     """The device PIN used to answer system biometric prompts (from the wallet's android config)."""
@@ -77,17 +90,56 @@ def ensure_did(driver, app_package: str, did_method: str = DEFAULT_DID_METHOD, *
         True  — the method was already the active DID; no changes made.
         False — an existing alias was activated, or a new profile was created and is now active.
 
-    Raises:
-        ValueError   — if did_method is not a supported DID method.
-        RuntimeError — if the Settings or Personal Information screen cannot be reached,
-                       or the biometric prompt does not dismiss.
+    Raises a `base.outcome.FlowFailure`, never a bare exception: `setup` when did_method is not a
+    supported DID method, the Settings or Personal Information screen cannot be reached, the
+    system sheet has no PIN field (a phone) or does not close, or the DID is not active after it
+    was created; `lost_session` when the Appium session dies.
     """
     spec = DID_METHODS.get(did_method)
     if spec is None:
-        raise ValueError(
+        raise FlowFailure(outcome.SETUP, (
             f"[setup_flow] Unsupported did_method '{did_method}'. "
             f"Supported: {', '.join(sorted(DID_METHODS))}"
-        )
+        ))
+    ctx = _ctx(app_package, did_method, page_args)
+    with failures.guarded(ctx, f"while making the {did_method} DID active"):
+        return _ensure_did(driver, did_method, spec, page_args)
+
+
+def ensure_active_did(driver, app_package: str, did_method: str = DEFAULT_DID_METHOD,
+                      **page_args) -> bool:
+    """Make sure the DID credentials are issued to is the active one, from the home screen.
+
+    gataca lists credentials PER ACTIVE DID, and reverts to its default DID on a cold start, so
+    a count taken under the wrong DID is a count of a different set of cards. Reads the alias on
+    home; on a mismatch runs `ensure_did` and reads it again. Returns True when no switch was
+    needed. A DID that cannot be made active is `setup`: ours to fix, whatever the wallet did.
+    """
+    spec = DID_METHODS.get(did_method)
+    if spec is None:
+        raise FlowFailure(outcome.SETUP, (
+            f"[setup_flow] Unsupported did_method '{did_method}'. "
+            f"Supported: {', '.join(sorted(DID_METHODS))}"
+        ))
+    expected = spec["alias"]
+    ctx = _ctx(app_package, did_method, page_args)
+    with failures.guarded(ctx, f"while checking the active DID is {did_method}"):
+        active = HomePage(driver, **page_args).active_did_alias()
+        if active == expected:
+            return True
+        logger.warning(f"[setup_flow] Active DID is '{active}', expected '{expected}' — switching")
+        ensure_did(driver, app_package=app_package, did_method=did_method, **page_args)
+        time.sleep(_SYNC_WAIT)
+        active = HomePage(driver, **page_args).active_did_alias()
+    if active != expected:
+        raise FlowFailure(outcome.SETUP, (
+            f"[setup_flow] Active DID is '{active}', expected '{expected}' for did_method "
+            f"'{did_method}', and switching to it did not take"
+        ))
+    return False
+
+
+def _ensure_did(driver, did_method: str, spec: dict, page_args: dict) -> bool:
     prefix, alias = spec["prefix"], spec["alias"]
 
     timeouts = page_args.get("timeouts", {})
@@ -137,10 +189,10 @@ def ensure_did(driver, app_package: str, did_method: str = DEFAULT_DID_METHOD, *
 
     if not now_active:
         new_did = personal_info.current_did()
-        raise RuntimeError(
+        raise FlowFailure(outcome.SETUP, (
             f"[setup_flow] Created {did_method} profile but active DID is not {prefix} "
             f"(got: {new_did[:50]}...)"
-        )
+        ))
 
     logger.info(f"[setup_flow] {did_method} DID is now active")
     _return_home(driver, default_timeout)
@@ -154,7 +206,7 @@ def _open_personal_information(driver, default_timeout: float, page_args: dict):
             EC.element_to_be_clickable(SETTINGS_TAB)
         ).click()
     except TimeoutException:
-        raise RuntimeError("[setup_flow] Could not find Settings tab on home screen")
+        raise FlowFailure(outcome.SETUP, "[setup_flow] Could not find Settings tab on home screen")
 
     settings_page = SettingsPage(driver, **page_args)
     settings_page.wait_until_loaded()
@@ -240,7 +292,8 @@ def _enable_advanced_and_multi_did(driver, default_timeout: float, page_args: di
                 lambda d: advanced.has_multi_did_link()
             )
         except TimeoutException:
-            raise RuntimeError("[setup_flow] Multi DID link did not appear after enabling Advanced")
+            raise FlowFailure(outcome.SETUP, (
+                "[setup_flow] Multi DID link did not appear after enabling Advanced"))
 
     advanced.open_multi_did()
 
@@ -255,7 +308,7 @@ def _enable_advanced_and_multi_did(driver, default_timeout: float, page_args: di
                 lambda d: multi_did.is_enabled()
             )
         except TimeoutException:
-            raise RuntimeError("[setup_flow] Multi DID feature did not enable")
+            raise FlowFailure(outcome.SETUP, "[setup_flow] Multi DID feature did not enable")
 
     # Navigate back to Personal Information: Multi DID → Advanced → Personal Information.
     driver.back()
@@ -287,7 +340,8 @@ def _create_profile(driver, default_timeout: float, page_args: dict, spec: dict)
             EC.presence_of_element_located(_personal_info_id)
         )
     except TimeoutException:
-        raise RuntimeError("[setup_flow] Did not return to Personal Information after creating profile")
+        raise FlowFailure(outcome.SETUP, (
+            "[setup_flow] Did not return to Personal Information after creating profile"))
 
 
 def _return_home(driver, default_timeout: float):
@@ -301,4 +355,4 @@ def _return_home(driver, default_timeout: float):
         except TimeoutException:
             driver.back()
 
-    raise RuntimeError("[setup_flow] Could not return to home after DID setup")
+    raise FlowFailure(outcome.SETUP, "[setup_flow] Could not return to home after DID setup")

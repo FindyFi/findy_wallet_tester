@@ -344,6 +344,13 @@ def handle_biometric_if_present(driver, dismiss_timeout=10, detect_timeout=2) ->
     return True
 
 
+class PinFieldMissing(RuntimeError):
+    """The system auth sheet has no PIN entry to fall back on (a fingerprint-only sheet, as on a
+    phone whose wallet removed the PIN option). Still a RuntimeError with the same message, so
+    callers that catch RuntimeError are unaffected; callers that care match the type, not the
+    prose."""
+
+
 def authenticate_with_pin(driver, pin, detect_timeout=2, dismiss_timeout=10) -> bool:
     """If the Android biometric prompt is on screen, authenticate via PIN instead of fingerprint.
 
@@ -374,7 +381,7 @@ def authenticate_with_pin(driver, pin, detect_timeout=2, dismiss_timeout=10) -> 
             logger.warning(f"[android] 'Use PIN' tap failed: {e}")
 
     if not wait_present(driver, _LOCK_PASSWORD, timeout=5):
-        raise RuntimeError("[android] PIN entry field did not appear after switching to PIN")
+        raise PinFieldMissing("[android] PIN entry field did not appear after switching to PIN")
 
     field = driver.find_element(*_LOCK_PASSWORD)
     field.click()
