@@ -6,6 +6,7 @@ from selenium.common.exceptions import WebDriverException
 from base import deeplink, outcome, progress
 from base.android import handle_biometric_if_present
 from base.flow_context import FlowContext
+from base.flow_failures import lost_session
 from base.outcome import FlowFailure
 from base.utils import wait_present
 from providers.base import DeeplinkProvider
@@ -74,10 +75,7 @@ def _wait_for_request(driver, request_id, error_id, verification_error_id,
                 return "error"
         except WebDriverException as exc:
             # Ours, not the wallet's: a dead UiAutomator2 session is kept off the vendor's record.
-            raise FlowFailure(outcome.LOST_SESSION, (
-                f"[verification_flow] Appium/UiAutomator2 connection lost mid-wait "
-                f"(app may have crashed): {exc.msg}"
-            )) from exc
+            raise lost_session("verification_flow", "mid-wait", exc.msg) from exc
     return "timeout"
 
 
@@ -112,10 +110,7 @@ def _wait_for_share_result(driver, shared_id, home_id, error_id, verification_er
             if wait_present(driver, home_id, timeout=1):
                 return "home"
         except WebDriverException as exc:
-            raise FlowFailure(outcome.LOST_SESSION, (
-                f"[verification_flow] Appium/UiAutomator2 connection lost after sharing "
-                f"(app may have crashed): {exc.msg}"
-            )) from exc
+            raise lost_session("verification_flow", "after sharing", exc.msg) from exc
     return "timeout"
 
 

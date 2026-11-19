@@ -169,6 +169,18 @@ def test_a_dead_session_in_the_issuance_wait_is_ours(monkeypatch):
     exc, _ = _raised(cf.run, Driver(), provider=SimpleNamespace(get=lambda n: URL),
                      credential_name="c", app_package=PACKAGE, **PAGE_ARGS)
     assert exc.category == outcome.LOST_SESSION
+    assert str(exc) == ("[lost_session] [credential_flow] Appium/UiAutomator2 connection lost "
+                        "mid-wait (app may have crashed): instrumentation process is not running")
+
+
+def test_a_dead_session_with_no_message_says_none_in_the_issuance_wait(monkeypatch):
+    def dead(*a, **k):
+        raise WebDriverException()
+
+    monkeypatch.setattr(cf, "handle_biometric_if_present", dead)
+    exc, _ = _raised(cf.run, Driver(), provider=SimpleNamespace(get=lambda n: URL),
+                     credential_name="c", app_package=PACKAGE, **PAGE_ARGS)
+    assert str(exc).endswith("(app may have crashed): None")
 
 
 def test_the_error_copy_is_quoted_and_a_placeholder_is_not(monkeypatch):
@@ -251,6 +263,10 @@ def test_a_dead_session_in_either_verification_wait_is_ours(monkeypatch, loop):
         exc, _ = _raised(vf.run, Driver(), provider=SimpleNamespace(get=lambda n: URL),
                          credential_name="v", app_package=PACKAGE, **PAGE_ARGS)
     assert exc.category == outcome.LOST_SESSION
+    during = "mid-wait" if loop == "_wait_for_request" else "after sharing"
+    assert str(exc) == (
+        f"[lost_session] [verification_flow] Appium/UiAutomator2 connection lost {during} "
+        "(app may have crashed): instrumentation process is not running")
 
 
 def test_heidis_flows_raise_no_bare_runtime_errors():

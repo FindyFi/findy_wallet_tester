@@ -22,9 +22,10 @@ import pytest
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.common.exceptions import NoSuchElementException, WebDriverException
 
-from base import deeplink, outcome, progress
+from base import deeplink, flow_failures, outcome, progress
 from base.android import SystemOverlay
 from base.conftest_helpers import _QUOTED
+from base.flow_context import FlowContext
 from base.screens import UNKNOWN
 from wallets.toppan.flows import _failures as failures
 from wallets.toppan.flows import credential_flow as cf, init_flow, verification_flow as vf
@@ -248,8 +249,8 @@ def phone(monkeypatch):
         return p.result_shared
     monkeypatch.setattr(result_page, "shared", shared)
     monkeypatch.setattr(failures, "home_on_screen", p.probe("home"))
-    monkeypatch.setattr(failures, "handle_permission_if_present", lambda d: False)
-    monkeypatch.setattr(failures, "detect_crash_or_anr", lambda d, *a, **k: p.crash)
+    monkeypatch.setattr(flow_failures, "handle_permission_if_present", lambda d: False)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: p.crash)
 
     monkeypatch.setattr(cf, "confirmation_on_screen", p.probe("confirm"))
     monkeypatch.setattr(cf, "offer_on_screen", p.probe("offer"))
@@ -539,7 +540,7 @@ def test_a_dead_session_on_the_continue_tap_is_ours(phone, monkeypatch):
 def test_a_dead_session_while_looking_for_a_permission_dialog_is_ours(phone, monkeypatch):
     def dead(d):
         raise DEAD
-    monkeypatch.setattr(failures, "handle_permission_if_present", dead)
+    monkeypatch.setattr(flow_failures, "handle_permission_if_present", dead)
     exc, _ = _raised(_issue, phone)
     assert exc.category == outcome.LOST_SESSION
 
@@ -750,7 +751,7 @@ def test_a_dead_session_after_share_is_ours(phone):
 
 
 def test_an_answered_permission_dialog_is_a_step_not_a_stage(phone, monkeypatch):
-    monkeypatch.setattr(failures, "handle_permission_if_present", lambda d: True)
+    monkeypatch.setattr(flow_failures, "handle_permission_if_present", lambda d: True)
     _verification(phone, request=[("request", None)])
     phone.result_shared = True
     _verify(phone)
@@ -849,7 +850,7 @@ def test_a_dead_session_reading_the_foreground_after_continue_is_ours(phone):
 def test_a_dead_session_at_the_crash_look_is_ours_not_processing(phone, monkeypatch):
     def dead(d, *a, **k):
         raise DEAD
-    monkeypatch.setattr(failures, "detect_crash_or_anr", dead)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", dead)
     _issuance_until_accept(phone, [("", None)])
     exc, _ = _raised(_issue, phone)
     assert exc.category == outcome.LOST_SESSION
@@ -858,7 +859,7 @@ def test_a_dead_session_at_the_crash_look_is_ours_not_processing(phone, monkeypa
 def test_a_crash_look_that_fails_otherwise_claims_nothing(phone, monkeypatch):
     def broken(d, *a, **k):
         raise ValueError("not a driver error")
-    monkeypatch.setattr(failures, "detect_crash_or_anr", broken)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", broken)
     _issuance_until_accept(phone, [("", None)])
     exc, _ = _raised(_issue, phone)
     assert exc.category == outcome.PROCESSING
@@ -1151,3 +1152,41 @@ def test_the_pages_hold_no_second_wait_of_their_own():
         assert "wait_until_loaded" not in source
         assert "did not appear within" not in source
         assert "WebDriverWait" not in source
+
+
+# --- the exact words of the shared failure helpers, as toppan's flows publish them ---------------
+
+def _words_ctx():
+    return FlowContext(flow="credential_flow", wallet="toppan", what="x")
+
+
+def test_the_crash_and_anr_messages_are_exact(monkeypatch):
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr",
+                        lambda d, *a, **k: SystemOverlay.APP_CRASH)
+    with pytest.raises(outcome.FlowFailure) as crashed:
+        failures.raise_if_crashed(object(), _words_ctx(), "after Accept")
+    assert str(crashed.value) == (
+        "[crashed] [credential_flow] toppan crashed after Accept for 'x': "
+        "Android showed its crash dialog")
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: SystemOverlay.ANR)
+    with pytest.raises(outcome.FlowFailure) as anr:
+        failures.raise_if_crashed(object(), _words_ctx(), "after Accept")
+    assert str(anr.value) == (
+        "[crashed] [credential_flow] toppan stopped responding after Accept for 'x': "
+        "Android showed its not-responding dialog")
+
+
+def test_the_lost_session_message_is_exact():
+    exc = failures.lost(_words_ctx(), "while waiting", WebDriverException("boom"))
+    assert str(exc) == (
+        "[lost_session] [credential_flow] Appium/UiAutomator2 connection lost while waiting "
+        "for 'x' (app may have crashed): boom")
+
+
+def test_the_generic_helpers_are_base_s_and_the_probes_are_not_re_exported():
+    for name in ("lost", "answer_permission", "first_of", "raise_if_crashed"):
+        assert getattr(failures, name) is getattr(flow_failures, name)
+    assert failures.LATE is flow_failures.LATE
+    assert failures.APP_STATES is flow_failures.APP_STATES
+    assert not hasattr(failures, "detect_crash_or_anr")
+    assert not hasattr(failures, "handle_permission_if_present")

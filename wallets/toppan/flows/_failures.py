@@ -1,26 +1,31 @@
 """What both toppan flows do while they wait, and when something goes wrong, written once.
 
-Per-wallet on purpose: every probe and every sentence here is toppan's own. Nothing in it belongs
-in base/ — base/screens.py says why a copied probe is worse than none.
+Per-wallet on purpose: every probe and every sentence here is toppan's own — base/screens.py says
+why a copied probe is worse than none. The generic helpers (a dead session, Android's permission and
+crash dialogs, the polling loop) live in base/flow_failures.py and are re-exported here, so flows
+keep calling `failures.lost` and the like.
 
-- `lost`: a dead UiAutomator2 session is ours, not toppan's.
-- `answer_permission`: the Android permission dialog the old flows answered after the deeplink.
+- `lost`, `answer_permission`, `first_of`, `raise_if_crashed`: re-exported from base.
 - `error_probe`: toppan's error dialog, anchored on the package this flow was given.
-- `first_of`: poll a few of toppan's screens until one shows.
 - `dialog_failure`: toppan's error dialog as a FlowFailure, with the `[no_retry]` rule in one place.
-- `raise_if_crashed`: one cheap look for Android's crash or not-responding dialog.
 - `nothing_appeared`: the honest diagnosis when a wait *before* Accept or Share runs out.
 """
 import logging
 import re
-import time
 from functools import partial
 
 from selenium.common.exceptions import WebDriverException
 
 from base import outcome, progress
-from base.android import SystemOverlay, detect_crash_or_anr, handle_permission_if_present
 from base.flow_context import FlowContext
+from base.flow_failures import (  # noqa: F401 -- re-exported; they live in base/flow_failures.py
+    APP_STATES,
+    LATE,
+    answer_permission,
+    first_of,
+    lost,
+    raise_if_crashed,
+)
 from base.outcome import FlowFailure
 from wallets.toppan.pages import error_dialog
 from wallets.toppan.pages.home_page import on_screen as home_on_screen
@@ -39,51 +44,11 @@ THREAT = "Threat detected"
 _GATEWAY_FAILURE = re.compile(r"\b50[234] (?:Bad Gateway|Service Unavailable|Gateway Timeout)\b",
                               re.IGNORECASE)
 
-# The re-probe after a wait runs out: one look of about this long, shared by every target.
-_LATE = 1.0
-
-# `driver.query_app_state` codes (Appium's ApplicationState).
-_APP_STATES = {0: "not installed", 1: "not running", 2: "running in the background, suspended",
-               3: "running in the background", 4: "running in the foreground"}
-
-
-def lost(ctx: FlowContext, during: str, exc) -> FlowFailure:
-    """Ours, not the wallet's: a dead UiAutomator2 session is kept off the vendor's record."""
-    return FlowFailure(outcome.LOST_SESSION, (
-        f"[{ctx.flow}] Appium/UiAutomator2 connection lost {during} for '{ctx.what}' "
-        f"(app may have crashed): {getattr(exc, 'msg', None) or exc}"
-    ))
-
-
-def answer_permission(driver, ctx: FlowContext) -> None:
-    """Answer an Android permission dialog if one is up after the deeplink, as the flows always
-    have. It is Android's, not toppan's, so answering it completes no stage."""
-    try:
-        if handle_permission_if_present(driver):
-            progress.step("answered an Android permission dialog")
-    except WebDriverException as exc:
-        raise lost(ctx, "while looking for a permission dialog", exc) from exc
-
 
 def error_probe(ctx: FlowContext):
     """`error_dialog.present` for the package this flow runs against, as a (driver, timeout)
     probe."""
     return partial(error_dialog.present, package=ctx.app_package)
-
-
-def first_of(driver, ctx: FlowContext, screens, timeout: float, *, during: str) -> str:
-    """Poll `screens` — (name, probe, probe timeout) in order — until one shows. Returns its name,
-    or "" once `timeout` has run out with none of them seen. Every probe runs at least once."""
-    end = time.monotonic() + timeout
-    try:
-        while True:
-            for name, probe, wait in screens:
-                if probe(driver, wait):
-                    return name
-            if time.monotonic() >= end:
-                return ""
-    except WebDriverException as exc:
-        raise lost(ctx, during, exc) from exc
 
 
 def keeps_no_retry(said: str) -> bool:
@@ -117,36 +82,13 @@ def dialog_failure(driver, ctx: FlowContext, head: str) -> FlowFailure:
     return FlowFailure(outcome.REJECTED, f"{head}{quoted}{retry}")
 
 
-def raise_if_crashed(driver, ctx: FlowContext, when: str) -> None:
-    """One look for Android's crash or not-responding dialog before a negative verdict.
-
-    A dead session during the look is `lost_session`, as in `base.outcome.wait_for`: otherwise the
-    caller's next verdict would be written about a session that can no longer see anything. Any
-    other failure of the look claims nothing and is only logged.
-    """
-    try:
-        overlay = detect_crash_or_anr(driver)
-    except WebDriverException as exc:
-        raise lost(ctx, f"while looking for a crash dialog {when}", exc) from exc
-    except Exception as exc:
-        logger.warning(f"[{ctx.flow}] Could not look for a crash dialog: {exc}")
-        return
-    if overlay is None:
-        return
-    anr = overlay is SystemOverlay.ANR
-    raise FlowFailure(outcome.CRASHED, (
-        f"[{ctx.flow}] toppan {'stopped responding' if anr else 'crashed'} {when} for "
-        f"'{ctx.what}': Android showed its {'not-responding' if anr else 'crash'} dialog"
-    ))
-
-
 def nothing_appeared(driver, ctx: FlowContext, *, late, timeout: float, expected: str,
                      waited_for: str, after: str, head: str, was_in_front: bool = False) -> str:
     """A wait before Accept or Share ran out. Returns the name of a `late` screen that showed after
     all; otherwise raises the honest diagnosis.
 
     `late` is the wait's own (name, probe, probe timeout) list, re-probed once with about a second
-    shared between its probes (`_LATE`), not a second each. Then toppan's error
+    shared between its probes (`LATE`), not a second each. Then toppan's error
     dialog (`head` says where), a crash, its wallet screen — one look, at the end, so the message
     says what was there when checked rather than how long it had been there — and finally the
     shared diagnosis, whose "no error" and "no home screen" are then both true.
@@ -158,7 +100,7 @@ def nothing_appeared(driver, ctx: FlowContext, *, late, timeout: float, expected
     """
     try:
         for name, probe, _ in late:
-            if probe(driver, _LATE / len(late)):
+            if probe(driver, LATE / len(late)):
                 progress.step(f"toppan showed {name} late")
                 return name
         if error_dialog.present(driver, 1.0, package=ctx.app_package):
@@ -180,7 +122,7 @@ def nothing_appeared(driver, ctx: FlowContext, *, late, timeout: float, expected
     if was_in_front:
         try:
             front = driver.current_package
-            state = _APP_STATES.get(driver.query_app_state(ctx.app_package), "unknown")
+            state = APP_STATES.get(driver.query_app_state(ctx.app_package), "unknown")
         except WebDriverException as exc:
             raise lost(ctx, f"after {after}", exc) from exc
         if front != ctx.app_package:

@@ -29,7 +29,7 @@ from _procivis_fakes import (
     DEAD, PACKAGE, REFUSED, URL, Driver, FakeDriver, Probes, Waits, details_screen, in_front,
     process_screen, wallet_said,
 )
-from base import deeplink, outcome, progress
+from base import deeplink, flow_failures, outcome, progress
 from base.android import SystemOverlay
 from base.flow_context import FlowContext
 from wallets.procivis.flows import _failures as failures
@@ -111,7 +111,7 @@ def fresh(monkeypatch):
     monkeypatch.setattr(failures, "failure_label", lambda d: "")
     monkeypatch.setattr(failures, "warning_on_screen", lambda d: False)
     monkeypatch.setattr(failures, "read_details", lambda d, **kw: {})
-    monkeypatch.setattr(failures, "detect_crash_or_anr", lambda d, *a, **k: None)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: None)
     for m in (cf, vf):
         monkeypatch.setattr(m, "_home_on_screen", lambda d, timeout=2: False)
         monkeypatch.setattr(m, "_failure_on_screen", lambda d, timeout=2: False)
@@ -357,7 +357,7 @@ def test_a_process_screen_that_comes_back_after_clearing_is_processing(monkeypat
 def test_a_crash_dialog_where_a_screen_closed_is_crashed_not_success(
         monkeypatch, path, process, overlay, said):
     """A3: a process screen vanishing under Android's crash dialog used to count as cleared."""
-    monkeypatch.setattr(failures, "detect_crash_or_anr", lambda d, *a, **k: overlay)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: overlay)
     exc, _ = _raised(_issue, monkeypatch, True, True, process=process)
     assert exc.category == outcome.CRASHED
     assert f"procivis {said}" in str(exc)
@@ -1308,3 +1308,47 @@ def test_if_the_close_icon_is_not_found_back_presses_still_reach_home(monkeypatc
     _instant_probes(monkeypatch)
     assert init_flow._back_to_known_state(driver, PACKAGE) == "home"
     assert driver.went_back == 2, "details -> failure screen -> home"
+
+
+# --- the exact words of the shared failure helpers, as procivis's flows publish them -------------
+
+_WORDS_CTX = FlowContext(flow="credential_flow", wallet="procivis", what="x")
+
+
+def test_the_crash_and_anr_messages_are_exact(monkeypatch):
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr",
+                        lambda d, *a, **k: SystemOverlay.APP_CRASH)
+    with pytest.raises(outcome.FlowFailure) as crashed:
+        failures.raise_if_crashed(object(), _WORDS_CTX, "after Accept")
+    assert str(crashed.value) == (
+        "[crashed] [credential_flow] procivis crashed after Accept for 'x': "
+        "Android showed its crash dialog")
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: SystemOverlay.ANR)
+    with pytest.raises(outcome.FlowFailure) as anr:
+        failures.raise_if_crashed(object(), _WORDS_CTX, "after Accept")
+    assert str(anr.value) == (
+        "[crashed] [credential_flow] procivis stopped responding after Accept for 'x': "
+        "Android showed its not-responding dialog")
+
+
+def test_the_lost_session_message_is_exact():
+    exc = failures.lost(_WORDS_CTX, "while waiting", WebDriverException("boom"))
+    assert str(exc) == (
+        "[lost_session] [credential_flow] Appium/UiAutomator2 connection lost while waiting "
+        "for 'x' (app may have crashed): boom")
+
+
+def test_a_dead_session_at_the_crash_look_is_logged_not_raised(monkeypatch, caplog):
+    def dead(d, *a, **k):
+        raise WebDriverException("instrumentation process is not running")
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", dead)
+    assert failures.raise_if_crashed(object(), _WORDS_CTX, "after Accept") is None
+    assert ("[credential_flow] Could not look for a crash dialog: Message: instrumentation "
+            "process is not running") in caplog.text
+
+
+def test_procivis_re_exports_lost_and_wraps_the_crash_look():
+    assert failures.lost is flow_failures.lost
+    assert failures.raise_if_crashed is not flow_failures.raise_if_crashed
+    assert not hasattr(failures, "detect_crash_or_anr")
+    assert not hasattr(failures, "handle_permission_if_present")

@@ -47,6 +47,32 @@ become uniform.
 
 ---
 
+## `flows/_failures.py`: what is shared and what is not
+
+procivis, toppan, paradym and gataca each have a `flows/_failures.py`. Two kinds of thing live
+there, and only one of them belongs to the wallet.
+
+Wallet-owned, stays in the wallet's file: its probes, its error text, its `[no_retry]` rules, and
+every diagnosis that names one of its own screens (`nothing_appeared`, `error_failure` and the
+like). A copied probe is worse than none, so these are never shared.
+
+Shared, lives in `base/flow_failures.py` and is re-exported by name where a wallet uses it:
+everything that deals with the driver, the `FlowContext` or Android's own dialogs and not with a
+wallet's screens. That is `lost_session`, `lost`, `answer_permission`, `first_of`,
+`raise_if_crashed` and `late_look`. Rule of thumb: if the body would read the same in every
+wallet's file apart from the wallet's name, it belongs in base. The one exception to "same everywhere" is procivis: its `raise_if_crashed` only
+logs a dead session (`dead_session_is_lost=False`) instead of turning it into a verdict.
+
+heidi and authbound have no `_failures.py`; their one inline dead-session site per wait loop calls
+`lost_session` directly, with the driver's own `exc.msg`.
+
+In tests, patch the probes where the base helpers look them up:
+`base.flow_failures.detect_crash_or_anr` and `base.flow_failures.handle_permission_if_present`.
+Never patch them on the wallet module. Likewise, patching a wallet's `failures.lost` does not reach
+the base helpers, because they call `base.flow_failures.lost`.
+
+---
+
 ## Capability matrix
 
 What the test suite can actually **do** with each wallet today. Every ❌/⚠️ is either a gap to close or
@@ -535,6 +561,9 @@ Provided by the root `conftest.py`, `base/conftest_helpers.py` and `base/android
   force-stop), followed by navigate-back-to-home
 - System-level handling helpers: biometric prompt (fingerprint inject or PIN), permission dialogs,
   ANR/crash overlay detection
+- Failure helpers that only touch the driver, the `FlowContext` or Android's dialogs (dead session,
+  crash/ANR look, permission dialog, probe polling): `base/flow_failures.py`. A wallet's
+  `flows/_failures.py` re-exports them and keeps only its own probes and text
 
 ---
 

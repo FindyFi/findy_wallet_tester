@@ -1,22 +1,23 @@
 """What both procivis flows do when something goes wrong, written once.
 
-Per-wallet on purpose: every probe and every sentence here is procivis's own. Nothing in it belongs
-in base/ — base/screens.py says why a copied probe is worse than none.
+Per-wallet on purpose: every probe and every sentence here is procivis's own — base/screens.py
+says why a copied probe is worse than none. What does not name procivis's screens lives in
+base/flow_failures.py (`lost`, re-exported here, so flows keep calling `failures.lost`).
 
-- `lost`: a dead UiAutomator2 session is ours, not procivis's.
+- `lost`: a dead UiAutomator2 session is ours, not procivis's (re-exported from base).
 - `unlock`: procivis's biometric prompt and PIN screen after a deeplink.
 - `rejected`: procivis's own failure screen — its label, then its Code/Message/Cause — as one
   `rejected` FlowFailure, with the `[no_retry]` rule in one place.
-- `raise_if_crashed`: one cheap look for Android's crash or not-responding dialog.
+- `raise_if_crashed`: base's crash look, told to log a dead session rather than raise it.
 - `require_something_to_present`: the verification test's empty-wallet precondition.
 """
 import logging
 
 from selenium.common.exceptions import WebDriverException
 
-from base import credential_count, outcome, progress
-from base.android import SystemOverlay, detect_crash_or_anr
+from base import credential_count, flow_failures, outcome, progress
 from base.flow_context import FlowContext
+from base.flow_failures import lost  # re-exported; lives in base/flow_failures.py
 from base.outcome import FlowFailure
 from wallets.procivis.pages import pin_page as pin_screen
 from wallets.procivis.pages.credential_accept_process_page import (
@@ -35,14 +36,6 @@ logger = logging.getLogger(__name__)
 # error sending request for url (…)", which later passed against the same issuer: not a verdict
 # about the counterparty, so a rerun is worth having.
 _TRANSPORT_FAILURE = "error sending request"
-
-
-def lost(ctx: FlowContext, during: str, exc) -> FlowFailure:
-    """Ours, not the wallet's: a dead UiAutomator2 session is kept off the vendor's record."""
-    return FlowFailure(outcome.LOST_SESSION, (
-        f"[{ctx.flow}] Appium/UiAutomator2 connection lost {during} for '{ctx.what}' "
-        f"(app may have crashed): {getattr(exc, 'msg', None) or exc}"
-    ))
 
 
 def unlock(driver, ctx: FlowContext) -> None:
@@ -120,19 +113,9 @@ def rejected(driver, ctx: FlowContext, head: str):
 
 def raise_if_crashed(driver, ctx: FlowContext, when: str) -> None:
     """One look for Android's crash or not-responding dialog, where a screen closing would
-    otherwise be taken for success. Never raises anything else: a failed look claims nothing."""
-    try:
-        overlay = detect_crash_or_anr(driver)
-    except Exception as exc:
-        logger.warning(f"[{ctx.flow}] Could not look for a crash dialog: {exc}")
-        return
-    if overlay is None:
-        return
-    anr = overlay is SystemOverlay.ANR
-    raise FlowFailure(outcome.CRASHED, (
-        f"[{ctx.flow}] procivis {'stopped responding' if anr else 'crashed'} {when} for "
-        f"'{ctx.what}': Android showed its {'not-responding' if anr else 'crash'} dialog"
-    ))
+    otherwise be taken for success. Never raises anything but `crashed`: a failed look claims
+    nothing, a dead session included (it is logged, as it always was in procivis's flows)."""
+    flow_failures.raise_if_crashed(driver, ctx, when, dead_session_is_lost=False)
 
 
 def require_something_to_present(driver, page_args: dict, *, issuer: str, case: str) -> None:

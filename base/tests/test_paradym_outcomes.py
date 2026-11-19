@@ -23,9 +23,10 @@ import pytest
 from appium.webdriver.common.appiumby import AppiumBy
 from selenium.common.exceptions import NoSuchElementException, WebDriverException
 
-from base import deeplink, outcome, progress
+from base import deeplink, flow_failures, outcome, progress
 from base.android import SystemOverlay
 from base.conftest_helpers import _QUOTED
+from base.flow_context import FlowContext
 from base.screens import UNKNOWN
 from wallets.paradym.flows import _failures as failures
 from wallets.paradym.flows import credential_flow as cf, init_flow, verification_flow as vf
@@ -406,8 +407,8 @@ def phone(monkeypatch):
     monkeypatch.setattr(result_page, "go_to_wallet_on_screen", p.probe("success"))
     monkeypatch.setattr(result_page, "go_to_wallet", lambda d: p.tap("Go to wallet") or True)
     monkeypatch.setattr(failures, "home_on_screen", p.probe("home"))
-    monkeypatch.setattr(failures, "handle_permission_if_present", lambda d: False)
-    monkeypatch.setattr(failures, "detect_crash_or_anr", lambda d, *a, **k: p.crash)
+    monkeypatch.setattr(flow_failures, "handle_permission_if_present", lambda d: False)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: p.crash)
     monkeypatch.setattr(failures, "PinPage", _page(p, enter_pin="PIN"))
 
     monkeypatch.setattr(cf, "pin_on_screen", p.probe("pin"))
@@ -1045,3 +1046,41 @@ def test_an_unavailable_cards_answer_after_the_wait_is_still_no_match(phone):
     phone.show(("", 30.0), ("no_match", None))
     exc, _ = _raised(_verify, phone)
     assert exc.category == outcome.NO_MATCH
+
+
+# The published wording of the three helpers every paradym flow shares, spelled out in full.
+def _ctx():
+    return FlowContext(flow="credential_flow", wallet="paradym", what="credential_issuance",
+                       app_package=PACKAGE)
+
+
+def test_the_crash_message_is_exact(phone):
+    phone.crash = SystemOverlay.APP_CRASH
+    with pytest.raises(outcome.FlowFailure) as exc:
+        failures.raise_if_crashed(phone, _ctx(), "after the deeplink")
+    assert str(exc.value) == (
+        "[crashed] [credential_flow] paradym crashed after the deeplink for "
+        "'credential_issuance': Android showed its crash dialog")
+
+
+def test_the_not_responding_message_is_exact(phone):
+    phone.crash = SystemOverlay.ANR
+    with pytest.raises(outcome.FlowFailure) as exc:
+        failures.raise_if_crashed(phone, _ctx(), "after the deeplink")
+    assert str(exc.value) == (
+        "[crashed] [credential_flow] paradym stopped responding after the deeplink for "
+        "'credential_issuance': Android showed its not-responding dialog")
+
+
+def test_the_lost_session_message_is_exact(phone):
+    assert str(failures.lost(_ctx(), "while entering the PIN", DEAD)) == (
+        "[lost_session] [credential_flow] Appium/UiAutomator2 connection lost while entering the "
+        "PIN for 'credential_issuance' (app may have crashed): instrumentation process is not "
+        "running")
+
+
+def test_the_shared_helpers_are_base_s_and_the_probes_are_not_here():
+    for name in ("lost", "answer_permission", "first_of", "raise_if_crashed", "late_look"):
+        assert getattr(failures, name) is getattr(flow_failures, name), name
+    assert not hasattr(failures, "detect_crash_or_anr")
+    assert not hasattr(failures, "handle_permission_if_present")

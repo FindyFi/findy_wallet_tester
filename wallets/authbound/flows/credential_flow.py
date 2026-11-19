@@ -11,6 +11,7 @@ from base.android import (
     in_biometric_enrollment,
 )
 from base.flow_context import FlowContext
+from base.flow_failures import lost_session
 from base.outcome import FlowFailure
 from base.utils import wait_present
 from providers.base import DeeplinkProvider
@@ -83,10 +84,7 @@ def _wait_for_result(driver, pin: str, page_args: dict, timeout: float) -> str:
                 return "home"
         except WebDriverException as exc:
             # Ours, not the wallet's: a dead UiAutomator2 session is kept off the vendor's record.
-            raise FlowFailure(outcome.LOST_SESSION, (
-                f"[credential_flow] Appium/UiAutomator2 connection lost mid-wait "
-                f"(app may have crashed): {exc.msg}"
-            )) from exc
+            raise lost_session("credential_flow", "mid-wait", exc.msg) from exc
     return "timeout"
 
 

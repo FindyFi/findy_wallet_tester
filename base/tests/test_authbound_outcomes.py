@@ -264,6 +264,19 @@ def test_a_dead_session_in_the_wait_is_ours_not_the_wallets(monkeypatch):
     exc, _ = _raised(cf.run, Driver(), provider=SimpleNamespace(get=lambda n: URL),
                      credential_name="c", app_package="io.authbound.wallet", **PAGE_ARGS)
     assert exc.category == outcome.LOST_SESSION
+    assert str(exc) == (
+        "[lost_session] [credential_flow] Appium/UiAutomator2 connection lost mid-wait "
+        "(app may have crashed): instrumentation process is not running")
+
+
+def test_a_dead_session_with_no_message_says_none_in_the_wait(monkeypatch):
+    def dead(*a, **k):
+        raise WebDriverException()
+
+    monkeypatch.setattr(cf, "handle_biometric_if_present", dead)
+    exc, _ = _raised(cf.run, Driver(), provider=SimpleNamespace(get=lambda n: URL),
+                     credential_name="c", app_package="io.authbound.wallet", **PAGE_ARGS)
+    assert str(exc).endswith("(app may have crashed): None")
 
 
 # --- verification -------------------------------------------------------------------------------
@@ -333,6 +346,9 @@ def test_a_dead_session_in_the_request_wait_is_ours_not_the_wallets(monkeypatch)
     exc, _ = _raised(vf.run, Driver(), provider=SimpleNamespace(get=lambda n: URL),
                      credential_name="v", app_package="io.authbound.wallet", **PAGE_ARGS)
     assert exc.category == outcome.LOST_SESSION
+    assert str(exc) == (
+        "[lost_session] [verification_flow] Appium/UiAutomator2 connection lost mid-wait "
+        "(app may have crashed): instrumentation process is not running")
 
 
 def test_an_uncountable_document_list_is_not_claimed_as_a_match(monkeypatch):

@@ -31,9 +31,10 @@ from selenium.common.exceptions import (
     WebDriverException,
 )
 
-from base import cleanup as base_cleanup, deeplink, outcome, progress
+from base import cleanup as base_cleanup, deeplink, flow_failures, outcome, progress
 from base.android import PinFieldMissing, SystemOverlay
 from base.conftest_helpers import _QUOTED
+from base.flow_context import FlowContext
 from base.credential_count import CredentialCountUnavailable
 from base.screens import UNKNOWN
 from wallets.gataca.flows import _failures as failures
@@ -843,8 +844,8 @@ def phone(monkeypatch):
     monkeypatch.setattr(offer_page, "no_match_text", lambda d: NO_MATCH_BODY)
     for module in (cf, vf, failures):
         monkeypatch.setattr(module, "home_on_screen", p.probe("home"))
-    monkeypatch.setattr(failures, "handle_permission_if_present", lambda d: False)
-    monkeypatch.setattr(failures, "detect_crash_or_anr", lambda d, *a, **k: p.crash)
+    monkeypatch.setattr(flow_failures, "handle_permission_if_present", lambda d: False)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: p.crash)
     monkeypatch.setattr(failures, "authenticate_device", p.authenticate)
     monkeypatch.setattr(failures, "wait_present",
                         lambda d, locator, timeout=2: p.screen().startswith("auth"))
@@ -1386,12 +1387,12 @@ def test_a_screen_no_probe_knows_after_a_restart_is_setup_and_a_crash_dialog_is_
         back = terminate_app = activate_app = lambda self, *a: None
     monkeypatch.setattr(init_flow, "_detect_state", lambda d: "unknown")
     monkeypatch.setattr(init_flow, "_dismiss_outcome_screen", lambda d: False)
-    monkeypatch.setattr(failures, "detect_crash_or_anr", lambda d, *a, **k: None)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: None)
     with pytest.raises(outcome.FlowFailure) as exc:
         init_flow._back_to_known_state(Driver(), PACKAGE)
     assert exc.value.category == outcome.SETUP
 
-    monkeypatch.setattr(failures, "detect_crash_or_anr", lambda d, *a, **k: SystemOverlay.ANR)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: SystemOverlay.ANR)
     with pytest.raises(outcome.FlowFailure) as exc:
         init_flow._back_to_known_state(Driver(), PACKAGE)
     assert exc.value.category == outcome.CRASHED
@@ -1683,3 +1684,55 @@ def test_an_unlock_that_lands_on_a_landing_without_open_your_wallet_is_setup(mon
     with pytest.raises(outcome.FlowFailure) as exc:
         init_flow._unlock_biometric(_UnlockScreens("landing"), "1234", 1, {})
     assert exc.value.category == outcome.SETUP and "manual onboarding required" in str(exc.value)
+
+
+# The published wording of the three helpers every gataca flow shares, spelled out in full.
+def _ctx():
+    return FlowContext(flow="credential_flow", wallet="gataca", what="credential_issuance",
+                       app_package=PACKAGE)
+
+
+def test_the_crash_message_is_exact(phone):
+    phone.crash = SystemOverlay.APP_CRASH
+    with pytest.raises(outcome.FlowFailure) as exc:
+        failures.raise_if_crashed(phone, _ctx(), "after the deeplink")
+    assert str(exc.value) == (
+        "[crashed] [credential_flow] gataca crashed after the deeplink for "
+        "'credential_issuance': Android showed its crash dialog")
+
+
+def test_the_not_responding_message_is_exact(phone):
+    phone.crash = SystemOverlay.ANR
+    with pytest.raises(outcome.FlowFailure) as exc:
+        failures.raise_if_crashed(phone, _ctx(), "after the deeplink")
+    assert str(exc.value) == (
+        "[crashed] [credential_flow] gataca stopped responding after the deeplink for "
+        "'credential_issuance': Android showed its not-responding dialog")
+
+
+def test_the_lost_session_message_is_exact(phone):
+    assert str(failures.lost(_ctx(), "while entering the PIN", DEAD)) == (
+        "[lost_session] [credential_flow] Appium/UiAutomator2 connection lost while entering the "
+        "PIN for 'credential_issuance' (app may have crashed): instrumentation process is not "
+        "running")
+
+
+def test_init_flow_s_not_responding_message_is_exact(monkeypatch):
+    class Driver:
+        current_package = PACKAGE
+        back = terminate_app = activate_app = lambda self, *a: None
+    monkeypatch.setattr(init_flow, "_detect_state", lambda d: "unknown")
+    monkeypatch.setattr(init_flow, "_dismiss_outcome_screen", lambda d: False)
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d, *a, **k: SystemOverlay.ANR)
+    with pytest.raises(outcome.FlowFailure) as exc:
+        init_flow._back_to_known_state(Driver(), PACKAGE)
+    assert str(exc.value) == (
+        "[crashed] [init_flow] gataca stopped responding while bringing gataca to a known state "
+        "for 'the wallet's home screen': Android showed its not-responding dialog")
+
+
+def test_the_shared_helpers_are_base_s_and_the_probes_are_not_here():
+    for name in ("lost", "answer_permission", "first_of", "raise_if_crashed", "late_look"):
+        assert getattr(failures, name) is getattr(flow_failures, name), name
+    assert not hasattr(failures, "detect_crash_or_anr")
+    assert not hasattr(failures, "handle_permission_if_present")
