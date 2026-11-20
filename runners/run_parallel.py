@@ -358,8 +358,11 @@ class Scheduler:
         self.floating = deque(plan.floating)
         self.results: Dict[str, Result] = {w: Result(w) for w in plan.wallets}
         self.eligible = {s for s, d in plan.devices.items() if d.takes_floating}
-        self.state = {s: "unknown" for s in self.eligible}  # unknown | alive | dead
+        self.state = {s: "unknown" for s in self.eligible}  # unknown | alive | busy | dead
         self.all_dead_since: Optional[float] = None
+        # Since when no device that takes floating wallets was ready or running one of ours:
+        # every one of them down or held by another run. Bounds the floating queue's wait.
+        self.all_blocked_since: Optional[float] = None
         self.session: Optional[Path] = None
         self.server_locks: Dict[str, threading.Lock] = {}
         if not ctx.allow_shared_server:
@@ -400,12 +403,21 @@ class Scheduler:
         if device.serial not in self.eligible:
             return
         with self.lock:
-            self.state[device.serial] = "dead" if status == "down" else "alive"
-            everyone_dead = all(v == "dead" for v in self.state.values())
-            if not everyone_dead:
-                self.all_dead_since = None
-            elif self.all_dead_since is None:
-                self.all_dead_since = self.ctx.clock()
+            self.state[device.serial] = {"down": "dead", "busy": "busy"}.get(status, "alive")
+            self._update_since()
+
+    def _update_since(self) -> None:
+        """Caller holds self.lock."""
+        now = self.ctx.clock()
+        states = self.state.values()
+        if not all(v == "dead" for v in states):
+            self.all_dead_since = None
+        elif self.all_dead_since is None:
+            self.all_dead_since = now
+        if not all(v in ("dead", "busy") for v in states):
+            self.all_blocked_since = None
+        elif self.all_blocked_since is None:
+            self.all_blocked_since = now
 
     def wait_ready(self, device: Device, server: str) -> Tuple[str, str]:
         """Wait until the device and its server are ready. A busy device (another run is using it)
@@ -440,9 +452,17 @@ class Scheduler:
             self.ctx.sleep(min(POLL_SECONDS, remaining))
 
     def give_up_floating(self) -> bool:
+        """Floating wallets give up when every device that could take them has been down for
+        `--wait`, or down or held by another run for `--busy-wait`; never while one is ready or
+        running a wallet of ours."""
         with self.lock:
-            return bool(self.floating and self.all_dead_since is not None
-                        and self.ctx.clock() - self.all_dead_since >= self.ctx.wait)
+            if not self.floating:
+                return False
+            now = self.ctx.clock()
+            dead = self.all_dead_since is not None and now - self.all_dead_since >= self.ctx.wait
+            blocked = (self.all_blocked_since is not None
+                       and now - self.all_blocked_since >= self.ctx.busy_wait)
+            return dead or blocked
 
     # -- one device
 
@@ -496,9 +516,12 @@ class Scheduler:
         if self.give_up_floating():
             with self.lock:
                 left, self.floating = list(self.floating), deque()
+                dead = (self.all_dead_since is not None
+                        and self.ctx.clock() - self.all_dead_since >= self.ctx.wait)
+            why = (f"no device became ready within {self.ctx.wait:g}s" if dead else
+                   f"every device stayed busy or down for {self.ctx.busy_wait / 60:g} min")
             for wallet in left:
-                self.skip(wallet, "-", f"no device became ready within {self.ctx.wait:g}s "
-                                       f"(last answer: {detail})")
+                self.skip(wallet, "-", f"{why} (last answer: {detail})")
             return "done"
         return "idle"
 
@@ -534,9 +557,9 @@ class Scheduler:
             proc = ctx.popen(argv, cwd=str(ctx.repo_root), env=env, stdout=sink,
                              stderr=subprocess.STDOUT, start_new_session=True)
         with self.lock:
-            self.all_dead_since = None
             if device.serial in self.state:
                 self.state[device.serial] = "alive"
+            self._update_since()
         self.say(f"lane {device.serial}  START {wallet} -> {relative}")
         code, killed = self.watch(proc)
         seconds = ctx.clock() - started

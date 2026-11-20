@@ -610,6 +610,38 @@ def test_a_busy_device_counts_as_alive_so_floating_wallets_keep_waiting(rig):
     assert results["f"].state == "done" and results["f"].device == "phone"
 
 
+def test_floating_wallets_give_up_when_every_device_stays_busy_beyond_the_busy_wait(rig):
+    """Another run holds the only device far longer than --busy-wait: the floating wallet is
+    skipped instead of waiting forever."""
+    h = rig(env_of(), wait=30)
+    h.ctx.busy_wait = 600
+    h.ps = lambda t: " 500 400 adb -s phone logcat\n"
+    results = h.run(["f"])
+    assert results["f"].state == "skipped" and "busy" in results["f"].reason
+    assert 600 <= h.clock.t < 700
+
+
+def test_a_busy_limit_that_ends_in_a_short_outage_names_the_busy_wait(rig):
+    """Busy for most of the limit, then down for less than --wait: the reason is the busy wait."""
+    h = rig(env_of(), wait=30)
+    h.ctx.busy_wait = 600
+    h.ps = lambda t: " 500 400 adb -s phone logcat\n" if t < 590 else ""
+    answer = h.ctx.probe_device
+
+    def probe(serial):
+        return (False, "offline") if h.clock.t >= 590 else answer(serial)
+    h.ctx.probe_device = probe
+    result = h.run(["f"])["f"]
+    assert result.state == "skipped" and "busy or down for 10 min" in result.reason
+
+
+def test_floating_wallets_keep_waiting_for_a_busy_device_within_the_busy_wait(rig):
+    h = rig(env_of(), wait=30)
+    h.ctx.busy_wait = 600
+    h.ps = lambda t: " 500 400 adb -s phone logcat\n" if t < 500 else ""
+    assert h.run(["f"])["f"].state == "done"
+
+
 def test_a_device_that_is_running_a_wallet_counts_as_alive(rig):
     env = env_of(A_DEVICE_NAME="x", A_DEVICE_PIN="p", A_APPIUM_SERVER=OTHER)
     h = rig(env, wait=30)
