@@ -80,21 +80,16 @@ def first_of(driver, ctx: FlowContext, screens, timeout: float, *, during: str) 
         raise lost(ctx, during, exc) from exc
 
 
-def raise_if_crashed(driver, ctx: FlowContext, when: str, *,
-                     dead_session_is_lost: bool = True) -> None:
+def raise_if_crashed(driver, ctx: FlowContext, when: str) -> None:
     """One look for Android's crash or not-responding dialog before a negative verdict.
 
     A dead session during the look is `lost_session`, as in `base.outcome.wait_for`: otherwise the
     caller's next verdict would be written about a session that can no longer see anything. Any
-    other failure of the look claims nothing and is only logged. With `dead_session_is_lost`
-    False a dead session is only logged too, for a caller that must not turn it into a verdict.
+    other failure of the look claims nothing and is only logged.
     """
     try:
         overlay = detect_crash_or_anr(driver)
     except WebDriverException as exc:
-        if not dead_session_is_lost:
-            logger.warning(f"[{ctx.flow}] Could not look for a crash dialog: {exc}")
-            return
         raise lost(ctx, f"while looking for a crash dialog {when}", exc) from exc
     except Exception as exc:
         logger.warning(f"[{ctx.flow}] Could not look for a crash dialog: {exc}")

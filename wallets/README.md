@@ -60,8 +60,7 @@ Shared, lives in `base/flow_failures.py` and is re-exported by name where a wall
 everything that deals with the driver, the `FlowContext` or Android's own dialogs and not with a
 wallet's screens. That is `lost_session`, `lost`, `answer_permission`, `first_of`,
 `raise_if_crashed` and `late_look`. Rule of thumb: if the body would read the same in every
-wallet's file apart from the wallet's name, it belongs in base. The one exception to "same everywhere" is procivis: its `raise_if_crashed` only
-logs a dead session (`dead_session_is_lost=False`) instead of turning it into a verdict.
+wallet's file apart from the wallet's name, it belongs in base.
 
 heidi and authbound have no `_failures.py`; their one inline dead-session site per wait loop calls
 `lost_session` directly, with the driver's own `exc.msg`.

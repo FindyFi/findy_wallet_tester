@@ -2,22 +2,23 @@
 
 Per-wallet on purpose: every probe and every sentence here is procivis's own — base/screens.py
 says why a copied probe is worse than none. What does not name procivis's screens lives in
-base/flow_failures.py (`lost`, re-exported here, so flows keep calling `failures.lost`).
+base/flow_failures.py (`lost` and `raise_if_crashed`, re-exported here, so flows keep calling
+`failures.lost` and `failures.raise_if_crashed`).
 
 - `lost`: a dead UiAutomator2 session is ours, not procivis's (re-exported from base).
 - `unlock`: procivis's biometric prompt and PIN screen after a deeplink.
 - `rejected`: procivis's own failure screen — its label, then its Code/Message/Cause — as one
   `rejected` FlowFailure, with the `[no_retry]` rule in one place.
-- `raise_if_crashed`: base's crash look, told to log a dead session rather than raise it.
+- `raise_if_crashed`: Android's crash or not-responding dialog (re-exported from base).
 - `require_something_to_present`: the verification test's empty-wallet precondition.
 """
 import logging
 
 from selenium.common.exceptions import WebDriverException
 
-from base import credential_count, flow_failures, outcome, progress
+from base import credential_count, outcome, progress
 from base.flow_context import FlowContext
-from base.flow_failures import lost  # re-exported; lives in base/flow_failures.py
+from base.flow_failures import lost, raise_if_crashed  # noqa: F401 -- re-exported from base
 from base.outcome import FlowFailure
 from wallets.procivis.pages import pin_page as pin_screen
 from wallets.procivis.pages.credential_accept_process_page import (
@@ -110,12 +111,6 @@ def rejected(driver, ctx: FlowContext, head: str):
     retry = " [no_retry]" if keeps_no_retry(details, warning) else ""
     raise FlowFailure(outcome.REJECTED, f"{head}{quoted(said)}{tail}{retry}")
 
-
-def raise_if_crashed(driver, ctx: FlowContext, when: str) -> None:
-    """One look for Android's crash or not-responding dialog, where a screen closing would
-    otherwise be taken for success. Never raises anything but `crashed`: a failed look claims
-    nothing, a dead session included (it is logged, as it always was in procivis's flows)."""
-    flow_failures.raise_if_crashed(driver, ctx, when, dead_session_is_lost=False)
 
 
 def require_something_to_present(driver, page_args: dict, *, issuer: str, case: str) -> None:

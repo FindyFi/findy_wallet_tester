@@ -1338,17 +1338,32 @@ def test_the_lost_session_message_is_exact():
         "for 'x' (app may have crashed): boom")
 
 
-def test_a_dead_session_at_the_crash_look_is_logged_not_raised(monkeypatch, caplog):
+def test_a_dead_session_at_the_crash_look_is_lost_session(monkeypatch):
+    """It used to be logged and passed over, so the next step failed for a reason that was not
+    procivis's. Now it is ours, as in every other wallet."""
     def dead(d, *a, **k):
         raise WebDriverException("instrumentation process is not running")
     monkeypatch.setattr(flow_failures, "detect_crash_or_anr", dead)
-    assert failures.raise_if_crashed(object(), _WORDS_CTX, "after Accept") is None
-    assert ("[credential_flow] Could not look for a crash dialog: Message: instrumentation "
-            "process is not running") in caplog.text
+    with pytest.raises(outcome.FlowFailure) as e:
+        failures.raise_if_crashed(object(), _WORDS_CTX, "after Accept")
+    assert str(e.value) == (
+        "[lost_session] [credential_flow] Appium/UiAutomator2 connection lost while looking for a "
+        "crash dialog after Accept for 'x' (app may have crashed): instrumentation process is not "
+        "running")
 
 
-def test_procivis_re_exports_lost_and_wraps_the_crash_look():
+@pytest.mark.parametrize("process", [(True,), (False,)], ids=["process screen", "no process screen"])
+def test_an_issuance_whose_session_dies_at_the_crash_look_is_lost_session(monkeypatch, process):
+    def dead(d, *a, **k):
+        raise DEAD
+    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", dead)
+    exc, _ = _raised(_issue, monkeypatch, True, True, process=process)
+    assert exc.category == outcome.LOST_SESSION
+    assert "while looking for a crash dialog" in str(exc)
+
+
+def test_procivis_re_exports_lost_and_the_crash_look():
     assert failures.lost is flow_failures.lost
-    assert failures.raise_if_crashed is not flow_failures.raise_if_crashed
+    assert failures.raise_if_crashed is flow_failures.raise_if_crashed
     assert not hasattr(failures, "detect_crash_or_anr")
     assert not hasattr(failures, "handle_permission_if_present")

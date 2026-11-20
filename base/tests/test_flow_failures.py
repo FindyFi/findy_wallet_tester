@@ -161,21 +161,6 @@ def test_raise_if_crashed_only_logs_any_other_failure(monkeypatch, caplog):
     assert "[credential_flow] Could not look for a crash dialog: odd" in caplog.messages
 
 
-def test_raise_if_crashed_can_leave_a_dead_session_unclaimed(monkeypatch, caplog):
-    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", raising(dead("gone")))
-    with caplog.at_level("WARNING"):
-        assert flow_failures.raise_if_crashed(DRIVER, ctx(), "later",
-                                              dead_session_is_lost=False) is None
-    assert f"[credential_flow] Could not look for a crash dialog: {dead('gone')}" in caplog.messages
-
-
-def test_raise_if_crashed_still_reports_a_dialog_when_dead_session_is_not_lost(monkeypatch):
-    monkeypatch.setattr(flow_failures, "detect_crash_or_anr", lambda d: SystemOverlay.ANR)
-    with pytest.raises(FlowFailure) as e:
-        flow_failures.raise_if_crashed(DRIVER, ctx(), "later", dead_session_is_lost=False)
-    assert e.value.category == outcome.CRASHED
-
-
 # --- first_of ------------------------------------------------------------------------------------
 
 def test_first_of_returns_the_first_screen_in_order_that_shows():
