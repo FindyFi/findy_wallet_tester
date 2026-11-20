@@ -502,12 +502,29 @@ def test_an_interrupt_during_the_wait_starts_nothing(rig):
     assert h.spawned == [] and results["a"].state == "not started"
 
 
-def test_a_busy_device_makes_a_pinned_wallet_wait_then_skip(rig):
+def test_a_busy_device_is_waited_for_far_longer_than_a_down_one(rig):
+    """Another run holds the device for 30 minutes: the wallet queues behind it."""
     env = env_of(HEIDI_DEVICE_NAME="emu", HEIDI_DEVICE_PIN=PIN_EMU)
     h = rig(env, wait=10)
-    h.ps = lambda t: " 500 400 adb -s emu logcat -v threadtime\n"
+    h.ps = lambda t: " 500 400 adb -s emu logcat -v threadtime\n" if t < 1800 else ""
+    results = h.run(["heidi"])
+    assert results["heidi"].state == "done"
+    assert h.start_of("heidi")["t"] >= 1800
+
+
+def test_the_default_busy_wait_outlasts_the_longest_wallet_so_far():
+    assert rp.DEFAULT_BUSY_WAIT >= 37 * 60
+    assert rp.Ctx().busy_wait == rp.DEFAULT_BUSY_WAIT
+
+
+def test_a_device_busy_beyond_the_busy_wait_skips_the_wallet(rig):
+    env = env_of(HEIDI_DEVICE_NAME="emu", HEIDI_DEVICE_PIN=PIN_EMU)
+    h = rig(env, wait=10)
+    h.ctx.busy_wait = 600
+    h.ps = lambda t: " 500 400 adb -s emu logcat\n"
     results = h.run(["heidi"])
     assert results["heidi"].state == "skipped" and "busy" in results["heidi"].reason
+    assert 600 <= h.clock.t < 700
 
 
 def test_wait_budget_is_measured_on_the_clock(rig):
@@ -972,29 +989,49 @@ def test_a_running_wallet_on_a_pin_unknown_device_does_not_keep_floating_alive(r
     assert seen["t"] < h.start_of("a")["end"]  # given up while a was still running
 
 
-def test_busy_devices_get_the_longer_busy_wait(rig):
+def test_the_busy_wait_is_announced_once(rig):
     env = env_of(HEIDI_DEVICE_NAME="emu", HEIDI_DEVICE_PIN=PIN_EMU)
     h = rig(env, wait=5)
-    h.ctx.busy_wait = 60
-    h.ps = lambda t: " 500 400 adb -s emu logcat\n" if t < 40 else ""
+    h.ps = lambda t: " 500 400 adb -s emu logcat\n" if t < 600 else ""
+    h.run(["heidi"])
+    waits = [line for line in h.lines if "] WAIT " in line]
+    assert len(waits) == 1 and "emu" in waits[0] and "busy" in waits[0]
+
+
+def test_an_interrupt_ends_the_wait_on_a_busy_device(rig):
+    env = env_of(HEIDI_DEVICE_NAME="emu", HEIDI_DEVICE_PIN=PIN_EMU)
+    h = rig(env, wait=5)
+
+    def ps(t):
+        if t >= 300:
+            h.sched.stop.set()
+        return " 500 400 adb -s emu logcat\n"
+    h.ps = ps
+    results = h.run(["heidi"])
+    assert h.spawned == [] and results["heidi"].state != "done"
+
+
+def test_a_device_that_goes_down_after_being_busy_gets_the_full_wait(rig):
+    """The down budget counts from when the device stopped answering, not from the first probe:
+    down 10 s, busy until 1000 s, down again for 20 s, then ready — never more than 30 s down."""
+    env = env_of(HEIDI_DEVICE_NAME="emu", HEIDI_DEVICE_PIN=PIN_EMU)
+    h = rig(env, wait=30)
+    h.ps = lambda t: " 500 400 adb -s emu logcat\n" if t < 1000 else ""
+    answer = h.ctx.probe_device
+
+    def probe(serial):
+        t = h.clock.t
+        return (False, "offline") if t < 10 or 1000 <= t < 1020 else answer(serial)
+    h.ctx.probe_device = probe
     assert h.run(["heidi"])["heidi"].state == "done"
 
 
-def test_the_busy_wait_is_a_limit_too(rig):
+def test_a_down_device_is_still_skipped_after_the_wait(rig):
     env = env_of(HEIDI_DEVICE_NAME="emu", HEIDI_DEVICE_PIN=PIN_EMU)
     h = rig(env, wait=5)
-    h.ctx.busy_wait = 20
-    h.ps = lambda t: " 500 400 adb -s emu logcat\n" if t < 40 else ""
-    assert h.run(["heidi"])["heidi"].state == "skipped"
-
-
-def test_a_down_device_does_not_get_the_busy_wait(rig):
-    env = env_of(HEIDI_DEVICE_NAME="emu", HEIDI_DEVICE_PIN=PIN_EMU)
-    h = rig(env, wait=5)
-    h.ctx.busy_wait = 600
     h.down_always.add("emu")
-    h.run(["heidi"])
-    assert h.clock.t < 100
+    results = h.run(["heidi"])
+    assert results["heidi"].state == "skipped" and h.clock.t < 100
 
 
 def test_pytest_arguments_that_take_a_value_need_the_separator(capsys):

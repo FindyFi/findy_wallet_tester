@@ -149,12 +149,14 @@ python runners/run_parallel.py hovi -x -- -k issuance
 **Which device a wallet uses.** This comes from `.env`, in two ways:
 
 - A wallet with a non-blank `<WALLET>_DEVICE_NAME` is *pinned*. It runs only on that device. It is
-  skipped if its device or its Appium server is not ready within `--wait` seconds (default 30; `0`
-  checks once), or if the device is still busy after `--busy-wait` seconds (default 120). A device
-  counts as ready when `adb get-state` says "device", `sys.boot_completed` is 1 and the server
-  answers. A device is busy when another `adb logcat` capture is streaming from it. Appium's own
-  capture can outlive a finished session by about a minute, so busy gets the longer wait. A wallet
-  whose configuration cannot be read, or that cannot be started, is skipped as well.
+  skipped only if its device or its Appium server does not answer within `--wait` seconds (default
+  30; `0` checks once). A device counts as ready when `adb get-state` says "device",
+  `sys.boot_completed` is 1 and the server answers. A device is busy when another `adb logcat`
+  capture is streaming from it, which is what every test run, this runner's or `run_tests.py`'s,
+  keeps up while a wallet runs. A busy device is waited for up to `--busy-wait` seconds (default
+  2400, 40 minutes, longer than the longest wallet so far), so you can start this runner while
+  another run is still going and its wallets queue behind it. Ctrl-C stops the wait.
+  A wallet whose configuration cannot be read, or that cannot be started, is skipped as well.
 - Every other wallet is *floating*. Floating wallets wait in one shared queue and any ready device
   takes the next one. A device that does not answer takes no work, and floating wallets are never
   skipped because one device is down. They are skipped only when no device has been alive for the

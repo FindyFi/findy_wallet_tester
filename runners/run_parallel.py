@@ -41,8 +41,8 @@ from base.config import _expand_env, load_config  # noqa: E402  (importing it lo
 from base.utils import TIMESTAMP_FORMAT, list_wallets  # noqa: E402
 
 DEFAULT_WAIT = 30.0
-DEFAULT_BUSY_WAIT = 120.0  # Appium's own logcat can outlive a session by about its 60 s timeout
 POLL_SECONDS = 5.0       # between probes while waiting for a device
+DEFAULT_BUSY_WAIT = 2400.0  # 40 min: the longest wallet in the 2026-11-20 sequential run took 37
 TICK_SECONDS = 0.5       # between checks on a running child
 GRACE_SECONDS = 150.0    # after SIGINT: the crash-store capture at session end can take 120 s
 EXIT_SKIPPED = 10
@@ -408,14 +408,33 @@ class Scheduler:
                 self.all_dead_since = self.ctx.clock()
 
     def wait_ready(self, device: Device, server: str) -> Tuple[str, str]:
-        start = self.ctx.clock()
+        """Wait until the device and its server are ready. A busy device (another run is using it)
+        is waited for up to `--busy-wait`, long enough for one wallet of another run to finish, so
+        the next wallet queues behind it. A device or server that does not answer gets the short
+        `--wait`. Each budget counts from when that state began, so a device that was busy and
+        then went down still gets its full `--wait`."""
+        down_since = busy_since = None
+        announced = False
         while True:
             status, detail = self.probe(device, server)
             self.note(device, status)
             if status == "ready" or self.stop.is_set():
                 return status, detail
-            budget = self.ctx.busy_wait if status == "busy" else self.ctx.wait
-            remaining = budget - (self.ctx.clock() - start)
+            now = self.ctx.clock()
+            if status == "busy":
+                down_since = None
+                if busy_since is None:
+                    busy_since = now
+                if not announced:
+                    self.say(f"WAIT lane={device.serial}: {detail}; waiting up to "
+                             f"{self.ctx.busy_wait / 60:g} min for it to be free")
+                    announced = True
+                remaining = self.ctx.busy_wait - (now - busy_since)
+            else:
+                busy_since = None
+                if down_since is None:
+                    down_since = now
+                remaining = self.ctx.wait - (now - down_since)
             if remaining <= 0:
                 return status, detail
             self.ctx.sleep(min(POLL_SECONDS, remaining))
@@ -632,9 +651,9 @@ def make_parser() -> argparse.ArgumentParser:
                              "before skipping a pinned wallet (default %(default)s; 0 probes "
                              "once)")
     parser.add_argument("--busy-wait", type=float, default=DEFAULT_BUSY_WAIT, metavar="SECONDS",
-                        help="how long to wait when the device is busy instead of down; Appium's "
-                             "own logcat capture can outlive a session by about a minute "
-                             "(default %(default)s)")
+                        help="how long to wait while another test run is using the device before "
+                             "skipping a pinned wallet (default %(default)s, 40 min: longer than "
+                             "the longest wallet run so far)")
     parser.add_argument("--allow-shared-server", action="store_true",
                         help="let devices that use the same Appium server run at the same time "
                              "(their appium.log files then absorb each other's lines)")
