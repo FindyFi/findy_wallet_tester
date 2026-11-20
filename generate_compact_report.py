@@ -269,13 +269,16 @@ FAILURE_CATEGORIES = {
                        "and fail totals.",
     },
     "setup": {
-        # No stage: the flow never started, so it cannot have stopped in one.
+        # No stage: raised before or during a flow, but always ours, so it is kept off the flow
+        # diagram (OFF_FLOW_REASONS) wherever the trail got to.
         "stage": None,
-        "label": "Test setup",
+        "label": "Framework or setup",
         "short": "setup",
-        "description": "The test setup failed before the flow could run. The cell says "
-                       "nothing about interoperability. It is not counted in the pass and "
-                       "fail totals.",
+        "description": "Something on the testing side stopped the test, before or during the "
+                       "flow: missing configuration, a device PIN or fingerprint prompt the test "
+                       "framework cannot answer, a wallet that needs manual onboarding first, or "
+                       "the framework itself failing. The cell says nothing about "
+                       "interoperability. It is not counted in the pass and fail totals.",
     },
 }
 
