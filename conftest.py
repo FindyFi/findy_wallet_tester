@@ -975,8 +975,35 @@ def _record_result(item, rep) -> None:
             # as passes and `totals.skipped` was structurally always 0. A call-phase skip is an
             # xfail, which equally must not read as a pass.
             record["outcome"] = "skipped"
+            record["error"] = _skip_reason(rep)
     except Exception:
         pass  # a summary is never worth failing a run over
+
+
+def _skip_reason(rep) -> str:
+    """"Skipped: <reason>" from a skip report, "" when it carries none.
+
+    `pytest.skip(...)` and `pytest.mark.skip` leave `longrepr` as a (path, lineno, reason) tuple, and
+    the reason there already starts with "Skipped: ". An xfail or a hand-built report may carry a
+    plain string, an exception, or nothing. Never raises.
+    """
+    try:
+        # An xfail's longrepr is a whole traceback; its own reason is on `wasxfail`.
+        xfail = getattr(rep, "wasxfail", None)
+        if xfail is not None:
+            reason = " ".join(str(xfail).split())
+            return f"Expected failure: {reason}" if reason else "Expected failure"
+        longrepr = getattr(rep, "longrepr", None)
+        if isinstance(longrepr, (tuple, list)):
+            text = longrepr[-1] if longrepr else ""
+        else:
+            text = longrepr if longrepr is not None else ""
+        text = " ".join(str(text).split())
+        if text.lower().startswith("skipped:"):
+            text = text[len("skipped:"):].strip()
+        return f"Skipped: {text}" if text else ""
+    except Exception:
+        return ""
 
 
 def _validate_locale(device: dict, config: dict, pytest_config) -> None:

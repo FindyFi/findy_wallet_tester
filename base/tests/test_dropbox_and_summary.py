@@ -412,3 +412,40 @@ def test_a_package_that_merely_shares_a_prefix_is_not_ours(tmp_path, monkeypatch
     capture_dropbox(tmp_path, "ZT322L348J", PKG, since="2026-09-10 16:43:00")
 
     assert not (tmp_path / "crashes.log").exists()
+
+
+# --- the skip reason reaches summary.json ---------------------------------------------------------
+
+def test_a_skip_reason_is_recorded_from_the_tuple_longrepr():
+    item = _item()
+    rep = _rep("setup", skipped=True)
+    rep.longrepr = ("/x/conftest.py", 12, "Skipped: provider unreachable")
+    root_conftest._record_result(item, rep)
+
+    assert _record_of(item)["error"] == "Skipped: provider unreachable"
+
+
+def test_a_skip_reason_is_read_from_other_longrepr_shapes():
+    for shape, want in (("plain words", "Skipped: plain words"), (None, ""),
+                        (("p", 1, ""), ""), (RuntimeError("boom"), "Skipped: boom")):
+        item = _item()
+        rep = _rep("call", skipped=True)
+        rep.longrepr = shape
+        root_conftest._record_result(item, rep)
+        assert _record_of(item)["error"] == want
+
+
+def test_a_skip_without_longrepr_attribute_still_records_the_skip():
+    item = _item()
+    root_conftest._record_result(item, _rep("setup", skipped=True))
+    assert _record_of(item)["outcome"] == "skipped"
+    assert _record_of(item)["error"] == ""
+
+
+def test_an_xfail_records_its_reason_not_its_traceback():
+    item = _item()
+    rep = _rep("call", skipped=True)
+    rep.wasxfail = "provider flaky"
+    rep.longrepr = "Traceback (most recent call last):\n  ...\nAssertionError"
+    root_conftest._record_result(item, rep)
+    assert _record_of(item)["error"] == "Expected failure: provider flaky"

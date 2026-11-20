@@ -12,10 +12,64 @@ import os
 import re
 from datetime import datetime, timezone
 
-from base.android import is_secure_screen_refusal
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    StaleElementReferenceException,
+    TimeoutException,
+    WebDriverException,
+)
+
+from base import outcome
+from base.android import SystemOverlay, detect_crash_or_anr, is_secure_screen_refusal
+from base.flow_failures import lost_session
+from base.outcome import FlowFailure
 from base.utils import sanitize_test_name
 
 logger = logging.getLogger(__name__)
+
+
+def _typed_init_failure(exc: Exception, during: str, driver=None) -> FlowFailure:
+    """`exc` as a FlowFailure, so a failed reset or navigation never reaches the report as a bare
+    exception (which publishes a whole wallet column as an uncounted-reason "Error").
+
+    A FlowFailure passes through unchanged. A WebDriverException that is not a plain wait or
+    lookup miss is a dead session: `lost_session`, which is ours and not the wallet's. Before
+    anything else is called `setup`, Android's crash/ANR dialog is looked for once: a wallet that
+    crashed is `crashed`, not an uncounted setup problem. Anything else (a RuntimeError from a
+    wallet's init_flow, a TimeoutException, a missing or stale element) is `setup`: the wallet
+    could not be put in the state the tests need. A plain exception's text is kept verbatim, so
+    reports of older runs and the report's patterns still match; a wallet's own error screen
+    during init still reads `setup` unless that wallet's init_flow types it (as gataca does).
+    """
+    if isinstance(exc, FlowFailure):
+        return exc
+    said = " ".join(str(getattr(exc, "msg", None) or exc).split())
+    if isinstance(exc, WebDriverException) and not isinstance(
+        exc, (TimeoutException, NoSuchElementException, StaleElementReferenceException)
+    ):
+        return lost_session("init_flow", during, said)
+    original = str(exc) or type(exc).__name__
+    try:
+        overlay = detect_crash_or_anr(driver)
+    except WebDriverException:
+        return lost_session("init_flow", during, said)
+    except Exception:
+        overlay = None
+    if overlay is not None:
+        anr = overlay is SystemOverlay.ANR
+        return FlowFailure(outcome.CRASHED, (
+            f"[init_flow] The wallet {'stopped responding' if anr else 'crashed'} {during}: "
+            f"Android showed its {'not-responding' if anr else 'crash'} dialog. {original}"
+        ))
+    first_line = " ".join(
+        (str(getattr(exc, "msg", None) or exc).strip().splitlines() or [""])[0].split())
+    if isinstance(exc, TimeoutException):
+        return FlowFailure(outcome.SETUP, f"[init_flow] Timed out {during}: {first_line[:200]}")
+    if isinstance(exc, (NoSuchElementException, StaleElementReferenceException)):
+        return FlowFailure(outcome.SETUP, (
+            f"[init_flow] A screen element was not where it was expected {during}: "
+            f"{first_line[:200]}"))
+    return FlowFailure(outcome.SETUP, original)
 
 
 def navigate_to_home(app, request, init_flow):
@@ -42,9 +96,10 @@ def navigate_to_home(app, request, init_flow):
         owner = getattr(request.config, "_session_reset_owner", None)
         failure = getattr(request.config, "_session_reset_failure", None)
         if failure is not None and owner != request.node.nodeid:
-            raise RuntimeError(
+            raise FlowFailure(
+                getattr(request.config, "_session_reset_failure_category", outcome.SETUP),
                 "Session reset already failed for this wallet earlier in the run — not retrying. "
-                f"First failure: {failure}"
+                f"First failure: {failure} [no_retry]",
             )
 
         request.config._session_reset_owner = request.node.nodeid
@@ -58,17 +113,27 @@ def navigate_to_home(app, request, init_flow):
                 **app.page_args,
             )
         except Exception as e:
+            typed = _typed_init_failure(e, "while resetting the wallet", app.driver)
             request.config._session_reset_failure = f"{type(e).__name__}: {e}"
-            raise
+            request.config._session_reset_failure_category = typed.category
+            if typed is e:
+                raise
+            raise typed from e
         request.config._session_reset_done = True
     else:
-        init_flow.run(
-            app.driver,
-            pin=pin,
-            app_package=app_package,
-            skip_if_done=True,
-            **app.page_args,
-        )
+        try:
+            init_flow.run(
+                app.driver,
+                pin=pin,
+                app_package=app_package,
+                skip_if_done=True,
+                **app.page_args,
+            )
+        except Exception as e:
+            typed = _typed_init_failure(e, "while returning to the home screen", app.driver)
+            if typed is e:
+                raise
+            raise typed from e
 
 
 def node_failed(node) -> bool:
