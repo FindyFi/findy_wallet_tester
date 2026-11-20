@@ -122,6 +122,92 @@ python runners/run_tests.py example
 ```
 
 
+### Run wallets in parallel
+
+`runners/run_parallel.py` runs the wallets at the same time, one worker per device, and puts the
+next wallet on a device as soon as that device is free. Each wallet is still one `pytest` run, so
+the reports look the same as with `run_tests.py`: everything lands in
+`reports/<timestamp>/<wallet>/`, plus a `pytest.out` file there with the wallet's console output.
+The runner's own console shows one line when a wallet starts and one when it ends, and a table of
+wallet, device, state, exit code and duration at the end.
+
+```bash
+# Every wallet except example
+python runners/run_parallel.py
+
+# Only these wallets
+python runners/run_parallel.py hovi paradym procivis
+
+# Show the plan without touching a device, a server or a file
+python runners/run_parallel.py --dry-run
+
+# Extra pytest arguments: anything starting with "-" is passed on; put arguments that take a
+# value after "--"
+python runners/run_parallel.py hovi -x -- -k issuance
+```
+
+**Which device a wallet uses.** This comes from `.env`, in two ways:
+
+- A wallet with a non-blank `<WALLET>_DEVICE_NAME` is *pinned*. It runs only on that device. It is
+  skipped if its device or its Appium server is not ready within `--wait` seconds (default 30; `0`
+  checks once), or if the device is still busy after `--busy-wait` seconds (default 120). A device
+  counts as ready when `adb get-state` says "device", `sys.boot_completed` is 1 and the server
+  answers. A device is busy when another `adb logcat` capture is streaming from it. Appium's own
+  capture can outlive a finished session by about a minute, so busy gets the longer wait. A wallet
+  whose configuration cannot be read, or that cannot be started, is skipped as well.
+- Every other wallet is *floating*. Floating wallets wait in one shared queue and any ready device
+  takes the next one. A device that does not answer takes no work, and floating wallets are never
+  skipped because one device is down. They are skipped only when no device has been alive for the
+  whole `--wait`, or when no device qualifies for floating wallets (see below). A busy device and a
+  device that is running a wallet both count as alive.
+
+The device pool is every device named in the configuration: the devices of the pinned wallets, and
+`DEVICE_NAME`. A device takes floating wallets only if its screen-lock PIN is known **and** its
+pinned wallets agree on one Appium server. The default device uses `DEVICE_PIN`; any other device
+needs every pinned wallet on it to have its own non-blank `<WALLET>_DEVICE_PIN`, all with the same
+value. A device's server is the one its pinned wallets use, from their `<WALLET>_APPIUM_SERVER`
+(else `DEFAULT_APPIUM_SERVER`); a device without pinned wallets uses `DEFAULT_APPIUM_SERVER`. If its
+pinned wallets name different servers the device is marked ambiguous: each pinned wallet still runs
+against its own server, but the device takes no floating wallets. A device that does not qualify
+still runs its pinned wallets. `--dry-run` shows the pool, which devices are "PIN known", the
+pinned wallets for each device and the floating queue. It never prints a PIN.
+
+When a floating wallet runs on a device, the runner gives that one child process
+`<WALLET>_DEVICE_NAME`, `<WALLET>_APPIUM_SERVER` and `<WALLET>_DEVICE_PIN` for that device. Nothing
+else sees them and the runner's own environment is left alone. A floating wallet may therefore
+install and onboard on a device it has not used before, which the clean-slate policy allows.
+
+**Pin these wallets in `.env`**, because they work on only one device:
+
+- toppan runs on the phone only (on the emulator it reports "Threat detected").
+- gataca and heidi need manual onboarding on their emulator.
+- authbound needs manual registration and a fingerprint (`requires_fingerprint`).
+- Pinning unime is recommended too.
+
+**Appium servers.** Two devices that use the same Appium server take their turns instead of running
+together, because the server's log is shared and each wallet's `appium.log` would otherwise absorb
+the other wallet's lines. To run them together, give each device its own server (`appium -p 4724`)
+and set `<WALLET>_APPIUM_SERVER=http://localhost:4724` on the wallets pinned to that device, or
+pass `--allow-shared-server`.
+
+**Exit code.** 130 after Ctrl-C. Otherwise the highest pytest exit code other than 0, 1 and 5
+(pytest's "all passed", "some failed" and "nothing collected"); otherwise 10 if a wallet was
+skipped or never started; otherwise the highest code. A wallet the runner had to kill shows as
+`killed` with exit 137. A skipped wallet gets a `pytest.out` that says why, so the
+report shows it as a wallet with no data.
+
+**Ctrl-C.** The first press sends one interrupt to each running wallet, so it can finish its
+session and write its report files, and no further wallets start. A wallet that has not stopped
+after 150 seconds is killed. A second press kills them straight away.
+
+**Limits.** The runner does not stop another runner, or `run_tests.py`, from using a device. It
+looks for an `adb logcat` capture on the device and waits if it finds one, which is a best-effort
+check. A Python traceback that goes through the unlock code can print the PIN into `pytest.out`,
+just as it already does in `report.html`. Whether two wallets on two devices can start their
+UiAutomator2 sessions at the same moment without a port clash has not been verified. Compare the
+first parallel run with a sequential one, since a loaded machine can make a test slower.
+
+
 ## Project structure
 
 ```
@@ -152,7 +238,8 @@ python runners/run_tests.py example
 ├── env.example                 # Every environment variable the configs expect — copy to .env
 ├── .env                        # Your real device serials, PINs and credentials (gitignored)
 ├── runners/
-│   └── run_tests.py            # Runs all wallets in sequence under one report directory
+│   ├── run_tests.py            # Runs all wallets in sequence under one report directory
+│   └── run_parallel.py         # Runs the wallets in parallel, one worker per device
 ├── reports/
 │   └── <DATE_TIME>             # Report with the specific time stamp
 │       └── <wallet>/           # Per-wallet artifacts: app.log (failure digest), logcat.log,

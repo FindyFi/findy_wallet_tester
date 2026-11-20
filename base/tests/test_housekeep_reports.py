@@ -158,6 +158,7 @@ def test_busy_when_the_nightly_lock_exists(tmp_path):
     "/usr/bin/python3 runners/run_tests.py --wallet hovi",
     ".venv/bin/python3 -m pytest wallets/hovi/tests",
     f"{MAC_PYTHON} runners/run_tests.py procivis",
+    f"{MAC_PYTHON} runners/run_parallel.py --wait 0 hovi",
     f"{MAC_PYTHON} -m pytest base/tests/",
     f"{MAC_PYTHON} /x/.venv/bin/pytest base/tests -q",
     "/x/.venv/bin/pytest base/tests -q",

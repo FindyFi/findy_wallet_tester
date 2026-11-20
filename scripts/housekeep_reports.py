@@ -14,7 +14,7 @@ Safety rules:
 - A wallet folder is a finished run only if it holds report.html (older code writes no
   summary.json). Other wallet folders are skipped.
 - --apply refuses to start (and stops between files) while ~/.local/state/llm/nightly.lock
-  exists or a run_tests.py or pytest process is running. A dry-run only warns.
+  exists or a run_tests.py, run_parallel.py or pytest process is running. A dry-run only warns.
 - Every output is written under a temp name, verified (zstd: `zstd -t` plus a sha256 of the
   decompressed stream against the original; mp4: equal frame count and duration within 0.5 s),
   renamed atomically over its destination, and only then is the original deleted. On any
@@ -70,7 +70,7 @@ PROBE_THREADS = 8
 DEFAULT_LOG = Path.home() / ".local/state/housekeep_reports/actions.jsonl"
 # macOS shows the venv python as ".../MacOS/Python", hence the case-insensitive match.
 INTERPRETER = re.compile(r"^(python[\d.]*|pytest|py\.test)$", re.I)
-TEST_ARG = re.compile(r"^(run_tests\.py|pytest|py\.test)$")
+TEST_ARG = re.compile(r"^(run_tests\.py|run_parallel\.py|pytest|py\.test)$")
 # Planning ratios, measured on samples: zstd on logs, 806p crf30 on recordings.
 LOG_RATIO = 100
 VIDEO_RATIO = 37
