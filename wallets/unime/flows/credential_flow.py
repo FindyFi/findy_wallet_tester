@@ -6,6 +6,7 @@ from selenium.common.exceptions import WebDriverException
 from base import deeplink, interstitials, outcome
 from base.flow_context import FlowContext
 from providers.base import DeeplinkProvider
+from wallets.unime.flows import _failures as failures
 from wallets.unime.pages import pin_page as pin_screen
 from wallets.unime.pages.credential_offer_page import CredentialOfferPage
 from wallets.unime.pages.credential_offer_page import on_screen as _offer_on_screen
@@ -57,7 +58,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
                              interstitials=_INTERSTITIALS)
 
     if state != outcome.SUCCESS:
-        outcome.raise_for(state, driver, SCREENS, ctx, expected="credential offer", timeout=t,
+        failures.raise_for(state, driver, SCREENS, ctx, expected="credential offer", timeout=t,
                           interstitials=_INTERSTITIALS)
 
     logger.info("[credential_flow] Credential offer screen — accepting")
