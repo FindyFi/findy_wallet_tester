@@ -29,8 +29,8 @@ _offer_screen = (AppiumBy.XPATH, '//*[@text="OID4VCI Issuance"]')
 _accept_btn   = (AppiumBy.XPATH, '//*[@text="Accept"]')
 
 
-def on_screen(driver, timeout=3) -> bool:
-    return wait_present(driver, _offer_screen, timeout=timeout)
+def on_screen(driver, timeout=6) -> bool:
+    return wait_present(driver, _offer_screen, timeout=timeout) and wait_present(driver, _accept_btn, timeout=timeout)
 
 
 class CredentialOfferPage(BasePage):
