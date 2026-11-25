@@ -22,11 +22,15 @@ from base.android import (handle_biometric_if_present, handle_permission_if_pres
                           unlock_if_locked)
 from base.base_test import BaseTest, UpdateNotFinished
 from base import progress
+from base.redact import (install_log_redaction, redact, redact_json,
+                         register_environment_secrets)
 from base.conftest_helpers import (
     archive_previous_attempt,
     capture_appium_logs,
     node_failed,
     note_attempt_file,
+    redact_report,
+    redact_terminal,
     save_failure_artifacts,
     screen_is_protected,
 )
@@ -130,6 +134,12 @@ def pytest_configure(config):
     Output layout:
         reports/<timestamp>/<wallet_name>/
     """
+    # Before anything logs: every record, traceback and JSON file this run writes is redacted
+    # (see base/redact.py). The PINs `.env` defines are registered now; the config registers its
+    # own as it loads.
+    install_log_redaction()
+    register_environment_secrets()
+
     config.addinivalue_line(
         "markers",
         "skip_home_setup: skip the automatic home-screen setup for this test",
@@ -555,7 +565,7 @@ def capture_dropbox(run_dir, serial: str, package: str, since: str) -> None:
         if not mine:
             logger.info("[dropbox] No crashes or ANRs recorded for this session")
             return
-        (run_dir / "crashes.log").write_text("\n\n".join(mine) + "\n", encoding="utf-8")
+        (run_dir / "crashes.log").write_text(redact("\n\n".join(mine)) + "\n", encoding="utf-8")
         tags = ", ".join(sorted({_DROPBOX_ENTRY.match(e).group(2)
                                  for e in mine if _DROPBOX_ENTRY.match(e)}))
         logger.warning(f"[dropbox] crashes.log: {len(mine)} entry(ies) for {package} ({tags})")
@@ -850,7 +860,8 @@ def write_summary(config) -> None:
             },
             "tests": tests,
         }
-        (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        (run_dir / "summary.json").write_text(json.dumps(redact_json(summary), indent=2),
+                                              encoding="utf-8")
         logger.info(f"[conftest] summary.json: {passed}/{len(tests)} passed")
     except Exception as e:
         logger.warning(f"[conftest] Could not write summary.json: {e}")
@@ -909,6 +920,23 @@ def pytest_runtest_makereport(item, call):
         item._failure_where = where
 
     _record_result(item, rep)
+
+    # Last, so everything above read the report as pytest made it, and before any reporter
+    # (terminal, pytest-html, the rerun plugin) prints it.
+    redact_report(rep)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionstart(session):
+    """Before pytest prints its header: no full path or PIN in the terminal output."""
+    redact_terminal(session.config)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """A module that fails to import prints its traceback too; redact it like a test's."""
+    outcome = yield
+    redact_report(outcome.get_result())
 
 
 def _record_result(item, rep) -> None:
@@ -1270,7 +1298,7 @@ def app(driver, request):
         info["device_name"] = driver.capabilities.get("deviceModel", device_serial)
         info.update(getattr(request.config, "_update_result", {}))
         (request.config._run_dir / "app_info.json").write_text(
-            json.dumps(info, indent=2)
+            json.dumps(redact_json(info), indent=2)
         )
         request.config._app_info_written = True
         logger.info(

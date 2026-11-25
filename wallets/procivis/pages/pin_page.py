@@ -5,6 +5,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
+from base.redact import typing_secret
 
 # Both setup and confirmation screens share the same resource-id; title text differs
 INIT_SCREEN_ID = (AppiumBy.XPATH, '//*[@resource-id="PinCodeInitializationScreen"]')
@@ -52,10 +53,11 @@ class PinPage(BasePage):
     def enter_pin(self, pin: str, keypad_prefix: str = _INIT_PREFIX):
         """Tap each digit of pin on the custom keypad."""
         delay = self.timeouts.get("pin_digit_delay", 0.3)
-        for digit in pin:
-            self.click(_digit_locator(keypad_prefix, digit))
-            if delay:
-                time.sleep(delay)
+        with typing_secret():   # the digit lookups spell the PIN in Appium's log
+            for digit in pin:
+                self.click(_digit_locator(keypad_prefix, digit))
+                if delay:
+                    time.sleep(delay)
 
     def enter_login_pin(self, pin: str):
         """Tap each digit of pin on the login (check) keypad."""

@@ -679,7 +679,9 @@ def make_parser() -> argparse.ArgumentParser:
                              "the longest wallet run so far)")
     parser.add_argument("--allow-shared-server", action="store_true",
                         help="let devices that use the same Appium server run at the same time "
-                             "(their appium.log files then absorb each other's lines)")
+                             "(their appium.log files then absorb each other's lines, including "
+                             "another wallet's PIN entry, which only the wallet that typed it "
+                             "leaves out)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the plan and exit; no device, server, lock or file is touched")
     return parser

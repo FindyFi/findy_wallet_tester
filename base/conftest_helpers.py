@@ -12,6 +12,14 @@ import os
 import re
 from datetime import datetime, timezone
 
+# pytest's own report classes, so a redacted traceback still prints like one and keeps the crash
+# message the short summary line shows. Private API: if a pytest release moves them, the
+# traceback is still redacted, as plain text (see `redact_report`), rather than the run failing.
+try:
+    from _pytest._code.code import ReprFileLocation, TerminalRepr
+except ImportError:  # pragma: no cover - depends on the pytest release
+    ReprFileLocation = TerminalRepr = None
+
 from selenium.common.exceptions import (
     NoSuchElementException,
     StaleElementReferenceException,
@@ -23,6 +31,7 @@ from base import outcome
 from base.android import SystemOverlay, detect_crash_or_anr, is_secure_screen_refusal
 from base.flow_failures import lost_session
 from base.outcome import FlowFailure
+from base.redact import drop_unlock_exchanges, in_secret_window, redact
 from base.utils import sanitize_test_name
 
 logger = logging.getLogger(__name__)
@@ -401,7 +410,7 @@ def record_error_screen(driver, request, config, *, wallet: str = "", evidence=(
             f"evidence:       {', '.join(evidence) if evidence else '(none saved)'}",
         ]
         with (request.config._run_dir / "app.log").open("a", encoding="utf-8") as f:
-            f.write("\n".join(block) + "\n")
+            f.write(redact("\n".join(block)) + "\n")
     except Exception as e:
         logger.warning(f"[conftest] Could not record the error screen digest: {e}")
 
@@ -532,7 +541,7 @@ def save_failure_artifacts(driver, request, config, *, wallet: str = "") -> bool
             xml_dir = request.config._run_dir / "xml_dumps"
             xml_dir.mkdir(parents=True, exist_ok=True)
             path = xml_dir / f"{test_name}.xml"
-            path.write_text(driver.page_source, encoding="utf-8")
+            path.write_text(redact(driver.page_source), encoding="utf-8")
             logger.info(f"[conftest] XML dump saved: {path}")
             evidence.append(f"xml_dumps/{path.name}")
             note_attempt_file(request.node, evidence[-1])
@@ -693,16 +702,31 @@ def capture_appium_logs(driver, request, test_name):
         frozenset(e.get("message", "") for e in fresh if e.get("timestamp", 0) == newest),
     )
 
+    lines = []
+    typed = 0
+    for entry in fresh:
+        ts_ms = entry.get("timestamp", 0)
+        # PIN entry on a wallet's keypad: the element lookups name each digit (base/redact.py).
+        if in_secret_window(ts_ms):
+            typed += 1
+            continue
+        if typed:
+            lines.append(f"[redacted] {typed} Appium log lines of PIN entry")
+            typed = 0
+        dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone()
+        ts_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+        level = entry.get("level", "INFO").upper()
+        lines.append(f"{ts_str} [{level}] {entry.get('message', '')}")
+    if typed:
+        lines.append(f"[redacted] {typed} Appium log lines of PIN entry")
+
+    # The device unlock is left out whole (its keypad clicks spell the PIN), then every line loses
+    # PINs and local paths: Appium logs typed values and its own install paths.
     appium_log = config._run_dir / "appium.log"
     with appium_log.open("a", encoding="utf-8") as f:
         f.write(f"\n--- TEST: {test_name} ---\n")
-        for entry in fresh:
-            ts_ms = entry.get("timestamp", 0)
-            dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).astimezone()
-            ts_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-            level = entry.get("level", "INFO").upper()
-            message = entry.get("message", "")
-            f.write(f"{ts_str} [{level}] {message}\n")
+        for line in drop_unlock_exchanges(lines):
+            f.write(redact(line) + "\n")
 
 
 def teardown_test(app, request, init_flow):
@@ -729,3 +753,68 @@ def teardown_test(app, request, init_flow):
         )
     except Exception as e:
         logger.warning(f"[conftest] Could not return to home after test: {e}")
+
+
+class _RedactedRepr(TerminalRepr or object):
+    """A failure's traceback, already rendered and redacted, that prints like the original.
+
+    Keeps `reprcrash`, which pytest's short summary line ("FAILED x - <message>") reads.
+    """
+
+    def __init__(self, text: str, reprcrash):
+        self.text = text
+        self.reprcrash = reprcrash
+
+    def toterminal(self, tw) -> None:
+        for line in self.text.split("\n"):
+            tw.line(line)
+
+
+def redact_report(rep) -> None:
+    """Remove PINs and local paths from a test or collection report, in place. Never raises.
+
+    A failure's traceback prints each frame's arguments, and a PIN passed as one used to appear in
+    pytest.out, report.html and the nightly log. A skip keeps its (path, lineno, reason) tuple,
+    which pytest and `_skip_reason` both rely on; only its text is redacted.
+    """
+    try:
+        longrepr = getattr(rep, "longrepr", None)
+        if isinstance(longrepr, tuple) and len(longrepr) == 3:
+            path, lineno, reason = longrepr
+            rep.longrepr = (redact(str(path)), lineno, redact(str(reason)))
+        elif longrepr is not None and rep.failed and TerminalRepr is None:
+            rep.longrepr = redact(rep.longreprtext)
+        elif longrepr is not None and rep.failed:
+            crash = getattr(longrepr, "reprcrash", None)
+            if crash is not None:
+                crash = ReprFileLocation(redact(str(crash.path)), crash.lineno,
+                                         redact(str(crash.message)))
+            # `longreprtext` renders without colour codes even when FORCE_COLOR is set; the report
+            # generator reads report.html's "E   ..." lines and colour would hide them from it.
+            rep.longrepr = _RedactedRepr(redact(rep.longreprtext), crash)
+        rep.sections = [(title, redact(content)) for title, content in rep.sections]
+    except Exception as e:
+        logger.warning(f"[conftest] Could not redact a report: {type(e).__name__}")
+
+
+def redact_terminal(config) -> None:
+    """Redact everything pytest writes to the terminal from now on. Once per session; never raises.
+
+    The test reports are already redacted, but pytest and its plugins print other lines with full
+    paths: the header (python, rootdir), the warnings summary, and pytest-html's closing
+    "Generated html report: file:///Users/...". The terminal is pytest.out under the parallel
+    runner and the nightly log under run_tests.py.
+    """
+    try:
+        writer = config.get_terminal_writer()
+        if getattr(writer, "_redacting", False):
+            return
+        write = writer.write
+
+        def redacting_write(msg, **markup):
+            return write(redact(msg), **markup)
+
+        writer.write = redacting_write
+        writer._redacting = True
+    except Exception as e:
+        logger.warning(f"[conftest] Could not redact the terminal output: {type(e).__name__}")

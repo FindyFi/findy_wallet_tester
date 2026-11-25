@@ -6,6 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
+from base.redact import typing_secret
 
 # Passcode/unlock screen title — text reads "Enter Passcode".
 HEADING = (AppiumBy.ID, "io.authbound.wallet:id/quick_pin_title")
@@ -26,6 +27,7 @@ class PinPage(BasePage):
 
     def enter_pin(self, pin: str):
         delay = self._get_timeout("pin_digit_delay", 0.3)
-        for digit in pin:
-            self.click(self._digit(digit))
-            time.sleep(delay)
+        with typing_secret():   # the digit lookups spell the PIN in Appium's log
+            for digit in pin:
+                self.click(self._digit(digit))
+                time.sleep(delay)
