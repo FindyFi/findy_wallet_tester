@@ -15,6 +15,10 @@ def get_provider(config: dict, issuer_name: str) -> DeeplinkProvider:
         (authenticates to itb.ilabs.ai and drives a test session)
       - AuthboundProvider      when ``type`` is ``"authbound"``
         (POSTs to the Authbound demo to mint an offer / presentation request)
+      - ApiDeeplinkProvider    when ``type`` is ``"api"``
+        (calls the provider's own JSON API; the request and the response field are config)
+      - MultipazProvider       when ``type`` is ``"multipaz"``
+        (walks the Multipaz sandbox issuer's pre-authorized offer form)
       - WebDeeplinkProvider    when the issuer has a ``base_url``
         (credentials specify a ``path`` suffix)
       - ConfigDeeplinkProvider when there is no ``base_url``
@@ -48,6 +52,14 @@ def get_provider(config: dict, issuer_name: str) -> DeeplinkProvider:
     if issuer.get("type") == "authbound":
         from providers.authbound_provider import AuthboundProvider
         return AuthboundProvider(issuer["base_url"], credentials)
+
+    if issuer.get("type") == "api":
+        from providers.api_provider import ApiDeeplinkProvider
+        return ApiDeeplinkProvider(issuer["base_url"], credentials)
+
+    if issuer.get("type") == "multipaz":
+        from providers.multipaz_provider import MultipazProvider
+        return MultipazProvider(issuer["base_url"], credentials)
 
     base_url = issuer.get("base_url")
     if base_url:
