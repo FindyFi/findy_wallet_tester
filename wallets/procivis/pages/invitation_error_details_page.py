@@ -4,6 +4,8 @@ from base.base_page import BasePage
 
 SCREEN_ID = (AppiumBy.XPATH, '//*[@resource-id="InvitationErrorDetailsScreen"]')
 _close = (AppiumBy.XPATH, '//*[@resource-id="InvitationErrorDetailsScreen.closeIcon"]')
+# Public for init_flow's teardown, which closes this screen the flows leave open as evidence.
+CLOSE_ID = _close
 
 _attr_labels = '//*[contains(@resource-id, ".attributeLabel") and @text!=""]'
 _attr_values = '//*[contains(@resource-id, ".attributeValue") and @text!=""]'

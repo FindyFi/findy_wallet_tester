@@ -617,6 +617,17 @@ def test_history_is_counted_per_collection_as_passed_out_of_all():
     assert collection_tallies(entry, _GROUPS) == {"Pension demo": (2, 3), "FIDES Community": (1, 2)}
 
 
+def test_failures_that_were_ours_are_left_out_of_a_collections_tally():
+    # The same cells the overview keeps out of its pass and fail totals: a test setup failure, a
+    # lost session, and "harness" as runs recorded before the rename call setup.
+    entry = {"cells": {"issuance": {
+        "heidi": {"hovi_issuer": "Passed", "talao_pid_issuer": "Failed:setup"},
+        "paradym": {"hovi_issuer": "Error:lost_session", "talao_pid_issuer": "Error:harness"},
+        "toppan": {"hovi_issuer": "Failed:rejected", "talao_pid_issuer": "Passed"},
+    }}}
+    assert collection_tallies(entry, _GROUPS) == {"Pension demo": (1, 2), "FIDES Community": (1, 1)}
+
+
 def test_a_collection_missing_from_a_run_is_absent_not_zero():
     # An older run from before the FIDES providers existed: "not tested" must not read as "0/0".
     entry = {"cells": {"issuance": {"heidi": {"hovi_issuer": "Passed"}}}}

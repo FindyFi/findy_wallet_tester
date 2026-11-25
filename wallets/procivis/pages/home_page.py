@@ -33,6 +33,32 @@ _OPEN_DETAIL = (
 )
 
 
+def on_screen(driver, timeout: float = 2) -> bool:
+    """Is the wallet list in front? The `home` probe for base/screens.py."""
+    return wait_present(driver, SCREEN_ID, timeout=timeout)
+
+
+# procivis's own empty state: "No credentials yet" / "Connect to an issuer to add your first
+# credential.", as `WalletScreen.empty.title` and `.subtitle` beside the header. Read off the two
+# empty-wallet dumps of 2026-09-18 (15-37-26 and 16-12-02); no dump holding a card shows it.
+_EMPTY_STATE = (AppiumBy.XPATH, '//*[@resource-id="WalletScreen.empty.title"]')
+
+
+def empty_on_screen(driver, timeout: float = 2) -> bool:
+    """Is procivis saying, in its own words, that it holds no credentials? Read-only."""
+    return wait_present(driver, _EMPTY_STATE, timeout=timeout)
+
+
+def holds_nothing(driver, count) -> bool:
+    """True only when the count is 0 *and* procivis shows its own empty state.
+
+    A 0 on its own is not proof: `count_credentials` reads 0 whenever the header is up and no card
+    ids are in the tree yet — a list still rendering looks exactly like an empty wallet. Calling
+    that `nothing_to_present` would skip the verifier entirely on a wallet that holds a credential.
+    """
+    return count == 0 and empty_on_screen(driver, timeout=2)
+
+
 class HomePage(BasePage):
     def wait_until_loaded(self, timeout=None):
         self.find(SCREEN_ID, timeout=timeout)

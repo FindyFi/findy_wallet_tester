@@ -1,7 +1,4 @@
 from appium.webdriver.common.appiumby import AppiumBy
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
 from base.utils import wait_present
@@ -32,23 +29,22 @@ _offer_screen = (AppiumBy.XPATH, '//*[@text="OID4VCI Issuance"]')
 _accept_btn   = (AppiumBy.XPATH, '//*[@text="Accept"]')
 
 
-def on_screen(driver, timeout=3) -> bool:
-    return wait_present(driver, _offer_screen, timeout=timeout)
+def on_screen(driver, timeout=6) -> bool:
+    return wait_present(driver, _offer_screen, timeout=timeout) and wait_present(driver, _accept_btn, timeout=timeout)
 
 
 class CredentialOfferPage(BasePage):
-    def wait_until_loaded(self, timeout=None):
-        t = timeout if timeout is not None else self._get_timeout("credential_offer", fallback=30)
-        try:
-            WebDriverWait(self.driver, t).until(
-                EC.presence_of_element_located(_offer_screen)
-            )
-        except TimeoutException:
-            raise RuntimeError(
-                f"Credential offer screen ('OID4VCI Issuance') did not appear within {t}s — "
-                "check that the deeplink was handled by the app"
-            )
-
     def accept(self):
-        self.wait_until_loaded()
         self.click(_accept_btn)
+
+
+# ── Processing overlay ─────────────────────────────────────────────────────────
+# Shown while toppan stores an accepted credential. No XML dump holds it — passing tests save none,
+# and no failure has stopped on it — so screens.py leaves `processing` UNKNOWN. The flow only uses
+# it to wait longer, and to say so if it is still up when the wait runs out.
+
+_processing = (AppiumBy.XPATH, '//*[@text="Adding your credential"]')
+
+
+def processing_on_screen(driver, timeout=1) -> bool:
+    return wait_present(driver, _processing, timeout=timeout)

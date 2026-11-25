@@ -5,7 +5,7 @@ from pathlib import Path
 
 from base.test_cases import issuance_cases
 from providers.factory import get_provider
-from base import outcome
+from base import credential_count
 from wallets.hovi.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ _issuance_cases = issuance_cases(APP_NAME)
 
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
 @pytest.mark.parametrize("issuer_name,test_case", _issuance_cases)
-def test_credential_issuance(app, issuer_name, test_case):
+def test_credential_issuance(app, request, issuer_name, test_case):
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
 
@@ -37,18 +37,13 @@ def test_credential_issuance(app, issuer_name, test_case):
 
     home.wait_until_loaded()
     count_after = home.count_credentials()
-    added = count_after - count_before
-    logger.info(
-        f"[test] Credential '{test_case}' from '{issuer_name}' issued to wallet "
-        f"(wallet: {count_before} → {count_after}, +{added})"
-    )
     # The card count is the only evidence the credential landed; reaching the home screen only
     # proves the flow did not crash. The count was probed before this assertion was added
     # (2026-08-19): the locator matched exactly the cards present and did not grow when the list
     # was scrolled, so a flat count means nothing arrived, not that counting saturated.
     #
-    # Tagged so the report can tell "accepted but not stored" from "never saw the offer".
-    assert count_after > count_before, (
-        f"[{outcome.NOT_STORED}] Credential '{test_case}' from '{issuer_name}' did not reach the "
-        f"wallet: hovi accepted the offer but the card count stayed at {count_after}"
-    )
+    # Through the shared check so the failure carries `not_stored` as a category, not only as text.
+    # Both counts come from `count_credentials()` directly, as before: an unreadable count still
+    # fails the test here rather than becoming `credential_count.read`'s warning.
+    credential_count.assert_increased(count_before, count_after, request=request,
+                                      wallet=APP_NAME, issuer=issuer_name, case=test_case)

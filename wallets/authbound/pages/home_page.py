@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 # EUDI dashboard root — present on every bottom-nav tab once the wallet is open.
 SCREEN_ID = (AppiumBy.ID, "io.authbound.wallet:id/dashboard_screen_root")
 
+
+def on_screen(driver, timeout: float = 2) -> bool:
+    return wait_present(driver, SCREEN_ID, timeout=timeout)
+
 # Bottom-nav tabs. Counting goes to Wallet and must come back to Home.
 #
 # These MUST be XPath, not AppiumBy.ID — do not "simplify" them back. The tabs are Compose

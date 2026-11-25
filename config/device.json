@@ -1,5 +1,5 @@
 {
-    "server": "http://localhost:4723",
+    "server": "${DEFAULT_APPIUM_SERVER:-http://localhost:4723}",
     "android": {
         "platform_name": "Android",
         "device_name": "${DEVICE_NAME}",

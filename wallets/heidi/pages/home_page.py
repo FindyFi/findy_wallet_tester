@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 SCREEN_ID = (AppiumBy.XPATH, '//*[contains(@text, "Credentials")]')
 
 
+def on_screen(driver, timeout: float = 2) -> bool:
+    """heidi's dashboard. Broad — "No Matching Credentials" on the request screen also matches —
+    so callers check the more specific screens first."""
+    return wait_present(driver, SCREEN_ID, timeout=timeout)
+
+
 # The settings button is the rightmost header button (second Button sibling after "WALLET").
 _SETTINGS_BTN = (AppiumBy.XPATH,
     '//android.widget.TextView[@text="WALLET"]'

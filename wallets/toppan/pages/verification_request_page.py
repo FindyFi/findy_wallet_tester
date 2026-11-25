@@ -1,7 +1,4 @@
 from appium.webdriver.common.appiumby import AppiumBy
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
 
 from base.base_page import BasePage
 from base.utils import wait_present
@@ -35,20 +32,7 @@ def on_screen(driver, timeout=3) -> bool:
 
 
 class VerificationRequestPage(BasePage):
-    def wait_until_loaded(self, timeout=None):
-        t = timeout if timeout is not None else self._get_timeout("default", fallback=10)
-        try:
-            WebDriverWait(self.driver, t).until(
-                EC.presence_of_element_located(_request_screen)
-            )
-        except TimeoutException:
-            raise RuntimeError(
-                f"Verification request screen did not appear within {t}s — "
-                "check that the deeplink was handled by the app"
-            )
-
     def share(self):
-        self.wait_until_loaded()
         for _ in range(5):
             if wait_present(self.driver, _share_btn, timeout=1):
                 break

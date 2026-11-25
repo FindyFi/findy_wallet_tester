@@ -18,7 +18,8 @@ Please [open a GitHub issue](https://github.com/FindyFi/findy_wallet_tester/issu
 - **Appium version** (`appium --version`)
 - **Python version** (`python --version`)
 - **Steps to reproduce** and the **expected vs. actual behaviour**
-- **Relevant log output** from `reports/<timestamp>/<wallet>/test.log` or `app.log`
+- **Relevant log output** from `reports/<timestamp>/<wallet>/` — `app.log` for the failure digest,
+  `test.log`, `logcat.log` or `appium.log` for the detail behind it
 
 ---
 

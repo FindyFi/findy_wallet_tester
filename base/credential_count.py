@@ -17,6 +17,8 @@ What every wallet's `count_credentials()` does agree on:
 """
 import logging
 
+from base import outcome, progress
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +62,7 @@ def assert_increased(before, after, *, request, wallet: str, issuer: str, case: 
     """
     if before is None or after is None:
         request.node.user_properties.append(("count_evidence", "unavailable"))
+        progress.step(f"{wallet} could not report a count, so storage is unconfirmed")
         logger.warning(
             f"[test] '{case}' from '{issuer}': the flow reported success but {wallet} could not "
             "report a count — this run has NO evidence the credential was stored"
@@ -68,8 +71,12 @@ def assert_increased(before, after, *, request, wallet: str, issuer: str, case: 
 
     logger.info(f"[test] Credential '{case}' from '{issuer}' issued to wallet "
                 f"({wallet}: {before} → {after}, +{after - before})")
-    assert after > before, (
-        f"[not_stored] Credential '{case}' from '{issuer}' did not reach {wallet}: the flow "
-        f"completed without error but the count stayed at {after}"
-    )
+    if after <= before:
+        # A named outcome rather than an `assert`: an AssertionError carries no `.category`, so
+        # summary.json and the app.log digest recorded every `not_stored` as uncategorised.
+        outcome.fail(outcome.NOT_STORED, (
+            f"Credential '{case}' from '{issuer}' did not reach {wallet}: the flow completed "
+            f"without error but the count stayed at {after}"
+        ))
+    progress.reached(progress.KEEP, f"{wallet} count {before} → {after}")
 

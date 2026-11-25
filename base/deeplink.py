@@ -1,9 +1,12 @@
 """Explain, after the fact, why a deeplink never reached the wallet.
 
-`mobile: deepLink` does not fail when the wallet cannot handle a URL. The intent goes to whatever
-else claims it (a browser, the launcher), the wallet never comes forward, and the flow times out,
-which looks exactly like a crashed app or a dead session. Once a case has failed, this asks the
-device which schemes the wallet registers and reports `unroutable` when that explains it.
+Without a package, `mobile: deepLink` does not fail when the wallet cannot handle a URL: the intent
+goes to whatever else claims it (a browser, the launcher), the wallet never comes forward, and the
+flow times out, which looks exactly like a crashed app or a dead session. With a package — which
+every flow passes — Android either resolves an activity in that app or
+refuses with "unable to resolve Intent" (appium-adb's `startUri` runs `am start -W … <package>`).
+Either way, once a case has failed, this asks the device which schemes the wallet registers and
+reports `unroutable` when that explains it.
 
 Diagnosis only, never a gate: every URL is fired exactly as the provider published it. Reading the
 device keeps the evidence tied to the build under test, and each run records the same schemes in
@@ -13,9 +16,25 @@ import logging
 from typing import Dict, List, Optional
 from urllib.parse import urlsplit
 
+from base import progress
 from base.utils import get_app_info
 
 logger = logging.getLogger(__name__)
+
+
+def fire(driver, url: str, app_package: str) -> None:
+    """Hand `url` to Android for `app_package`, exactly as given, and record that it was delivered.
+
+    With a package named, Android either resolves an activity inside that app or refuses with
+    "Activity not started, unable to resolve Intent" — so returning at all means the wallet has the
+    link, which is the flow's first stage. Raises whatever the driver raises, unchanged; callers
+    already turn that refusal into the `unroutable` diagnosis.
+
+    The one step of every flow that no shared code saw: each wallet called `mobile: deepLink`
+    itself, so the progress trail had nowhere to record delivery.
+    """
+    driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
+    progress.reached(progress.DELIVER, f"deeplink delivered to {app_package}")
 
 # Read once per process, per package. Schemes change only when the app is replaced — which the
 # suite itself can do mid-session via BaseTest.check_for_updates, so that path calls invalidate().
@@ -75,6 +94,5 @@ def unroutable_reason(driver, app_package: str, url: str, wallet: str = "the wal
     return (
         f"the provider returned a {scheme + '://' if scheme else 'scheme-less'} URL "
         f"({url[:70]}…), which {wallet} does not register. It claims only "
-        f"{', '.join(schemes)}. The deeplink was delivered to whatever else on the device "
-        "claims that scheme, so it could never reach this wallet"
+        f"{', '.join(schemes)}, so a link with this scheme can never reach this wallet"
     )

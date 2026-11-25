@@ -12,6 +12,12 @@ from base.utils import wait_present
 SCREEN_ID = (AppiumBy.XPATH, '//*[@text="Hello!" and @heading="true"]')
 
 
+def on_screen(driver, timeout: float = 2) -> bool:
+    """paradym's home screen, by its "Hello!" heading — as in the nightly 2026-09-30 hovi_issuer
+    dump, the one home screen any failure has captured."""
+    return wait_present(driver, SCREEN_ID, timeout=timeout)
+
+
 # Home's shortcut into the full card list, labelled "All cards. N cards total".
 _ALL_CARDS = (AppiumBy.XPATH, '//*[contains(@content-desc, "All cards")]')
 

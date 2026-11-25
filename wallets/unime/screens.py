@@ -18,8 +18,13 @@ SCREENS = Screens(
     #   success    — unime returns to home after accepting, but that is untested as a claim
 
     # unime's error overlay sits on top of home, so home is visible at the same moment. The loop
-    # checks error first, which is what keeps a rejection from reading as `dismissed`. No grace is
-    # needed on top of that: unime has never been seen to flash home mid-flow.
-    home_grace=0.0,
+    # checks error first, which is what keeps a rejection from reading as `dismissed`. The current
+    # copy is a toast. In reports/2026-11-20_14-40-17 three attempts dumped a bare home (paradym_verifier
+    # 1, procivis_issuer 3, waltid_issuer 2), but logcat shows those were cold starts with no
+    # "Dispatching action" and no UserError: unime dropped the link, so `dismissed` was true for
+    # them. In every other attempt UserError was logged 0.6-1.5s after delivery, before the wait
+    # began, so no grace was needed there. 5s (hovi's value) is kept as cheap insurance against a
+    # slower toast; it only delays a genuine `dismissed`.
+    home_grace=5.0,
     processing_grace=0.0,
 )

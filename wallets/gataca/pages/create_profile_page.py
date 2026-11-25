@@ -46,6 +46,6 @@ class CreateProfilePage(BasePage):
         """Tap Create to generate the new profile.
 
         This triggers an Android system biometric prompt; the caller must authenticate
-        (e.g. via ``base.android.authenticate_with_pin(driver, pin)``).
+        (e.g. via ``base.android.authenticate_device(driver, pin)``).
         """
         self.click(_CREATE_BUTTON)

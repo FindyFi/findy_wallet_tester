@@ -47,6 +47,31 @@ become uniform.
 
 ---
 
+## `flows/_failures.py`: what is shared and what is not
+
+procivis, toppan, paradym and gataca each have a `flows/_failures.py`. Two kinds of thing live
+there, and only one of them belongs to the wallet.
+
+Wallet-owned, stays in the wallet's file: its probes, its error text, its `[no_retry]` rules, and
+every diagnosis that names one of its own screens (`nothing_appeared`, `error_failure` and the
+like). A copied probe is worse than none, so these are never shared.
+
+Shared, lives in `base/flow_failures.py` and is re-exported by name where a wallet uses it:
+everything that deals with the driver, the `FlowContext` or Android's own dialogs and not with a
+wallet's screens. That is `lost_session`, `lost`, `answer_permission`, `first_of`,
+`raise_if_crashed` and `late_look`. Rule of thumb: if the body would read the same in every
+wallet's file apart from the wallet's name, it belongs in base.
+
+heidi and authbound have no `_failures.py`; their one inline dead-session site per wait loop calls
+`lost_session` directly, with the driver's own `exc.msg`.
+
+In tests, patch the probes where the base helpers look them up:
+`base.flow_failures.detect_crash_or_anr` and `base.flow_failures.handle_permission_if_present`.
+Never patch them on the wallet module. Likewise, patching a wallet's `failures.lost` does not reach
+the base helpers, because they call `base.flow_failures.lost`.
+
+---
+
 ## Capability matrix
 
 What the test suite can actually **do** with each wallet today. Every ❌/⚠️ is either a gap to close or
@@ -83,8 +108,7 @@ a difference to justify. Status as of 2026-08-20, branch `fix/hovi_general`.
 | Wipe all credentials (post-suite)     |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   –    |  ✅   |
 | **Support**                           |           |        |       |      |         |          |        |       |
 | Detect app error screens              |    ✅     |   ✅   |  ✅   |  ✅  |   ✅    |    ✅    |   ✅   |  ⚠️    |
-| Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
-| Collect in-app debug logs             |    ❌     |   ❌   |  ❌   |  ❌  |   ✅    |    ❌    |   ❌   |  ❌   |
+| Manipulate wallet settings            |    ❌     |   ❌   |  ✅   |  ❌  |   ❌    |    ❌    |   ❌   |  ❌   |
 | Wallet-specific pre-test setup        |     –     |   ✅   |   –   |  –   |    –    |    –     |   –    |   –   |
 
 ---
@@ -177,8 +201,9 @@ serve issuance and presentation, only the header copy differs.
 The other counterparties fail, and these are *results*, not defects: waltid returns 404 for the
 spec-required `.well-known/openid-credential-issuer/<path>` metadata, while hovi, procivis, sphereon and
 paradym serve valid metadata and offers that the wallet then rejects internally
-(`issueDocumentsFromOffer failure`). Both are readable straight from `app.log`, which carries the
-wallet's full HTTP traffic under the logcat tag `EUDI Wallet PROD-RELEASE`.
+(`issueDocumentsFromOffer failure`). Both are readable straight from `logcat.log`, which carries
+the wallet's full HTTP traffic under the logcat tag `EUDI Wallet PROD-RELEASE` — 2479 of those
+lines are at `D` priority, which is why that capture filters by uid and not by priority.
 
 **Count credentials** — the mechanism is per-wallet and stays that way: gataca, hovi and unime count
 card elements (with locators that have nothing in common), heidi, paradym and authbound parse a count
@@ -256,6 +281,19 @@ was probed for it (its count did not grow when the list was scrolled) but at onl
 which cannot show a ceiling of three. The fix is to scroll and accumulate unique cards, or find a
 wallet-reported total; until then, clean-slate is not a tidiness preference for these wallets, it is
 what makes their numbers mean anything.
+
+**gataca now scrolls (2026-11-18).** Its count scrolls the list a little at a time and counts each
+card once, so a saturated list is no longer a false `not_stored`. gataca lists credentials **per
+active DID** (measured on emulator-5554: "Gataca" lists "Gataca Attest" and "Self-attested", "JWK
+Identity" only "Self-attested"; a cold start resets the active DID to "Gataca"), so the issuance
+test makes the DID it issues to active before *every* count, and a DID that cannot be made active
+is `setup`. Several cards share a title ("OmaKela Pensiondemo" x3), so cards are told apart by
+position: two readings of the list are joined by the distance it moved between them, and the steps
+stay below the spacing of identical cards so that distance is unambiguous. When it is not (a
+gesture that moved the list less accurately than asked, with identical cards) the count is
+`CredentialCountUnavailable`, never a guess; the issuance cell then carries `count_evidence:
+unavailable` and cleanup falls back to the cards on screen rather than stop pruning. Not yet
+confirmed on a device: that `mobile: scrollGesture` moves the list by `percent` of its height.
 
 **Assert the count changed** — the actual pass criterion. Re-measured 2026-09-03: **all eight now
 assert**, where on 2026-08-20 only four did. gataca, heidi and paradym used to compute
@@ -417,9 +455,11 @@ the root conftest's `_MODULE_ORDER` already sorts last for every wallet, so no m
 wallets accumulate
 credentials across runs forever, which inflates counts and changes what verifiers match against.
 
-**Detect app error screens** — implemented for six wallets, in varying depth: paradym and toppan run
-staged `check_for_error()` between every step (plus crash/ANR overlay detection and `[no_retry]`
-tagging), heidi has two distinct error screens checked before *and* after sharing, gataca has an error
+**Detect app error screens** — implemented for six wallets, in varying depth: paradym polls for its
+"Something went wrong" screen throughout every wait, quotes its Reason (`[no_retry]` except for a
+gateway failure, a consumed offer or an unreadable Reason), and declares it in `screens.py`; toppan polls for its error dialog throughout every wait instead, anchored on its own
+package, a single `button1` and the label "OK" (any AlertDialog's positive button used to count),
+and declares it in `screens.py`; heidi has two distinct error screens checked before *and* after sharing, gataca has an error
 page plus a separate "Rejected" screen and a backend "Service currently unavailable" dialog, procivis
 reports process-screen failures and dumps all visible text, authbound reports `content_error_root`
 text. hovi gained detection on 2026-08-19 and it fired on real cases the next day. Its only error
@@ -468,8 +508,8 @@ same `dumpsys package` dump it already reads for the version, and every run reco
 behind it.
 
 There is no longer any exception to this. Paradym used to publish both directions wrapped in
-`https://paradym.id/invitation?...`, an app-link only its own wallet verifies, and the harness
-unwrapped it — first privately inside the authbound and gataca flows, which published a harness
+`https://paradym.id/invitation?...`, an app-link only its own wallet verifies, and the framework
+unwrapped it — first privately inside the authbound and gataca flows, which published a framework
 choice as a wallet property, then once for every wallet equally in a `ParadymProvider`. As of
 2026-09-11 the pensiondemo endpoints emit the standard schemes themselves: the issuer answers with
 an `offerDeeplinkUri` of `openid-credential-offer://…` and the verifier page links
@@ -478,12 +518,15 @@ waltid, and `providers/paradym_provider.py` is deleted. If paradym ever reverts 
 envelope, the cases fail `[unroutable]` — that is the honest result, and the fix belongs on
 paradym's side.
 
-**Manipulate wallet settings** — heidi enables Show Metadata and sets "Always Ask" for trusted and
-untrusted connections; paradym enables Development Mode. Both run from their wallet conftest, before
-tests. No other wallet touches settings.
+**Manipulate wallet settings** — heidi only: it enables Show Metadata and sets "Always Ask" for
+trusted and untrusted connections, from its wallet conftest, before tests. No other wallet touches
+settings.
 
-**Collect in-app debug logs** — paradym only (`settings_flow.collect_debug_logs`, via the share sheet).
-Everything else relies on the shared logcat/Appium capture.
+paradym used to enable Development Mode here in order to scrape its in-app debug logs through the
+Android share sheet on failure. That is gone: across 40 runs it made 104 attempts and produced zero
+files, while costing UI navigation (drawer -> Settings -> share sheet) after every failure — on a
+screen the test had just failed on. Log evidence is the shared capture, identically for every
+wallet.
 
 **Wallet-specific pre-test setup** — gataca only: `setup_flow.ensure_did()` before every test, because
 the wallet resets its active DID to `did:gatc:` on each cold start.
@@ -495,14 +538,31 @@ the wallet resets its active DID to `did:gatc:` on each cold start.
 Provided by the root `conftest.py`, `base/conftest_helpers.py` and `base/android.py`:
 
 - Screenshot on failure, XML page-source dump on failure (per `reporting` config)
-- Per-test screen recording (`recordings/*.mp4`), session-wide logcat (`app.log`), per-test Appium
-  server log (`appium.log`), pytest HTML report, `test.log`
+- Per-test screen recording (`recordings/*.mp4`), pytest HTML report, and six records, each with
+  one job and no overlap:
+  - `app.log` — one block per failed test: what was tested against, where in the flow it broke,
+    and what the wallet itself said
+  - `logcat.log` — this wallet's device log, scoped to its own uid plus the system's (1000).
+    Only `Finsky` and `appium` are silenced, both because they are recorded in full elsewhere
+  - `appium.log` — the Appium server log, each entry once, under the test that produced it.
+    The dedup cursor is per worker, so a parallel `-n` run sharing **one** Appium server
+    duplicates entries; give each lane its own server (see `env.example`)
+  - `test.log` — this wallet's pytest log: the timeline of what the framework did, in order
+  - `crashes.log` — this wallet's crashes and ANRs from Android's DropBox, read *after* the
+    session, so it survives a crash that kills the session. Absent when nothing crashed
+  - `summary.json` — machine-readable outcome per test (outcome, attempts, duration, provider,
+    outcome category), so nothing has to scrape `report.html`. **Not written under xdist**: the
+    records accumulate on each worker and the controller has nothing to write, so a missing file
+    in a parallel `-n` run means "not collected", not "no tests ran"
 - Automatic retry/rerun of failed tests (except cases tagged `[no_retry]`)
 - Provider reachability precheck before each case
 - User-style app close between tests (recents "Clear all", else swipe the card away — never
   force-stop), followed by navigate-back-to-home
 - System-level handling helpers: biometric prompt (fingerprint inject or PIN), permission dialogs,
   ANR/crash overlay detection
+- Failure helpers that only touch the driver, the `FlowContext` or Android's dialogs (dead session,
+  crash/ANR look, permission dialog, probe polling): `base/flow_failures.py`. A wallet's
+  `flows/_failures.py` re-exports them and keeps only its own probes and text
 
 ---
 

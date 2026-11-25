@@ -17,7 +17,7 @@ gained on the way out, each from a hand-written loop somewhere else that already
 - **deadline extension** — from authbound's `wait_for_outcome`: a visible spinner is the wallet
   telling us it is still working, so it buys time instead of running the clock out.
 - **lost session** — from authbound and heidi: a dead UiAutomator2 session is not a wallet verdict.
-  hovi reported it as `absent`, which blames the wallet for the harness falling over.
+  hovi reported it as `absent`, which blames the wallet for the framework falling over.
 - **crash / ANR** — from paradym's and toppan's `check_for_error`.
 
 `ABSENT` and `UNROUTABLE` look identical on screen, since in both cases nothing came forward, but
@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 
 from selenium.common.exceptions import WebDriverException
 
-from base import deeplink, interstitials as _interstitials
+from base import deeplink, interstitials as _interstitials, progress
 from base.android import SystemOverlay, detect_crash_or_anr
 
 logger = logging.getLogger(__name__)
@@ -46,9 +46,10 @@ NO_MATCH = "no_match"          # showed the request, holds nothing that satisfie
 PROMPT_LOOP = "prompt_loop"    # kept re-asking for the same thing instead of progressing
 CRASHED = "crashed"            # the app died or stopped responding
 
-# Harness-decided: not a statement about the wallet at all. Kept separate so a report can exclude
+# Framework-decided: not a statement about the wallet at all. Kept separate so a report can exclude
 # it rather than publishing our own breakage as a vendor's failure.
 LOST_SESSION = "lost_session"
+SETUP = "setup"                # a precondition of ours or the device's was not met (config, DID, PIN)
 
 # Test-decided: what the wallet did with the credential.
 NOT_STORED = "not_stored"                    # accepted, but the count did not move
@@ -79,6 +80,16 @@ class FlowFailure(RuntimeError):
         self.category = category
 
 
+def fail(category: str, message: str):
+    """Fail the current test with a named outcome, for the verdicts a *test* reaches.
+
+    `pytest.fail` and a bare `assert` carry no category, so a `[not_stored]` written into their
+    text reached only the report's regex: summary.json and the app.log digest read the exception's
+    `.category` attribute and recorded those failures as uncategorised.
+    """
+    raise FlowFailure(category, message)
+
+
 def _a(noun: str) -> str:
     """"a credential offer" but "an information request" — these strings get published."""
     return "an" if noun[:1].lower() in "aeiou" else "a"
@@ -104,11 +115,18 @@ def _error_text(driver, screens) -> str:
 
 
 def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool = False,
-             interstitials=()) -> str:
+             interstitials=(), completes: str = progress.PRESENT) -> str:
     """Poll until the target screen, a fresh error, or home settles. Returns an outcome name.
 
     `target` is the page's own `on_screen(driver, timeout)` — the one screen that means this
     particular step worked. Everything else is shared.
+
+    Reaching the target completes `completes` in the progress trail — the offer or request being
+    shown, for every current caller — and each answered interstitial is recorded as a step, so a
+    failure later in the flow still says which prompts it got past. Any other screen of the
+    wallet's own (its error, its spinner, its home) completes `open`: it proves the wallet was in
+    front, and nothing more. A wait that saw none of those records nothing — answered prompts
+    included, since a permission dialog or the system's biometric sheet is not the wallet's.
 
     `error_before` says whether the wallet's error surface was already showing when the deeplink was
     fired; one that was already there says nothing about this case. Only wallets whose error surface
@@ -134,6 +152,7 @@ def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool
             # on it can be read. Answering one is progress, so it may buy the wait more time.
             acted = _interstitials.service(driver, ctx, interstitials, fired)
             if acted is not None:
+                progress.step(f"answered {acted.name} ({fired.get(acted.name, 0)})")
                 if acted.extends and extended < screens.processing_grace:
                     grant = min(acted.extends, screens.processing_grace - extended)
                     end += grant
@@ -141,14 +160,21 @@ def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool
                 continue
 
             if target(driver, _TICK):
+                progress.reached(completes, f"{screens.name} showed the screen it was waited for")
                 return SUCCESS
 
             if error_probe and not error_before and error_probe(driver, _TICK):
+                # The error is the wallet's own screen, so it was in front: `open` completed, and
+                # the cell stops at the offer or request it showed instead. Without this a wallet
+                # that answered the link with an error was drawn as never having come forward.
+                progress.reached(progress.OPEN, f"{screens.name} was in front, showing its error")
                 return REJECTED
 
             if processing_probe and processing_probe(driver, _TICK):
                 # A visible spinner is the wallet saying it is still working. Waiting is progress,
                 # up to the wallet's own budget — authbound's issuance genuinely takes minutes.
+                if not saw_processing:
+                    progress.reached(progress.OPEN, f"{screens.name} was in front, processing")
                 saw_processing = True
                 if extended < screens.processing_grace:
                     grant = min(_TICK, screens.processing_grace - extended)
@@ -159,6 +185,8 @@ def wait_for(driver, screens, ctx, *, target, timeout: float, error_before: bool
             # Home only counts once the grace period has passed, so a momentary home screen during
             # processing is not mistaken for a finished flow.
             if time.time() - start > screens.home_grace and screens.home(driver, _TICK):
+                # Its own home screen, after the grace: in front, and offering nothing.
+                progress.reached(progress.OPEN, f"{screens.name} was in front, on its home screen")
                 return DISMISSED
 
             if time.time() - last_crash_scan > _CRASH_SCAN_INTERVAL:
@@ -200,7 +228,7 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
     if state == LOST_SESSION:
         raise FlowFailure(LOST_SESSION, (
             f"[{flow}] The Appium session died while waiting for {_a(expected)} {expected} for '{what}'. "
-            f"This is a harness failure, not a verdict about {wallet} or the provider"
+            f"This is a framework failure, not a verdict about {wallet} or the provider"
         ))
 
     if state == CRASHED:
@@ -257,10 +285,9 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
         raise FlowFailure(UNROUTABLE, f"[{flow}] Could not deliver '{what}': {reason} [no_retry]")
 
     # Not unroutable, so name the scheme that *was* used: otherwise this failure reads the same
-    # whether the URL was deliverable or not.
-    scheme = urlsplit(ctx.url).scheme.lower() if ctx.url else ""
-    used = (f" The URL used the {scheme}:// scheme, which {wallet} does register, so it had the "
-            "chance to take it." if scheme else "")
+    # whether the URL was deliverable or not. "Does register" only when the dump said so — an
+    # unreadable dump also leaves `reason` empty, and must not become a claim.
+    used = _scheme_note(driver, ctx, wallet)
     stale = (" A stale error banner from an earlier test was already on screen, so the wallet may "
              "have rejected this one too." if error_before else "")
     # Say what was never looked for, rather than implying every surface was checked and clean.
@@ -273,18 +300,121 @@ def raise_for(state: str, driver, screens, ctx, *, expected: str, timeout: float
     # Only claim to have seen nothing on the surfaces actually probed. Saying "no error" about a
     # wallet whose error screen is unmapped states as fact something nobody checked.
     looked = [f"no {expected}"]
-    if screens.probe("error"):
+    if screens.probe("error") and not error_before:
         looked.append("no error")
     looked.append("no home screen")
     nothing = f"{', '.join(looked[:-1])} and {looked[-1]}"
+
+    front = _foreground(driver)
+    if ctx.app_package and front == ctx.app_package:
+        # The wallet *is* in front — on a screen none of the probes recognise, or a loader nobody
+        # mapped. "Did not come to the foreground (<its own package> was)" is what this used to
+        # say, and unime published exactly that on 2026-09-24. Not `absent`, whose meaning is that
+        # the wallet never came forward: the wait ran out with the wallet up and no verdict.
+        progress.reached(progress.OPEN, f"{wallet} was in front, on a screen not recognised")
+        raise FlowFailure(PROCESSING, (
+            f"[{flow}] {wallet} was in front when the {timeout:.0f}s wait for '{what}' ran out, "
+            f"but showed {nothing} that this framework recognises.{used}{stale}{unmapped}{enrolled}"
+        ))
+
     raise FlowFailure(ABSENT, (
         f"[{flow}] Nothing appeared for '{what}' after {timeout:.0f}s: {nothing}. "
         f"{wallet} did not come to the foreground "
-        f"({_foreground(driver)} was).{used}{stale}{unmapped}{enrolled}"
+        f"({front} was).{used}{stale}{unmapped}{enrolled}"
     ))
 
 
-def raise_if_rejected(driver, screens, ctx, *, action: str, error_before: bool = False):
+def _scheme_note(driver, ctx, wallet: str) -> str:
+    """One sentence on the URL's scheme, claiming registration only on the device's word."""
+    scheme = urlsplit(ctx.url).scheme.lower() if ctx.url else ""
+    if not scheme:
+        return ""
+    try:
+        schemes = deeplink.registered_schemes(driver, ctx.app_package) if ctx.app_package else []
+    except Exception:
+        schemes = []
+    if scheme in schemes:
+        return (f" The URL used the {scheme}:// scheme, which {wallet} does register, so it had "
+                "the chance to take it.")
+    return (f" The URL used the {scheme}:// scheme; whether {wallet} registers it could not be "
+            "read from the device.")
+
+
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _refusal_line(said: str) -> str:
+    """Android's own refusal, from a message that also carries Appium's wrapper around it.
+
+    The real shape is two lines — "Error attempting to start URI. Original error: Error: Starting:
+    Intent {…}" and then "Error: Activity not started, unable to resolve Intent {…}" — and only the
+    first line of a failure survives into summary.json and the app.log digest. So the line that
+    says what Android refused is picked out, rather than quoting the wrapper.
+    """
+    for line in said.splitlines():
+        if "unable to resolve intent" in line.lower():
+            return _one_line(line.split("Error: ", 1)[-1] if "Error: " in line else line)
+    return _one_line(said)
+
+
+def _refusal_reason(driver, ctx, wallet: str) -> str:
+    """Why Android refused, from the device's own list of schemes. Never raises."""
+    scheme = urlsplit(ctx.url).scheme.lower() if ctx.url else ""
+    try:
+        reason = deeplink.unroutable_reason(driver, ctx.app_package, ctx.url, wallet)
+    except Exception as e:  # a diagnosis must never replace the failure it explains
+        logger.warning(f"[{ctx.flow}] Could not read registered schemes: {e}")
+        reason = ""
+    if reason:
+        return reason
+    try:
+        schemes = deeplink.registered_schemes(driver, ctx.app_package)
+    except Exception:
+        schemes = []
+    if scheme and scheme in schemes:
+        # Registered, and still refused: the intent filter's host or path does not take this URL,
+        # or the app is disabled. "Had the chance to take it" would contradict the verdict.
+        return (f"{wallet} registers the {scheme}:// scheme, but none of its intent filters "
+                "accepts this URL (host or path), or the app is disabled")
+    if scheme:
+        return f"whether {wallet} registers the {scheme}:// scheme could not be read from the device"
+    return "the URL has no scheme"
+
+
+def raise_refused(driver, screens, ctx, exc, *, expected: str):
+    """Android would not fire the deeplink at all. Say what it said, and never that we waited.
+
+    Every flow fires with the wallet's package named, so Android either resolves an activity inside
+    that app or refuses outright with "unable to resolve Intent" — itself the device's evidence
+    that this URL cannot reach this wallet, so the case is `unroutable` on that alone. appium-adb's
+    `startUri` checks for exactly that phrase. These refusals used to go through
+    `raise_for(ABSENT)`, which described a 30-second wait that never happened.
+
+    One line, explanation first: only a failure's first line reaches summary.json and the digest,
+    and the report cuts its tooltip at 200 characters. Android's words are not double-quoted,
+    because the digest reads the first double-quoted span as what the *wallet* said.
+
+    Any other error here — adb offline, a timeout, a permission denial — is recorded as ours, not
+    as a verdict about the wallet.
+    """
+    said = (getattr(exc, "msg", None) or str(exc) or type(exc).__name__).strip()
+    wallet, flow, what = screens.name, ctx.flow, ctx.what
+    if "unable to resolve intent" not in said.lower():
+        raise FlowFailure(LOST_SESSION, (
+            f"[{flow}] Firing the deeplink for '{what}' failed without Android resolving it "
+            f"({_one_line(said)[:160]}). Recorded as a framework failure, not a verdict about "
+            f"{wallet} or the provider"
+        )) from exc
+
+    raise FlowFailure(UNROUTABLE, (
+        f"[{flow}] Could not deliver '{what}': {_refusal_reason(driver, ctx, wallet)}. Android "
+        f"refused to hand the {expected} link to {wallet}: {_refusal_line(said)} [no_retry]"
+    )) from exc
+
+
+def raise_if_rejected(driver, screens, ctx, *, action: str, error_before: bool = False,
+                      settled: bool = False):
     """Fail with `rejected` if the wallet's error surface appeared after an action succeeded.
 
     Reaching the next screen is not the same as the wallet being happy. authbound_issuer and
@@ -293,9 +423,24 @@ def raise_if_rejected(driver, screens, ctx, *, action: str, error_before: bool =
 
     Skipped when the surface was already showing, since then its presence proves nothing, and a
     no-op for a wallet with no mapped error screen.
+
+    `settled` says the caller already waited for the wallet to leave the screen it acted on — hovi
+    waits for home. Only then does a clean probe complete `accept` in the progress trail. Probed
+    straight after the tap, two seconds without an error is weak evidence: a wallet whose error
+    arrives at three seconds would be recorded as having accepted. That case is a step, and a later
+    stage (the count moving) carries the flow forward instead.
     """
     error_probe = screens.probe("error")
-    if error_before or not error_probe or not error_probe(driver, 2):
+    if error_before or not error_probe:
+        # The step happened, but nothing could tell whether the wallet then objected, so it is
+        # recorded without claiming the stage — the trail stays earlier than the truth, not later.
+        progress.step(f"{screens.name} {action} '{ctx.what}' (error surface not checkable)")
+        return
+    if not error_probe(driver, 2):
+        if settled:
+            progress.reached(progress.ACCEPT, f"{screens.name} {action} '{ctx.what}' with no error")
+        else:
+            progress.step(f"{screens.name} {action} '{ctx.what}', no error within 2s")
         return
     said = _error_text(driver, screens)
     quoted = f": \"{said}\"" if said else ""

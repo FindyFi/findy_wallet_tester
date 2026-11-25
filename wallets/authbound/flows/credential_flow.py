@@ -3,17 +3,21 @@ import time as _time
 
 from selenium.common.exceptions import WebDriverException
 
+from base import deeplink, outcome, progress
 from base.android import (
     authenticate_with_pin,
     dismiss_biometric_enrollment,
     handle_biometric_if_present,
     in_biometric_enrollment,
 )
+from base.flow_context import FlowContext
+from base.flow_failures import lost_session
+from base.outcome import FlowFailure
 from base.utils import wait_present
 from providers.base import DeeplinkProvider
 from wallets.authbound.pages.home_page import SCREEN_ID as _home_id
 from wallets.authbound.pages.pin_page import PinPage, HEADING as _pin_heading
-from wallets.authbound.pages.error_page import ErrorPage, SCREEN_ID as _error_id
+from wallets.authbound.pages.error_page import ErrorPage, SCREEN_ID as _error_id, quoted
 from wallets.authbound.pages.document_success_page import (
     DocumentSuccessPage,
     wait_for_outcome,
@@ -22,9 +26,24 @@ from wallets.authbound.pages.credential_offer_page import (
     CredentialOfferPage,
     SCREEN_ID as _offer_id,
 )
+from wallets.authbound.screens import SCREENS
 
 logger = logging.getLogger(__name__)
 
+
+def _authenticated_since(tap: str) -> bool:
+    """Whether the trail recorded an authentication prompt answered after the step `tap` — by this
+    flow or by `wait_for_outcome`. Messages used to say "after authentication" unconditionally; on
+    2026-09-25 authbound rejected every offer ~16 s after Add with no prompt at all.
+
+    What the trail does not record, this does not claim: the negative wording is "no authentication
+    recorded", not "none happened".
+    """
+    return any(step.startswith("answered ") for step in progress.steps_after(tap))
+
+
+# The step recorded when Add is tapped; authentication is only claimed if answered after it.
+_TAPPED_STEP = "tapped Add"
 
 _ENROLLMENT_REQUIRED = (
     "[credential_flow] Cannot complete issuance of '{what}': Android opened its fingerprint "
@@ -50,10 +69,12 @@ def _wait_for_result(driver, pin: str, page_args: dict, timeout: float) -> str:
         try:
             if handle_biometric_if_present(driver):
                 logger.info("[credential_flow] Biometric prompt — fingerprint injected")
+                progress.step("answered the biometric prompt")
                 continue
             if wait_present(driver, _pin_heading, timeout=1):
                 logger.info("[credential_flow] Passcode screen — entering PIN")
                 PinPage(driver, **page_args).enter_pin(pin)
+                progress.step("entered the wallet passcode")
                 continue
             if wait_present(driver, _error_id, timeout=1):
                 return "error"
@@ -62,10 +83,8 @@ def _wait_for_result(driver, pin: str, page_args: dict, timeout: float) -> str:
             if wait_present(driver, _home_id, timeout=1):
                 return "home"
         except WebDriverException as exc:
-            raise RuntimeError(
-                f"[credential_flow] Appium/UiAutomator2 connection lost mid-wait "
-                f"(app may have crashed): {exc.msg}"
-            ) from exc
+            # Ours, not the wallet's: a dead UiAutomator2 session is kept off the vendor's record.
+            raise lost_session("credential_flow", "mid-wait", exc.msg) from exc
     return "timeout"
 
 
@@ -92,20 +111,24 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     gate before any consent screen, and that reaching the enrollment wizard necessarily meant
     the issuance had failed.
     """
-    url = provider.get(credential_name)
+    ctx = FlowContext(
+        flow="credential_flow", wallet=SCREENS.name, what=credential_name,
+        app_package=app_package, pin=pin,
+        device_pin=page_args.get("device_pin", ""), page_args=page_args,
+    )
+    ctx.url = provider.get(credential_name)
+    timeouts = page_args.get("timeouts", {})
+    t = timeouts.get("credential_offer", timeouts.get("default", 30))
 
     logger.info(f"[credential_flow] Opening deeplink for '{credential_name}'")
     try:
-        driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
+        deeplink.fire(driver, ctx.url, app_package)
     except WebDriverException as exc:
-        raise RuntimeError(
-            f"[credential_flow] Could not open deeplink for '{credential_name}' — "
-            f"URL not routable to {app_package} ({url[:60]}…): {exc.msg}"
-        ) from exc
+        # Android refused to route it into the app. The shared diagnosis asks the device which
+        # schemes authbound registers, so `unroutable` is only claimed with that evidence.
+        logger.info(f"[credential_flow] Android would not route the deeplink: {exc.msg}")
+        outcome.raise_refused(driver, SCREENS, ctx, exc, expected="credential offer")
     _time.sleep(3)
-
-    timeouts = page_args.get("timeouts", {})
-    t = timeouts.get("credential_offer", timeouts.get("default", 30))
 
     result = _wait_for_result(driver, pin, page_args, timeout=t)
     logger.info(f"[credential_flow] Result (waited up to {t}s): {result}")
@@ -113,15 +136,19 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
     if result == "error":
         error_text = ErrorPage(driver, **page_args).get_error_text()
         logger.error(f"[credential_flow] Error screen: {error_text}")
+        progress.reached(progress.OPEN, "authbound was in front, showing its error screen")
         # Leave the error screen up so teardown's failure-artifact capture dumps it;
         # init_flow navigates home afterwards.
-        raise RuntimeError(
-            f"[credential_flow] Credential issuance failed for '{credential_name}': {error_text}"
-        )
+        raise FlowFailure(outcome.REJECTED, (
+            f"[credential_flow] Credential issuance failed for '{credential_name}'"
+            f"{quoted(error_text)}"
+        ))
 
     if result == "offer":
         logger.info("[credential_flow] Credential offer screen — accepting")
+        progress.reached(progress.PRESENT, "authbound showed the credential offer")
         CredentialOfferPage(driver, **page_args).accept()
+        progress.step(_TAPPED_STEP)
 
         # "Add" delegates to Android for authentication. This arrives in one of two shapes —
         # the SystemUI biometric sheet (with a "Use PIN" fallback) or Settings'
@@ -133,8 +160,10 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         try:
             if authenticate_with_pin(driver, device_pin, detect_timeout=10):
                 logger.info("[credential_flow] Device authentication completed with PIN")
+                progress.step("answered device authentication with the PIN")
             elif handle_biometric_if_present(driver):
                 logger.info("[credential_flow] Biometric prompt — fingerprint injected")
+                progress.step("answered the biometric prompt")
         except Exception as exc:
             # The PIN is usually accepted and Android *then* pushes its enrollment offer, which
             # makes authenticate_with_pin's "auth UI never closed" wait fail. That says nothing
@@ -142,6 +171,8 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
             if not in_biometric_enrollment(driver):
                 raise
             saw_enrollment = True
+            progress.step("answered device authentication with the PIN; Android then offered "
+                          "fingerprint enrollment")
             logger.warning(
                 "[credential_flow] PIN accepted, then Android offered fingerprint enrollment"
             )
@@ -154,35 +185,43 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
         # The wallet either stores the document or lands on its generic error screen; waiting
         # only for success would report an issuer-side failure as a missing success screen.
-        outcome = wait_for_outcome(driver, _error_id, timeout=t, device_pin=device_pin)
+        result_after = wait_for_outcome(driver, _error_id, timeout=t, device_pin=device_pin)
 
-        if outcome == "error":
+        if result_after == "error":
             error_text = ErrorPage(driver, **page_args).get_error_text()
-            raise RuntimeError(
-                f"[credential_flow] Credential issuance failed for '{credential_name}' after "
-                f"authentication: {error_text}"
-            )
+            how = ("after Add and device authentication" if _authenticated_since(_TAPPED_STEP)
+                   else "after Add, with no authentication recorded after it")
+            raise FlowFailure(outcome.REJECTED, (
+                f"[credential_flow] Credential issuance failed for '{credential_name}' {how}"
+                f"{quoted(error_text)}"
+            ))
 
-        if outcome == "prompt_loop":
-            raise RuntimeError(
+        if result_after == "prompt_loop":
+            raise FlowFailure(outcome.PROMPT_LOOP, (
                 f"[credential_flow] '{credential_name}' could not be stored: the wallet kept "
                 "re-requesting device authentication — every PIN was accepted and a fresh prompt "
                 "appeared immediately, with no success or error screen. This is what a signing "
                 "key that requires BIOMETRIC_STRONG looks like: the device-credential PIN "
                 "satisfies Android's prompt but does not unlock the key, so a real fingerprint "
                 "touch on the sensor may be the only thing that completes it [no_retry]"
-            )
+            ))
 
-        if outcome != "success":
+        if result_after != "success":
             # No success and no error. If Android hijacked the flow with its enrollment offer,
-            # that is the likeliest reason and it needs a human; otherwise report it plainly.
+            # that is the likeliest reason and it needs a human — a precondition of the device,
+            # not a verdict on the wallet. Otherwise the wait ran out with no verdict either way.
             if saw_enrollment:
-                raise RuntimeError(_ENROLLMENT_REQUIRED.format(what=credential_name))
-            raise RuntimeError(
-                f"[credential_flow] '{credential_name}' was accepted and authenticated, but "
-                f"neither the success nor the error screen appeared within {t}s"
-            )
+                raise FlowFailure(outcome.SETUP, _ENROLLMENT_REQUIRED.format(what=credential_name))
+            # `processing`, not `rejected`: the prose reading of this sentence filed it as a
+            # rejection because it contains the words "error screen".
+            how = ("accepted and authenticated" if _authenticated_since(_TAPPED_STEP)
+                   else "accepted, with no authentication recorded after Add,")
+            raise FlowFailure(outcome.PROCESSING, (
+                f"[credential_flow] '{credential_name}' was {how} but neither the success nor the "
+                f"error screen appeared within {t}s"
+            ))
 
+        progress.reached(progress.ACCEPT, "authbound showed its success screen")
         success = DocumentSuccessPage(driver, **page_args)
         added = success.added_document_names()
         logger.info(
@@ -194,12 +233,12 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         return
 
     if result == "home":
-        raise RuntimeError(
+        progress.reached(progress.OPEN, "authbound was in front, on its dashboard")
+        raise FlowFailure(outcome.DISMISSED, (
             f"[credential_flow] App returned to home without showing an offer screen for "
             f"'{credential_name}' — the deeplink was not processed or the issuer rejected silently"
-        )
+        ))
 
-    raise RuntimeError(
-        f"[credential_flow] No recognisable screen appeared after deeplink "
-        f"for '{credential_name}' (timed out after {t}s)"
-    )
+    # Nothing recognisable: the shared diagnosis checks the device's registered schemes before
+    # blaming the wallet, and says which of authbound's surfaces it looked for.
+    outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="credential offer", timeout=t)

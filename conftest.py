@@ -2,6 +2,8 @@ import base64
 import json
 import logging
 import os
+import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -19,14 +21,18 @@ from selenium.webdriver.support.ui import WebDriverWait
 from base.android import (handle_biometric_if_present, handle_permission_if_present,
                           unlock_if_locked)
 from base.base_test import BaseTest, UpdateNotFinished
+from base import progress
 from base.conftest_helpers import (
+    archive_previous_attempt,
     capture_appium_logs,
     node_failed,
+    note_attempt_file,
     save_failure_artifacts,
     screen_is_protected,
 )
 from base.utils import (list_wallets, TIMESTAMP_FORMAT, get_app_info, check_provider_reachable,
                         sanitize_test_name, device_locale)
+from base.video import shrink_run_recordings
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +134,12 @@ def pytest_configure(config):
         "markers",
         "skip_home_setup: skip the automatic home-screen setup for this test",
     )
+
+    # When this wallet's session began, in ms since epoch — the floor for `capture_appium_logs`.
+    # The Appium server is started by hand and outlives the suite, so without a floor the first
+    # test of a run inherits whatever is still in the server's buffer from previous runs.
+    config._session_started_at = int(time.time() * 1000)
+
     if hasattr(config, "workerinput"):
         # xdist worker: reuse the directory created by the controller
         run_dir = Path(os.environ[_ENV_RUN_DIR])
@@ -172,23 +184,20 @@ def pytest_configure(config):
             config.option.htmlpath = str(run_dir / "report.html")
             config.option.self_contained_html = True
 
-        # App log — capture logcat for the duration of the session
-        try:
-            subprocess.run(["adb", "logcat", "-c"], capture_output=True, timeout=5)
-            app_log = open(run_dir / "app.log", "w")  # Kept open for the whole session; closed in pytest_sessionfinish
-            try:
-                logcat_proc = subprocess.Popen(
-                    ["adb", "logcat", "-v", "time"],
-                    stdout=app_log,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                app_log.close()
-                raise
-            config._logcat_proc = logcat_proc
-            config._logcat_file = app_log
-        except Exception as e:
-            logger.warning(f"[conftest] Could not start logcat capture: {e}")
+        # Device log — capture logcat for the duration of this wallet's session.
+        #
+        # This used to be written to `app.log`. It is not the app's log: it is the whole device's,
+        # and `app.log` now holds the run's error-screen digest (one block per failed test, see
+        # `record_error_screen`). Two different things were sharing one name, and the name
+        # described neither.
+        #
+        # Not while merely collecting: `--collect-only` runs no test, but it used to clear and
+        # stream the device's log and read its crash store — on a device someone else may be
+        # testing on. It also ended the session in the same second, so the empty-capture guard
+        # fired every time, and an alarm that means "your device log is broken" was raised by a
+        # command that never intended to touch a device.
+        if not getattr(config.option, "collectonly", False):
+            start_logcat(config, run_dir)
 
     config._run_dir = run_dir
 
@@ -198,7 +207,26 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
     config = session.config
     if hasattr(config, "workerinput"):
         return  # xdist workers don't own the logcat process
+
+    # The stale-capture sweep, reported here because it ran where INFO is dropped (see
+    # `_kill_stale_logcats`). Before the capture's own checks, and independent of them: the sweep
+    # happened even when the capture it made room for then failed to start.
+    try:
+        serial, stopped = getattr(config, "_swept_logcats", ("", []))
+        if stopped:
+            logger.info(
+                f"[logcat] Stopped {len(stopped)} stale capture(s) on {serial} left by earlier "
+                f"sessions (pid {', '.join(str(p) for p in stopped)})"
+            )
+    except Exception as e:
+        # Guarded because everything below — stopping this session's own adb, detaching the file
+        # log — must still happen; skipping it leaks exactly what the sweep exists to clean up.
+        logger.warning(f"[logcat] Could not report the stale-capture sweep: {e}")
+
     logcat_proc = getattr(config, "_logcat_proc", None)
+    # Captured **before** terminating: a healthy capture is still running at this point, so an
+    # already-exited process means adb gave up during the session.
+    died_early = logcat_proc is not None and logcat_proc.poll() is not None
     if logcat_proc is not None:
         logcat_proc.terminate()
         try:
@@ -208,6 +236,78 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
     logcat_file = getattr(config, "_logcat_file", None)
     if logcat_file is not None:
         logcat_file.close()
+        # Say so when the capture produced nothing. An empty logcat.log is indistinguishable from
+        # a quiet device unless something checks, and that is exactly how a capture that had been
+        # dead since at least 2026-06-01 went unnoticed: adb failed, the failure went to DEVNULL,
+        # and a 0-byte file sat in every run directory looking like a log.
+        try:
+            path = Path(logcat_file.name)
+            size = path.stat().st_size
+            # `stderr` now goes **into** the file rather than to DEVNULL, which is what makes an
+            # adb refusal visible at all — but it also means a failed capture is no longer empty.
+            # "adb: error: more than one device/emulator" is ~60 bytes, so a size check alone would
+            # call that a success and print a reassuring "0 KB captured". Judge it by whether adb
+            # was still running and by what the file actually starts with.
+            first = ""
+            try:
+                with path.open(encoding="utf-8", errors="replace") as f:
+                    first = f.readline().strip()
+            except Exception:
+                pass
+            # `startswith` only: a real logcat line can carry "error:" early — a short tag puts
+            # it around column 30 in "09-11 10:00:00 E/X( 123): error: ..." — and `died_early`
+            # already catches a refusal that produced no recognisable first line.
+            refused = first.startswith(("error:", "adb:"))
+            if size == 0 or died_early or refused:
+                detail = (f" adb said: {first[:120]}" if first and refused else
+                          " The adb process exited before the session ended." if died_early else
+                          " Check that the configured device is attached (`adb devices`).")
+                logger.warning(
+                    f"[logcat] {path.name} did not capture the device log for this session "
+                    f"({size} bytes).{detail}"
+                )
+            else:
+                scope = getattr(config, "_logcat_scope", "scope unknown")
+                logger.info(f"[logcat] {path.name}: {size // 1024} KB captured from {scope}")
+        except Exception as e:
+            logger.warning(f"[logcat] Could not check the captured device log: {e}")
+
+    # Android's own crash/ANR store, read after the fact. Last, so it also catches anything the
+    # teardown above provoked.
+    target = getattr(config, "_dropbox_target", None)
+    if target is not None:
+        capture_dropbox(config._run_dir, *target)
+
+    write_summary(config)
+
+    # Say how many failures the digest recorded, for the same reason: "app.log is absent" has to
+    # mean "no test failed" and not "the collector is broken again", and the only way to tell them
+    # apart from the outside is for the run to have said so in test.log.
+    run_dir = getattr(config, "_run_dir", None)
+    if run_dir is not None:
+        try:
+            digest = run_dir / "app.log"
+            if digest.exists():
+                lines = digest.read_text(encoding="utf-8").splitlines()
+                headers = [l for l in lines if l.startswith("--- TEST: ")]
+                tests = len(set(headers))
+                # Blocks are per *attempt*, so counting them alone would disagree with
+                # summary.json, which reports one outcome per test however many tries it took.
+                extra = f" across {tests} test(s)" if len(headers) != tests else ""
+                logger.info(f"[conftest] app.log: {len(headers)} failure block(s){extra}")
+            else:
+                logger.info("[conftest] app.log: no failures to record this session")
+        except Exception as e:
+            logger.warning(f"[conftest] Could not summarise app.log: {e}")
+
+    # Shrink the wallet's recordings once the reruns are over (no rename race with
+    # archive_previous_attempt). Skipped on Ctrl-C, and when the app fixture never stashed the
+    # flag. Own guard: a failure here must not stop the handler detach below.
+    if run_dir is not None and exitstatus != pytest.ExitCode.INTERRUPTED:
+        try:
+            shrink_run_recordings(run_dir, getattr(config, "_shrink_recordings", False))
+        except Exception as e:
+            logger.warning(f"[recording] Could not shrink recordings: {e}")
 
     # Detach this wallet's file log, so the next pytest.main() in the same process starts with
     # only its own handler. Last, so anything logged above still reaches the file.
@@ -216,6 +316,347 @@ def pytest_sessionfinish(session, exitstatus):  # exitstatus required by pytest 
         logging.getLogger().removeHandler(log_handler)
         log_handler.close()
         config._log_handler = None
+
+
+# The Android `system` uid, always 1000. system_server logs ActivityManager / ActivityTaskManager /
+# WindowManager, which is where a wallet's process being started, killed, crashing or going
+# unresponsive is visible at all — hovi's crash loop was 537 restarts, each an ActivityManager
+# line pair at `I` level.
+_SYSTEM_UID = "1000"
+
+# The only two tags removed from the device log, both because the same information is already
+# recorded in full elsewhere — never because it looked uninteresting:
+#
+#   Finsky   Play Store install machinery. We drive those installs deliberately and `test.log`
+#            narrates them step by step ("Play Store state: ready_to_install" -> "installed").
+#   appium   the UiAutomator2 server's own device-side chatter, which is `appium.log`'s entire
+#            subject and is kept there at full fidelity.
+#
+# Measured over the 2026-09-10 survey: 56% smaller, and not one line about any wallet lost. The
+# list is deliberately short — a denylist that grows on "this looks like noise" is how evidence
+# disappears, and the whole point of filtering by uid rather than by priority was that nothing
+# should be dropped for looking unimportant. `*:V` after these keeps everything else.
+_SILENCED_TAGS = ["Finsky:S", "appium:S"]
+
+# Buffers are left at adb's default (main, system, crash), verified to carry the whole of hovi's
+# crash: 565 FATAL EXCEPTION and 564 JavascriptException lines in the archived capture, taken with
+# this same command.
+
+
+def _app_uid(serial: str, package: str) -> str:
+    """The Android uid of `package` on `serial`, or "" if it cannot be read.
+
+    The uid, not the pid: this suite restarts the app under test constantly (terminate/activate
+    between tests, `mobile: clearApp` on a reset), and a pid filter would go stale on the first
+    restart while a uid is stable for the life of the install.
+    """
+    try:
+        listing = subprocess.run(
+            ["adb", "-s", serial, "shell", "pm", "list", "packages", "-U", package],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+    except Exception as e:
+        logger.warning(f"[logcat] Could not read the uid of {package}: {e}")
+        return ""
+    # "package:droidwallet.hovi.id uid:10351" — and `pm list packages` matches on substring, so a
+    # package whose name contains another's (toppan ships both walletapp and superapp) can return
+    # several lines. Take the exact one.
+    for line in listing.splitlines():
+        if line.startswith(f"package:{package} uid:"):
+            return line.split("uid:", 1)[1].strip()
+    return ""
+
+
+def _logcat_command(serial: str, package: str) -> list:
+    """The logcat argv for this wallet: its own process plus the system's view of it.
+
+    "Filtered so there is only relevant info" is a statement about *whose* lines are relevant, not
+    about how important each line is, and getting that the wrong way round loses evidence. A
+    priority floor (`*:W`) was the first attempt and would have been wrong: unime's verification
+    reds were proved from its own `identity_wallet::` logs, of which ~1500 are at D/I; authbound's
+    issuance results are read from 2479 `D/EUDI Wallet PROD-RELEASE` lines carrying its HTTP
+    traffic; 15 of the 21 `issueDocumentsFromOffer failure` lines are at D. A floor would have
+    dropped all of it and kept a file that looked fine.
+
+    A tag allowlist is the same trap by another route — the fleet spans React Native, Flutter and
+    native apps, so it would have to name every wallet's own tag and would silently lose the logs
+    of any wallet nobody remembered to add.
+
+    Filtering by uid instead keeps **every priority** of the wallet's own output and of
+    system_server's, and drops only other processes: measured on ZT322L348J, 13,031 device-wide
+    lines become 6,424, and what goes is a MediaTek USB HAL, `r_submix`, `BufferPoolAccessor2.0`,
+    `artd`, `libPowerHal` and the like — nothing about any wallet. Nothing can be lost here by
+    omission, only by an explicit, reviewable decision to exclude a uid.
+
+    Falls back to an unfiltered capture when the uid is unknown (the app is not installed yet on
+    the very first run, before `test_install`): too much log is recoverable, too little is not.
+    """
+    base = ["adb", "-s", serial, "logcat", "-v", "time"]
+    uid = _app_uid(serial, package) if package else ""
+    if not uid:
+        # Device-wide, because the app is not installed yet and has no uid to scope to. Only
+        # `appium` is dropped here, never `Finsky`: this is the *install* window, so the Play
+        # Store's own logs are the evidence for why an install failed, which is exactly the
+        # question this window raises. Appium's chatter is redundant with appium.log in any
+        # window, so it can go regardless of scope.
+        return [*base, "appium:S", "*:V"]
+    # `*:V` keeps the default at verbose, so the silenced tags below are the *only* thing removed
+    # and anything new is kept. Verified on-device that a tag filterspec composes with `--uid`.
+    return [*base, f"--uid={uid},{_SYSTEM_UID}", *_SILENCED_TAGS, "*:V"]
+
+
+def _logcat_scope(argv: list) -> str:
+    """A one-line description of what the capture was actually scoped to.
+
+    Reported at session end rather than logged where the decision is made: `start_logcat` runs
+    inside `pytest_configure`, before pytest's logging plugin lowers the root level, so an INFO
+    record there is dropped and never reaches `test.log`. That left the scoping decision invisible
+    in the artifacts — and whether a device log holds one app or the whole device changes how every
+    line in it should be read, so it must not be something a reader has to infer.
+    """
+    uid = next((a for a in argv if a.startswith("--uid=")), "")
+    if not uid:
+        return ("the whole device — the app was not installed when the capture started, so its "
+                "uid was unknown")
+    silenced = ", ".join(a[:-2] for a in argv if a.endswith(":S"))
+    scope = f"uid {uid[len('--uid='):]} (app + system)"
+    return f"{scope}, minus {silenced}" if silenced else scope
+
+
+def _logcat_target(app_name: str):
+    """`(serial, package)` for this wallet's device log — `("", "")` if it cannot be determined.
+
+    Resolved from the wallet's own merged config, so a wallet that overrides the device (heidi runs
+    on the emulator via `HEIDI_DEVICE_NAME`) is captured from *its* device. The previous capture
+    passed no serial at all: with more than one device attached adb refuses outright, which is why
+    seven of eight wallets produced a 0-byte log — and on the one occasion the refusal did not
+    happen, heidi's session captured the phone while heidi was testing on the emulator, its 374 KB
+    the only non-empty one in the run and every byte of it from the wrong device.
+
+    A log filed under the wrong device is worse than no log, so `("", "")` — capture nothing — is
+    the honest answer whenever the device is not known for certain.
+    """
+    try:
+        config = load_config(app_name)
+    except Exception as e:
+        logger.warning(f"[logcat] Could not read {app_name}'s config to find its device: {e}")
+        return "", ""
+    android = config.get("android", {})
+    if android.get("devices"):
+        # A parallel multi-device run: one capture cannot represent several devices, and picking
+        # devices[0] would publish one device's log as if it were all of them.
+        logger.warning("[logcat] Multiple devices configured — no device log for this session")
+        return "", ""
+    serial = android.get("udid") or android.get("device_name") or ""
+    return serial, config.get("application", {}).get("package", "")
+
+
+# A DropBox entry opens with "2026-09-09 14:26:05 data_app_crash (text, 10412 bytes)".
+# Tags are not all lowercase: emulator-5560 carries SYSTEM_BOOT and SYSTEM_FSCK, and
+# native crashes are SYSTEM_TOMBSTONE. A header that fails to match is not merely skipped —
+# it is appended to whatever entry is currently being accumulated, so an unmatched tag can
+# smuggle another app's text into a block attributed to this wallet.
+_DROPBOX_ENTRY = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([A-Za-z0-9_]+) \(")
+_DEVICE_CLOCK = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+
+
+def _device_now(serial: str) -> str:
+    """The device's own wall clock, as DropBox stamps its entries. "" if it cannot be read.
+
+    Taken from the device rather than this machine because DropBox timestamps are device-local and
+    the phone need not share the host's timezone — comparing across clock domains would silently
+    select the wrong entries, which is worse than selecting none.
+    """
+    try:
+        # One quoted shell word. `adb shell` re-splits its arguments on the device, so passing the
+        # format as its own argv entry delivers `date +%Y-%m-%d` and silently loses the time —
+        # which turns the session floor into a whole-day floor and sweeps in unrelated crashes.
+        out = subprocess.run(["adb", "-s", serial, "shell", "date '+%Y-%m-%d %H:%M:%S'"],
+                             capture_output=True, text=True, timeout=15)
+        stamp = out.stdout.strip()
+        if not _DEVICE_CLOCK.match(stamp):
+            logger.warning(f"[dropbox] Unexpected device clock format {stamp!r} — "
+                           "skipping the crash store rather than guessing its time window")
+            return ""
+        return stamp
+    except Exception as e:
+        logger.warning(f"[dropbox] Could not read the device clock: {e}")
+        return ""
+
+
+def capture_dropbox(run_dir, serial: str, package: str, since: str) -> None:
+    """Write this wallet's crashes and ANRs from Android's DropBox to crashes.log. Never raises.
+
+    DropBox is the one evidence source here that does not depend on us watching. `logcat.log`,
+    `appium.log` and the screenshots are all captured live, so a crash that kills the session takes
+    its own evidence with it; DropBox is written by the system and read afterwards, so it survives.
+    It is also structured — each entry carries the process, uid, package **version** and the build
+    fingerprint alongside the stack — which a logcat line does not.
+
+    This is exactly what the 2026-09-09 hovi investigation needed and did not have: the phone's
+    DropBox still holds six `droidwallet.hovi.id` entries whose stacks name
+    `CredentialCard (address at index.android.bundle:...)`. One `dumpsys` would have answered it,
+    instead of a 241 MB logcat archive and a live device session.
+
+    ANRs come along for free: DropBox tags them `data_app_anr`. `/data/anr/` itself is listable but
+    **not readable** without root (`cat` gives Permission denied), so this is the only route to
+    them on an ordinary device.
+
+    Filtering is client-side and by whole entry: `dumpsys dropbox --print <timestamp>` selects
+    entries *at* that timestamp, not since it, so the argument is no use as a lower bound. That
+    means the whole store is read into memory once per session — every entry the device holds,
+    decoded as text. It is bounded by Android's own DropBox quota (1000 entries by default, and
+    the phone's 82 came to ~1 MB), so it is a read, not a stream; if a device ever holds enough to
+    matter, page it by `--file` instead.
+    """
+    if not serial or not package:
+        return
+    if not since:
+        # Without a floor every historical entry would be captured and read as this session's.
+        # The phone holds 80 hovi crashes going back days; filing those under one run would
+        # manufacture a finding. No file is the honest outcome.
+        logger.warning("[dropbox] Session start time unknown — not capturing the crash store")
+        return
+    try:
+        out = subprocess.run(["adb", "-s", serial, "shell", "dumpsys", "dropbox", "--print"],
+                             capture_output=True, text=True, timeout=120)
+        if out.returncode != 0:
+            logger.warning(f"[dropbox] dumpsys failed: {out.stderr.strip()[:200]}")
+            return
+
+        # Split into whole entries, keeping only those stamped at or after this session began.
+        # Lexicographic comparison is exact for "YYYY-MM-DD HH:MM:SS".
+        entries, current, keep = [], [], False
+        for line in out.stdout.splitlines():
+            match = _DROPBOX_ENTRY.match(line)
+            if match:
+                if keep:
+                    entries.append("\n".join(current))
+                current, keep = [line], bool(since) and match.group(1) >= since
+            elif current:
+                current.append(line)
+        if keep:
+            entries.append("\n".join(current))
+
+        # Only this wallet's entries, matched on the fields that name the crashing process rather
+        # than by substring: the device is shared, and another app's crash filed under this wallet
+        # would be read as a finding about it. `_app_uid` takes the same care for the same reason
+        # (toppan ships both `walletapp` and `superapp`), and a substring test here would reopen
+        # exactly that trap the day two wallet packages share a prefix.
+        # `Process:`/`Package:` cover data_app_crash and data_app_anr. A **tombstone** (native
+        # crash — tag SYSTEM_TOMBSTONE, and the same text inside data_app_native_crash) carries
+        # neither: it names the process as `Cmdline: <pkg>` and `>>> <pkg> <<<`. Anchoring on only
+        # the first two recognised those entries and then dropped them, which lost native crashes
+        # that the earlier substring test had kept. `>>> pkg <<<` is delimited on both sides, so
+        # adding it keeps the prefix-collision property the anchoring exists for.
+        pkg = re.escape(package)
+        owner = re.compile(rf"^(?:Process|Package|Cmdline): {pkg}(?:\s|$)|>>> {pkg} <<<", re.M)
+        mine = [e for e in entries if owner.search(e)]
+        if not mine:
+            logger.info("[dropbox] No crashes or ANRs recorded for this session")
+            return
+        (run_dir / "crashes.log").write_text("\n\n".join(mine) + "\n", encoding="utf-8")
+        tags = ", ".join(sorted({_DROPBOX_ENTRY.match(e).group(2)
+                                 for e in mine if _DROPBOX_ENTRY.match(e)}))
+        logger.warning(f"[dropbox] crashes.log: {len(mine)} entry(ies) for {package} ({tags})")
+    except Exception as e:
+        logger.warning(f"[dropbox] Could not capture the crash store: {e}")
+
+
+def _stale_logcats(serial: str) -> list:
+    """PIDs of `adb -s <serial> logcat` processes that are still running.
+
+    Matched on the parsed argv, not on a substring of the command line: the adb *server*
+    (`adb -L tcp:5037 fork-server server`) sits in the same listing and killing it would take
+    every device on the machine offline, including ones this session has no business touching.
+    So the test is narrow on purpose — argv[0] is adb, `logcat` is one of its arguments, and
+    `-s` is followed by exactly this serial. A capture with no `-s` at all is left alone: it
+    cannot be attributed to a device, and this session's device is the only one it may act on.
+    """
+    try:
+        listing = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True,
+                                 timeout=10).stdout or ""
+    except Exception as e:
+        logger.warning(f"[logcat] Could not list processes to look for stale captures: {e}")
+        return []
+    pids = []
+    for line in listing.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        argv = command.split()
+        if not pid.isdigit() or not argv or os.path.basename(argv[0]) != "adb":
+            continue
+        if "logcat" not in argv[1:]:
+            continue
+        if any(a == "-s" and nxt == serial for a, nxt in zip(argv, argv[1:])):
+            pids.append(int(pid))
+    return pids
+
+
+def _kill_stale_logcats(serial: str) -> list:
+    """Stop any `adb logcat` left streaming to this device from an earlier session.
+
+    `pytest_sessionfinish` is the only thing that stops the capture, and it does not run on
+    Ctrl-C — so every interrupted run leaks an adb that goes on appending to a finished run's
+    `logcat.log` for as long as the machine stays up. Four were alive on 2026-09-21, the oldest
+    for eleven days; one had written 12.7 MB into a report from a run interrupted 2d19h earlier,
+    against the 0.5-1.4 MB a whole run normally produces. Every byte past the interrupt is
+    device activity from other people's work, filed under this run's wallet.
+
+    Sweeping here rather than in an `atexit`/signal handler is what makes it self-healing: a
+    handler can only clean up after the run that installed it, and cannot recover a process that
+    already leaked. This recovers them, including the two on the pre-branch command form.
+
+    Only this session's device. The fleet is shared and another run may be live on another
+    device. Two sessions on the *same* device already collide — the `logcat -c` below wipes the
+    other one's buffer regardless — so there is nothing extra to lose there.
+
+    Returns the pids actually signalled, for `pytest_sessionfinish` to report. Logging them here
+    recorded nothing: this runs inside `pytest_configure`, where an INFO record is dropped (see
+    `_logcat_scope`), and four orphans were killed on 2026-09-21 without a word in test.log. A
+    failure to stop one is still logged here, since WARNING does get through.
+    """
+    stopped = []
+    for pid in _stale_logcats(serial):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            stopped.append(pid)
+        except ProcessLookupError:
+            pass  # exited between the listing and the signal
+        except Exception as e:
+            logger.warning(f"[logcat] Could not stop stale capture pid {pid} on {serial}: {e}")
+    return stopped
+
+
+def start_logcat(config, run_dir) -> None:
+    """Stream this wallet's device log to logcat.log for the whole session. Never raises."""
+    serial, package = _logcat_target(_detect_wallet_name(config))
+    if not serial:
+        return
+    try:
+        # Kept before anything below can fail, so the report survives a capture that then breaks.
+        config._swept_logcats = (serial, _kill_stale_logcats(serial))
+        subprocess.run(["adb", "-s", serial, "logcat", "-c"], capture_output=True, timeout=10)
+        log_file = open(run_dir / "logcat.log", "w")  # closed in pytest_sessionfinish
+        try:
+            # stderr into the file, not DEVNULL. Discarding it is what hid the failure for four
+            # months: adb prints "error: more than one device/emulator" and exits, but `Popen`
+            # still succeeds, so the old `except` never fired and nothing looked at the result.
+            argv = _logcat_command(serial, package)
+            config._logcat_scope = f"{serial}, {_logcat_scope(argv)}"
+            config._logcat_proc = subprocess.Popen(
+                argv,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception:
+            log_file.close()
+            raise
+        config._logcat_file = log_file
+        # Read once here, not at session end: DropBox is filtered by entry timestamp, and the
+        # floor has to be the moment the session began.
+        config._dropbox_target = (serial, package, _device_now(serial))
+    except Exception as e:
+        logger.warning(f"[conftest] Could not start logcat capture: {e}")
 
 
 def _resolve_device(config: dict, worker_id: str) -> dict:
@@ -282,7 +723,13 @@ def pytest_runtest_setup(item):
     config of its own: which providers a wallet runs is decided in one place, so the probe has to
     ask that same place. The wallet name is already on the callspec, from the indirect `driver`
     param every one of these tests carries.
+
+    Also where each attempt's progress trail starts empty. A conftest hook runs before pytest's own
+    setup, so this is before any fixture of the attempt, and it runs again for every rerun. That
+    is also where a finished attempt's evidence files are renamed out of the next one's way.
     """
+    archive_previous_attempt(item)
+    progress.reset()
     callspec = getattr(item, "callspec", None)
     params = getattr(callspec, "params", {})
     issuer_name = params.get("issuer_name")
@@ -365,11 +812,198 @@ def pytest_html_results_table_row(report, cells):
         cells.clear()
 
 
+def write_summary(config) -> None:
+    """Write summary.json: one machine-readable record per test. Never raises.
+
+    Until now the only structured record of a run was a `data-jsonblob` attribute inside
+    `report.html`, so anything wanting outcomes — the report generator, a triage script, this
+    session's own emulator survey — had to scrape HTML for them. That is not a theoretical cost:
+    reading the survey's results that way silently returned "?" for every row when the key shape
+    turned out not to be what was assumed, and a missing field looked exactly like a missing test.
+
+    Reruns collapse to the final outcome, which is what a summary means. `attempts` keeps the
+    count, because a test that passed on its third try is not the same as one that passed first
+    time and a summary that hides that is misleading.
+
+    **Not written under xdist.** `_results` accumulates on each worker's own config and
+    `pytest_sessionfinish` returns early for workers, so the controller has nothing to write and
+    a parallel `-n` run produces no summary at all. Documented in `wallets/README.md` so a missing
+    file is not read as "no tests ran"; fixing it means shipping records back via `workeroutput`.
+    """
+    results = getattr(config, "_results", None)
+    run_dir = getattr(config, "_run_dir", None)
+    if not results or run_dir is None:
+        return
+    try:
+        tests = sorted(results.values(), key=lambda r: r["nodeid"])
+        passed = sum(1 for t in tests if t["outcome"] == "passed")
+        summary = {
+            "wallet": _detect_wallet_name(config),
+            "started": getattr(config, "_session_started_at", 0),
+            "totals": {
+                "tests": len(tests),
+                "passed": passed,
+                "failed": sum(1 for t in tests if t["outcome"] == "failed"),
+                "error": sum(1 for t in tests if t["outcome"] == "error"),
+                "skipped": sum(1 for t in tests if t["outcome"] == "skipped"),
+                "reruns": sum(t["attempts"] - 1 for t in tests),
+            },
+            "tests": tests,
+        }
+        (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        logger.info(f"[conftest] summary.json: {passed}/{len(tests)} passed")
+    except Exception as e:
+        logger.warning(f"[conftest] Could not write summary.json: {e}")
+
+
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item):
+def pytest_runtest_makereport(item, call):
     outcome = yield
     rep = outcome.get_result()
     setattr(item, f"rep_{rep.when}", rep)
+
+    if rep.when == "setup":
+        # A rerun re-runs the *same* item object, and pytest-rerunfailures only relabels reports
+        # as "rerun" after the protocol returns — so each attempt looks like a genuine failure and
+        # `save_failure_artifacts` runs again. `pytest_runtest_setup` has already renamed the
+        # previous attempt's files (`archive_previous_attempt`). The `app` fixture resets its own
+        # three capture flags at the top of each attempt; the failure fields below must be
+        # reset here, or the digest would keep attempt 1's cause for attempt 3, and a test that
+        # failed once and then passed would still leave a failure block contradicting
+        # summary.json.
+        item._attempt = getattr(item, "_attempt", 0) + 1
+        for stale in ("_failure_line", "_failure_category", "_failure_where", "_failure_trail",
+                      "_error_screen_logged"):
+            if hasattr(item, stale):
+                delattr(item, stale)
+
+    # Keep the raised exception's own one-line message, and its outcome category when it carries
+    # one (`base.outcome.FlowFailure` sets `.category`). The failure digest in app.log needs the
+    # exception itself, not the report's formatted `longrepr`: the category is an attribute by
+    # deliberate design in outcome.py — "so the report can group by it without matching on prose" —
+    # and it is reachable here and nowhere later. Only the first failing phase is kept, so a
+    # teardown error can't overwrite what the test actually failed on.
+    if rep.failed and call.excinfo is not None and not hasattr(item, "_failure_line"):
+        exc = call.excinfo.value
+        item._failure_line = f"{type(exc).__name__}: {exc}".split("\n")[0].strip()
+        item._failure_category = getattr(exc, "category", "")
+        # How far the flow got, at the moment it failed. Read for any exception, not only a
+        # FlowFailure: a bare locator timeout is exactly the failure whose position is unknown.
+        item._failure_trail = progress.snapshot()
+
+        # Where it was raised, which is the only useful thing left when the exception carries no
+        # message. Selenium's `TimeoutException` stringifies as "Message: \n<stacktrace>", so the
+        # one-line form above collapses to a bare "TimeoutException: Message:" — the first real
+        # run of the digest produced exactly that for procivis and it said nothing at all. A
+        # `WebDriverWait` with no `message=` is common in this suite, so this is the normal case,
+        # not an edge one.
+        crash = getattr(getattr(rep, "longrepr", None), "reprcrash", None)
+        where = ""
+        if crash is not None:
+            path = Path(str(crash.path))
+            try:
+                path = path.relative_to(Path.cwd())
+            except ValueError:
+                pass  # a site-packages frame; the absolute path is what there is
+            where = f"{path}:{crash.lineno}"
+        item._failure_where = where
+
+    _record_result(item, rep)
+
+
+def _record_result(item, rep) -> None:
+    """Accumulate this test's outcome for summary.json. Never raises into the run.
+
+    Keyed by nodeid, which is stable across rerun attempts, so a retried test stays one record and
+    ends up carrying its final outcome plus how many attempts it took.
+    """
+    try:
+        config = item.config
+        results = getattr(config, "_results", None)
+        if results is None:
+            results = config._results = {}
+        record = results.setdefault(item.nodeid, {
+            "nodeid": item.nodeid,
+            "name": item.name,
+            "params": {},
+            "outcome": "passed",
+            "failed_in": "",
+            "error": "",
+            "category": "",
+            # The furthest flow stage completed before the failure, and every recorded step.
+            # Empty for a wallet whose flow records none — which is not the same as "got nowhere".
+            "stage": "",
+            "steps": [],
+            # Summed across attempts, deliberately: a flaky test's real cost is all the time it
+            # consumed, not just its last try. Every other field describes the final attempt —
+            # `attempts` is what tells a reader the two are measuring different things.
+            "duration": 0.0,
+            "attempts": 0,
+        })
+        params = getattr(getattr(item, "callspec", None), "params", {}) or {}
+        record["params"] = {k: str(v) for k, v in params.items() if k != "driver"}
+        record["duration"] = round(record["duration"] + getattr(rep, "duration", 0.0), 2)
+        if rep.when == "setup":
+            record["attempts"] += 1
+            # A retry starts clean: the previous attempt's verdict must not outlive it.
+            record.update(outcome="passed", failed_in="", error="", category="", stage="",
+                          steps=[])
+        # A teardown error must not overwrite a verdict the test already reached — the same rule
+        # `_failure_line` follows above. Without this, a test that failed `[rejected]` in `call`
+        # and then hit a second exception in teardown is published as `error`/`teardown` while
+        # still carrying the call phase's message, and `totals.failed` undercounts. A skip counts
+        # as a verdict reached, so a failing teardown after one leaves the skip standing.
+        if rep.failed and not (rep.when == "teardown" and record["outcome"] != "passed"):
+            # pytest calls a failure outside the test body an Error, and the distinction matters:
+            # it means the wallet never got as far as being tested.
+            record["outcome"] = "failed" if rep.when == "call" else "error"
+            record["failed_in"] = rep.when
+            record["error"] = getattr(item, "_failure_line", "")
+            record["category"] = getattr(item, "_failure_category", "")
+            trail = getattr(item, "_failure_trail", None) or {}
+            if rep.when == "teardown":
+                # The test itself passed, so a trail reaching `keep` describes that pass, not the
+                # teardown error — which would otherwise be drawn as the wallet stopping there.
+                trail = {}
+            record["stage"] = trail.get("stage", "")
+            record["steps"] = list(trail.get("steps", []))
+        elif rep.skipped:
+            # No phase condition: both skip routes in this repo fire during **setup** — the
+            # unreachable-provider `pytest.skip` in `pytest_runtest_setup`, and the
+            # `pytest.mark.skip` params from `base/test_cases.py`. Requiring `when == "call"`
+            # meant every skip kept the "passed" default, so unreachable providers were published
+            # as passes and `totals.skipped` was structurally always 0. A call-phase skip is an
+            # xfail, which equally must not read as a pass.
+            record["outcome"] = "skipped"
+            record["error"] = _skip_reason(rep)
+    except Exception:
+        pass  # a summary is never worth failing a run over
+
+
+def _skip_reason(rep) -> str:
+    """"Skipped: <reason>" from a skip report, "" when it carries none.
+
+    `pytest.skip(...)` and `pytest.mark.skip` leave `longrepr` as a (path, lineno, reason) tuple, and
+    the reason there already starts with "Skipped: ". An xfail or a hand-built report may carry a
+    plain string, an exception, or nothing. Never raises.
+    """
+    try:
+        # An xfail's longrepr is a whole traceback; its own reason is on `wasxfail`.
+        xfail = getattr(rep, "wasxfail", None)
+        if xfail is not None:
+            reason = " ".join(str(xfail).split())
+            return f"Expected failure: {reason}" if reason else "Expected failure"
+        longrepr = getattr(rep, "longrepr", None)
+        if isinstance(longrepr, (tuple, list)):
+            text = longrepr[-1] if longrepr else ""
+        else:
+            text = longrepr if longrepr is not None else ""
+        text = " ".join(str(text).split())
+        if text.lower().startswith("skipped:"):
+            text = text[len("skipped:"):].strip()
+        return f"Skipped: {text}" if text else ""
+    except Exception:
+        return ""
 
 
 def _validate_locale(device: dict, config: dict, pytest_config) -> None:
@@ -457,9 +1091,51 @@ def driver(request):
     driver.quit()
 
 
+def _save_recording(driver, request, app_name: str) -> None:
+    """Stop this attempt's screen recording and write it to recordings/, once. Never raises.
+
+    Called from the `app` fixture's teardown and from its fallback finalizer; `_recording_saved`
+    keeps the two to one write, since stopping a recording twice returns nothing the second time.
+    """
+    node = request.node
+    if getattr(node, "_recording_saved", False):
+        return
+    node._recording_saved = True
+    try:
+        video_b64 = driver.stop_recording_screen()
+        if video_b64:
+            recordings_dir = request.config._run_dir / "recordings"
+            recordings_dir.mkdir(exist_ok=True)
+            test_name = sanitize_test_name(node.name)
+            path = recordings_dir / f"{test_name}.mp4"
+            path.write_bytes(base64.b64decode(video_b64))
+            note_attempt_file(node, f"recordings/{path.name}")
+            if screen_is_protected(request, app_name):
+                # FLAG_SECURE blanks the video as well as screenshots — confirmed 2026-09-04
+                # by extracting frames from a heidi recording: the wallet's own screens are
+                # solid black, only the launcher and systemui render. The file is kept because
+                # those non-app segments are real evidence (an unroutable deeplink lands on the
+                # launcher), but it must not be read as a recording of the wallet.
+                logger.info(
+                    f"[recording] Saved: {path} — NOTE: {app_name} sets FLAG_SECURE, so the "
+                    "wallet's own screens are blank in this video; only non-app screens render"
+                )
+            else:
+                logger.info(f"[recording] Saved: {path}")
+    except Exception as e:
+        logger.warning(f"[recording] Failed to save recording: {e}")
+
+
 @pytest.fixture
 def app(driver, request):
     """Install the app if needed, launch it, and return the ready BaseTest instance."""
+    # Per-attempt capture flags, reset before anything here can raise. A rerun reuses the same item,
+    # so a flag the previous attempt's teardown left True would make this attempt's fallback below
+    # believe its captures were already taken — and a body that dies early would save nothing.
+    request.node._artifact_captured = False
+    request.node._appium_captured = False
+    request.node._recording_saved = False
+
     app_name = request.node.callspec.params["driver"]
     config = load_config(app_name)
 
@@ -470,7 +1146,11 @@ def app(driver, request):
     if update_failure:
         pytest.fail(f"Wallet update did not complete: {update_failure}", pytrace=False)
 
-    recording_enabled = config.get("recording", {}).get("enabled", False)
+    recording_config = config.get("recording", {})
+    recording_enabled = recording_config.get("enabled", False)
+    # Read by pytest_sessionfinish, which does not load the config itself. Under xdist the stash
+    # lands on the worker's config, so the controller never shrinks (like the summary.json note).
+    request.config._shrink_recordings = recording_config.get("reencode", True)
     if recording_enabled:
         try:
             driver.start_recording_screen(timeLimit=180)
@@ -478,6 +1158,41 @@ def app(driver, request):
         except Exception as e:
             logger.warning(f"[recording] Failed to start recording: {e}")
             recording_enabled = False
+
+    def _capture_if_the_body_died():
+        """Take the captures the post-yield teardown would have, when the body never reached it.
+
+        pytest schedules a yield fixture's teardown only once the body reaches `yield`, so a raise
+        anywhere below used to skip every capture at once — recording, XML, screenshot and
+        appium.log. unime died in the `activate_app` → foreground wait 33 times in one run
+        (2026-09-10_11-11-18) and its directory held no artifacts at all.
+
+        A fallback, not the capture point. Finalizers run LIFO, so on a normal test this runs
+        *after* the post-yield code — after HOME and the recents clear, on the wrong screen. By then
+        that code has set every flag below, and this does nothing.
+
+        Never raises: pytest re-raises finalizer errors, and a second exception would bury the
+        failure being recorded. Each capture has its own guard so one failing does not cost the
+        others.
+        """
+        node = request.node
+        try:
+            if node_failed(node) and not getattr(node, "_artifact_captured", False):
+                node._artifact_captured = True
+                save_failure_artifacts(driver, request, config, wallet=app_name)
+        except Exception as e:
+            logger.warning(f"[app] Fallback capture could not save failure artifacts: {e}")
+        try:
+            # After the artifacts, as in the post-yield path, so their calls appear in the log.
+            if not getattr(node, "_appium_captured", False):
+                node._appium_captured = True
+                capture_appium_logs(driver, request, sanitize_test_name(node.name))
+        except Exception as e:
+            logger.warning(f"[app] Fallback capture could not capture the Appium log: {e}")
+        if recording_enabled:
+            _save_recording(driver, request, app_name)
+
+    request.addfinalizer(_capture_if_the_body_died)
 
     base_test = BaseTest(driver, config)
     just_installed = base_test.setup()
@@ -564,20 +1279,22 @@ def app(driver, request):
             f"on {info['platform']} {info['platform_version']} ({info['device_name']})"
         )
 
-    request.node._artifact_captured = False
-    request.node._appium_captured = False
     yield base_test
 
-    # `node_failed`, not `rep_call`, because this is the only capture point a setup error ever
-    # reaches: a wallet's `_ensure_home` raises before its own yield, so its teardown — and the
-    # `capture_failure_artifact` inside it — never runs, while this one does.
+    # `node_failed`, not `rep_call`, because this is where a setup error in a *dependent* fixture
+    # is captured: a wallet's `_ensure_home` raises before its own yield, so its teardown — and the
+    # `capture_failure_artifact` inside it — never runs, while this one does. A setup error in
+    # this fixture's own body never reaches here; `_capture_if_the_body_died` covers that.
     if node_failed(request.node) and not getattr(request.node, "_artifact_captured", False):
         # One implementation, shared with the per-wallet teardown path. The copy that used to
         # live here took the screenshot *before* the XML dump — the wrong order on a screen with
         # FLAG_SECURE, where the dump is the only evidence that can be captured at all.
         save_failure_artifacts(driver, request, config, wallet=app_name)
+        # Set whether or not anything saved: the finalizer registered above runs after this, on
+        # the home screen, and a second attempt there would dump the wrong screen.
+        request.node._artifact_captured = True
 
-    # Appium's log, for the same reason and from the same fallback position.
+    # Appium's log, for the same reason and from the same position behind the wallet's teardown.
     #
     # `capture_appium_logs` used to live only in the per-wallet `teardown_test`, which never runs
     # when `_ensure_home` raises before its yield — so the failure mode that most needs the Appium
@@ -588,35 +1305,15 @@ def app(driver, request):
     #
     # After `save_failure_artifacts`, so the screenshot and XML calls appear in the log too.
     if not getattr(request.node, "_appium_captured", False):
-        capture_appium_logs(driver, request.config._run_dir, sanitize_test_name(request.node.name))
+        capture_appium_logs(driver, request, sanitize_test_name(request.node.name))
+        request.node._appium_captured = True
 
     if _is_anr_present(driver):
         logger.warning(f"[app] ANR detected for {app_package} — clearing app cache before retry")
         _clear_app_cache(driver, app_package)
 
     if recording_enabled:
-        try:
-            video_b64 = driver.stop_recording_screen()
-            if video_b64:
-                recordings_dir = request.config._run_dir / "recordings"
-                recordings_dir.mkdir(exist_ok=True)
-                test_name = sanitize_test_name(request.node.name)
-                path = recordings_dir / f"{test_name}.mp4"
-                path.write_bytes(base64.b64decode(video_b64))
-                if screen_is_protected(request, app_name):
-                    # FLAG_SECURE blanks the video as well as screenshots — confirmed 2026-09-04
-                    # by extracting frames from a heidi recording: the wallet's own screens are
-                    # solid black, only the launcher and systemui render. The file is kept because
-                    # those non-app segments are real evidence (an unroutable deeplink lands on the
-                    # launcher), but it must not be read as a recording of the wallet.
-                    logger.info(
-                        f"[recording] Saved: {path} — NOTE: {app_name} sets FLAG_SECURE, so the "
-                        "wallet's own screens are blank in this video; only non-app screens render"
-                    )
-                else:
-                    logger.info(f"[recording] Saved: {path}")
-        except Exception as e:
-            logger.warning(f"[recording] Failed to save recording: {e}")
+        _save_recording(driver, request, app_name)
 
     try:
         driver.press_keycode(3)  # HOME — let the app save state before clearing

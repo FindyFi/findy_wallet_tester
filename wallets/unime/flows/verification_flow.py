@@ -3,10 +3,13 @@ import time
 
 from selenium.common.exceptions import WebDriverException
 
-from base import interstitials, outcome
+from base import deeplink, interstitials, outcome
 from base.flow_context import FlowContext
 from providers.base import DeeplinkProvider
+from wallets.unime.flows import _failures as failures
+from wallets.unime.pages import connection_request_page as connection_screen
 from wallets.unime.pages import pin_page as pin_screen
+from wallets.unime.pages.connection_request_page import ConnectionRequestPage
 from wallets.unime.pages.pin_page import PinPage
 from wallets.unime.pages.verification_request_page import VerificationRequestPage
 from wallets.unime.pages.verification_request_page import on_screen as _request_on_screen
@@ -14,8 +17,18 @@ from wallets.unime.screens import SCREENS
 
 logger = logging.getLogger(__name__)
 
+# A verifier unime has not connected to gets a "Connection Request" screen first, which waits for a
+# tap (procivis's verifier, 2026-11-20). Accepting is the flow's step, not a verdict on the wallet:
+# the information request this test is about comes after it. Each answer is recorded in the trail.
+# credential_flow has no such entry: no issuer got past unime's InvalidResponse, so nothing showed
+# this screen there. If one does, the same trust screen may appear and needs adding there too.
 _INTERSTITIALS = (
     interstitials.permission_dialog(),
+    interstitials.screen_action(
+        "connection-request", connection_screen.on_screen,
+        lambda driver, ctx: ConnectionRequestPage(driver, **ctx.page_args).accept(),
+        max_fires=2,
+    ),
     interstitials.screen_action(
         "app-password", pin_screen.on_screen,
         lambda driver, ctx: PinPage(driver, **ctx.page_args).enter_pin(ctx.pin),
@@ -39,11 +52,10 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
 
     logger.info(f"[verification_flow] Opening deeplink for '{credential_name}'")
     try:
-        driver.execute_script("mobile: deepLink", {"url": ctx.url, "package": app_package})
+        deeplink.fire(driver, ctx.url, app_package)
     except WebDriverException as exc:
         logger.info(f"[verification_flow] Android would not route the deeplink: {exc.msg}")
-        outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="information request",
-                          timeout=t)
+        outcome.raise_refused(driver, SCREENS, ctx, exc, expected="information request")
 
     time.sleep(3)
 
@@ -52,7 +64,7 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
                              interstitials=_INTERSTITIALS)
 
     if state != outcome.SUCCESS:
-        outcome.raise_for(state, driver, SCREENS, ctx, expected="information request", timeout=t,
+        failures.raise_for(state, driver, SCREENS, ctx, expected="information request", timeout=t,
                           interstitials=_INTERSTITIALS)
 
     logger.info("[verification_flow] Verification request screen — sharing credentials")

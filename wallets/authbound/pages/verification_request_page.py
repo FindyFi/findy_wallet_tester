@@ -1,7 +1,7 @@
 from appium.webdriver.common.appiumby import AppiumBy
 
 from base.base_page import BasePage
-from base.utils import wait_present
+from base.utils import wait_present, wait_visible
 
 # Captured live 2026-08-05 from a failing run's page dump. The screen mirrors the issuance
 # consent screen's layout:
@@ -37,6 +37,15 @@ _HEADER = (AppiumBy.ID, "io.authbound.wallet:id/request_screen_content_header_de
 
 def on_screen(driver, timeout: float = 2) -> bool:
     return wait_present(driver, SCREEN_ID, timeout=timeout)
+
+
+def no_match(driver, timeout: float = 2) -> bool:
+    """The request screen's empty state is *visible*: the wallet holds nothing that was asked for.
+
+    Visibility, not presence — the panel can stay in the hierarchy while a document matches (see
+    verification_flow).
+    """
+    return wait_visible(driver, NO_MATCHING_CREDENTIALS_ID, timeout=timeout)
 
 
 class VerificationRequestPage(BasePage):

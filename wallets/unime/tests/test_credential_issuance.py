@@ -5,6 +5,7 @@ from pathlib import Path
 
 from base.test_cases import issuance_cases
 from providers.factory import get_provider
+from base import credential_count
 from wallets.unime.pages.home_page import HomePage
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ _issuance_cases = issuance_cases(APP_NAME)
 
 @pytest.mark.parametrize("driver", [APP_NAME], indirect=True)
 @pytest.mark.parametrize("issuer_name,test_case", _issuance_cases)
-def test_credential_issuance(app, issuer_name, test_case):
+def test_credential_issuance(app, request, issuer_name, test_case):
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
 
@@ -36,9 +37,9 @@ def test_credential_issuance(app, issuer_name, test_case):
 
     home.wait_until_loaded()
     count_after = home.count_credentials()
-    logger.info(
-        f"[test] Credentials before testing '{issuer_name}': {count_before}, after: {count_after}"
-    )
-    assert count_after > count_before, (
-        f"Credential was not registered. The amount of credentials is {count_after}"
-    )
+    # Through the shared check so a flat count is reported as `not_stored` — this bare assert
+    # carried neither the tag nor the category, and reached the report only through its catch-all
+    # `^assert` pattern. Both counts still come from `count_credentials()` directly, so an
+    # unreadable count fails the test as it did before.
+    credential_count.assert_increased(count_before, count_after, request=request,
+                                      wallet=APP_NAME, issuer=issuer_name, case=test_case)

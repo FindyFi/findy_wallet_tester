@@ -3,7 +3,11 @@ import time as _time
 
 from selenium.common.exceptions import WebDriverException
 
+from base import deeplink, outcome, progress
 from base.android import handle_biometric_if_present
+from base.flow_context import FlowContext
+from base.flow_failures import lost_session
+from base.outcome import FlowFailure
 from base.utils import wait_present
 from providers.base import DeeplinkProvider
 from wallets.heidi.pages.home_page import SCREEN_ID as _home_id
@@ -12,11 +16,12 @@ from wallets.heidi.pages.connection_page import (
     SCREEN_ID as _connection_id,
     REFUSED_ID as _connection_refused_id,
 )
-from wallets.heidi.pages.error_page import ErrorPage, SCREEN_ID as _error_id
+from wallets.heidi.pages.error_page import ErrorPage, SCREEN_ID as _error_id, quoted
 from wallets.heidi.pages.credential_offer_page import (
     CredentialOfferPage,
     SCREEN_ID as _offer_id,
 )
+from wallets.heidi.screens import SCREENS
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +55,7 @@ def _wait_for_result(driver, error_id, offer_id, home_id, connection_id,
         try:
             if handle_biometric_if_present(driver):
                 logger.info("[credential_flow] Biometric prompt — fingerprint injected")
+                progress.step("answered the biometric prompt")
                 continue
             # Checked before the consent screen: heidi's refusal shares the same
             # "CONNECT WITH:" header but offers only CLOSE, so the consent branch would
@@ -58,7 +64,11 @@ def _wait_for_result(driver, error_id, offer_id, home_id, connection_id,
                 return "refused"
             if wait_present(driver, connection_id, timeout=1):
                 logger.info("[credential_flow] Connection consent screen — accepting")
+                # heidi's own screen, so it is in front: `open` completed. Without it, a wallet
+                # that then handed off elsewhere would be described as never having come forward.
+                progress.reached(progress.OPEN, "heidi showed its connection consent screen")
                 ConnectionPage(driver).connect()
+                progress.step("accepted the connection consent")
                 continue
             if wait_present(driver, error_id, timeout=1):
                 return "error"
@@ -71,10 +81,8 @@ def _wait_for_result(driver, error_id, offer_id, home_id, connection_id,
                     continue
                 return "home"
         except WebDriverException as exc:
-            raise RuntimeError(
-                f"[credential_flow] Appium/UiAutomator2 connection lost mid-wait "
-                f"(app may have crashed): {exc.msg}"
-            ) from exc
+            # Ours, not the wallet's: a dead UiAutomator2 session is kept off the vendor's record.
+            raise lost_session("credential_flow", "mid-wait", exc.msg) from exc
     return "timeout"
 
 
@@ -86,20 +94,29 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
       - "Untrusted Connection" consent screen
       - Android biometric (fingerprint) prompt
       - "Add Credential" offer screen — accepts the credential
-      - Generic error screen ("An error occurred.") — logs the error and raises RuntimeError
+      - Generic error screen ("An error occurred.") — fails as `rejected`, quoting heidi
       - Silent rejection — app returns to home without showing any UI
     """
-    url = provider.get(credential_name)
+    ctx = FlowContext(
+        flow="credential_flow", wallet=SCREENS.name, what=credential_name,
+        app_package=app_package, pin=pin,
+        device_pin=page_args.get("device_pin", ""), page_args=page_args,
+    )
+    ctx.url = provider.get(credential_name)
+    timeouts = page_args.get("timeouts", {})
+    t = timeouts.get("credential_offer", timeouts.get("default", 60))
 
     # No backgrounding. heidi used to be pressed HOME first, on the belief that it would not
     # process a deeplink while in the foreground; measured on 2026-09-03 it routes fine either
     # way, reaching the connection screen in ~8s from the foreground. The HOME press plus its two
     # `sleep(10)`s cost 20s of every issuance test and bought nothing.
     logger.info(f"[credential_flow] Opening deeplink for '{credential_name}'")
-    driver.execute_script("mobile: deepLink", {"url": url, "package": app_package})
-
-    timeouts = page_args.get("timeouts", {})
-    t = timeouts.get("credential_offer", timeouts.get("default", 60))
+    try:
+        deeplink.fire(driver, ctx.url, app_package)
+    except WebDriverException as exc:
+        # This used to escape as a bare driver exception. The shared diagnosis names it.
+        logger.info(f"[credential_flow] Android would not route the deeplink: {exc.msg}")
+        outcome.raise_refused(driver, SCREENS, ctx, exc, expected="credential offer")
 
     # _wait_for_result handles the biometric (fingerprint) prompt and the
     # connection-consent screen (trusted or untrusted) internally, so they are
@@ -114,35 +131,43 @@ def run(driver, provider: DeeplinkProvider, credential_name: str, app_package: s
         error_page = ErrorPage(driver, **page_args)
         error_text = error_page.get_error_text()
         logger.error(f"[credential_flow] Error screen: {error_text}")
+        progress.reached(progress.OPEN, "heidi was in front, showing its error screen")
         # Leave the error screen on display so the failure-artifact capture in
         # teardown dumps the error screen (not the screen after a CANCEL tap).
         # Teardown's init_flow navigates back to home afterwards, dismissing it.
-        raise RuntimeError(
-            f"[credential_flow] Credential issuance failed for '{credential_name}': {error_text}"
-        )
+        raise FlowFailure(outcome.REJECTED, (
+            f"[credential_flow] Credential issuance failed for '{credential_name}'"
+            f"{quoted(error_text)}"
+        ))
 
     if result == "refused":
         page = ConnectionPage(driver, **page_args)
         detail = page.refusal_detail()
         logger.error(f"[credential_flow] Connection refused by heidi: {detail}")
-        raise RuntimeError(
+        progress.reached(progress.OPEN, "heidi was in front, refusing the connection")
+        # A refusal is heidi's verdict on the issuer, so `rejected`. It used to be a plain red
+        # cell: no prose pattern matched "refused to connect".
+        raise FlowFailure(outcome.REJECTED, (
             f"[credential_flow] heidi refused to connect to the issuer for '{credential_name}' — "
             f"it showed \"A connection cannot be established.\" and offered only CLOSE: {detail}"
-        )
+        ))
 
     if result == "offer":
         logger.info("[credential_flow] Credential offer screen — accepting")
+        progress.reached(progress.PRESENT, "heidi showed the credential offer")
         CredentialOfferPage(driver, **page_args).accept()
+        # heidi shows no confirmation of its own; the test's count is what completes `keep`.
+        progress.step("tapped Add")
         logger.info(f"[credential_flow] Credential '{credential_name}' accepted")
         return
 
     if result == "home":
-        raise RuntimeError(
+        progress.reached(progress.OPEN, "heidi was in front, on its dashboard")
+        raise FlowFailure(outcome.DISMISSED, (
             f"[credential_flow] App returned to home without showing an offer screen for "
             f"'{credential_name}' — issuer may have rejected silently or the deeplink was not processed"
-        )
+        ))
 
-    raise RuntimeError(
-        f"[credential_flow] No recognisable screen appeared after deeplink "
-        f"for '{credential_name}' (timed out after {t}s)"
-    )
+    # Nothing recognisable: the shared diagnosis checks the device's registered schemes before
+    # blaming the wallet, and says which of heidi's surfaces it looked for.
+    outcome.raise_for(outcome.ABSENT, driver, SCREENS, ctx, expected="credential offer", timeout=t)

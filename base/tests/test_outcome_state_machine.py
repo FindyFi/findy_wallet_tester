@@ -241,3 +241,163 @@ def test_messages_use_the_right_article(expected, article):
         outcome.raise_for(outcome.DISMISSED, FakeDriver(), screens(), ctx(),
                           expected=expected, timeout=30)
     assert article in str(exc.value)
+
+
+# --- a refused deeplink, and a timeout with the wallet in front ------------------------------------
+
+from selenium.common.exceptions import WebDriverException  # noqa: E402
+
+from base import deeplink, progress  # noqa: E402
+
+
+def _ctx_for(package="com.example.wallet"):
+    return FlowContext(flow="credential_flow", wallet="testwallet", what="a_credential",
+                       app_package=package, url="openid-credential-offer://?x=1")
+
+
+def test_android_refusing_the_link_is_unroutable_and_quotes_android(monkeypatch):
+    """With the package named, Android's "unable to resolve Intent" is the device's own evidence.
+    These refusals used to go through `raise_for(ABSENT)`, describing a wait that never happened."""
+    monkeypatch.setattr(deeplink, "unroutable_reason", lambda *a, **k: "")
+    monkeypatch.setattr(deeplink, "registered_schemes", lambda *a, **k: [])
+    exc = WebDriverException("Activity not started, unable to resolve Intent { act=VIEW }")
+    with pytest.raises(outcome.FlowFailure) as raised:
+        outcome.raise_refused(FakeDriver(), screens(), _ctx_for(), exc, expected="credential offer")
+    text = str(raised.value)
+    assert raised.value.category == outcome.UNROUTABLE
+    assert "unable to resolve Intent" in text and text.endswith("[no_retry]")
+    assert "Nothing appeared" not in text and "after 30s" not in text, "no wait is described"
+    assert "could not be read from the device" in text, "no registration claimed on no evidence"
+
+
+def test_any_other_error_firing_the_link_is_a_lost_session():
+    exc = WebDriverException("instrumentation process is not running")
+    with pytest.raises(outcome.FlowFailure) as raised:
+        outcome.raise_refused(FakeDriver(), screens(), _ctx_for(), exc, expected="credential offer")
+    assert raised.value.category == outcome.LOST_SESSION
+
+
+def test_a_timeout_with_the_wallet_in_front_is_a_timeout_not_absent(monkeypatch):
+    """unime published "did not come to the foreground (com.impierce.identity_wallet was)"."""
+    progress.reset()
+    monkeypatch.setattr(deeplink, "unroutable_reason", lambda *a, **k: "")
+    monkeypatch.setattr(deeplink, "registered_schemes", lambda *a, **k: ["openid-credential-offer"])
+    with pytest.raises(outcome.FlowFailure) as raised:
+        outcome.raise_for(outcome.ABSENT, FakeDriver(), screens(), _ctx_for(),
+                          expected="credential offer", timeout=30)
+    assert raised.value.category == outcome.PROCESSING
+    assert "did not come to the foreground" not in str(raised.value)
+    assert "does register" in str(raised.value), "the dump said so"
+    assert progress.snapshot()["stage"] == progress.OPEN
+
+
+def test_a_timeout_with_another_app_in_front_is_still_absent(monkeypatch):
+    progress.reset()
+    monkeypatch.setattr(deeplink, "unroutable_reason", lambda *a, **k: "")
+    monkeypatch.setattr(deeplink, "registered_schemes", lambda *a, **k: [])
+    with pytest.raises(outcome.FlowFailure) as raised:
+        outcome.raise_for(outcome.ABSENT, FakeDriver(), screens(), _ctx_for("com.other.wallet"),
+                          expected="credential offer", timeout=30)
+    assert raised.value.category == outcome.ABSENT
+    assert "(com.example.wallet was)" in str(raised.value)
+    assert "does register" not in str(raised.value), "an unreadable dump is not a registration"
+    assert progress.snapshot()["stage"] == ""
+
+
+# The real shape of a refusal: Appium's wrapper on one line, Android's refusal on the next.
+REAL_REFUSAL = (
+    "Error attempting to start URI. Original error: Error: Starting: Intent "
+    "{ act=android.intent.action.VIEW dat=eudi-openid4vp:///... pkg=com.example.wallet }\n"
+    "Error: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW "
+    "dat=eudi-openid4vp:///... flg=0x10000000 pkg=com.example.wallet }")
+
+
+def _refuse(monkeypatch, schemes, reason=None):
+    monkeypatch.setattr(deeplink, "registered_schemes", lambda *a, **k: schemes)
+    if reason is not None:
+        monkeypatch.setattr(deeplink, "unroutable_reason", reason)
+    ctx = _ctx_for()
+    ctx.url = "eudi-openid4vp://?request_uri=https%3A%2F%2Fverifier.example"
+    with pytest.raises(outcome.FlowFailure) as raised:
+        outcome.raise_refused(FakeDriver(), screens(), ctx, WebDriverException(REAL_REFUSAL),
+                              expected="information request")
+    return str(raised.value), raised.value.category
+
+
+def test_a_refusal_is_one_line_with_the_devices_explanation_first(monkeypatch):
+    """Only a failure's first line reaches summary.json and app.log, and the report cuts at 200
+    characters — so the explanation leads, and Appium's wrapper line is not what gets kept."""
+    text, category = _refuse(monkeypatch, ["openid", "openid4vp"])
+    assert category == outcome.UNROUTABLE
+    assert "\n" not in text
+    assert text.index("does not register") < text.index("Android refused")
+    assert "Activity not started, unable to resolve Intent" in text
+    assert "Error attempting to start URI" not in text
+
+
+def test_androids_words_are_not_quoted_as_the_wallets(monkeypatch):
+    """The digest publishes the first double-quoted span as what the wallet said."""
+    text, _ = _refuse(monkeypatch, ["openid"])
+    assert '"' not in text
+
+
+def test_a_registered_scheme_that_is_still_refused_is_not_called_deliverable(monkeypatch):
+    """authbound registers https, and archived runs hold eight refused https://paradym.id links:
+    "does register, so it had the chance to take it" would sit under an [unroutable] verdict."""
+    text, category = _refuse(monkeypatch, ["eudi-openid4vp"])
+    assert category == outcome.UNROUTABLE
+    assert "had the chance" not in text
+    assert "none of its intent filters accepts this URL" in text
+
+
+def test_an_unreadable_dump_is_said_to_be_unreadable(monkeypatch):
+    text, _ = _refuse(monkeypatch, [])
+    assert "could not be read from the device" in text
+
+
+def test_a_diagnosis_that_fails_never_replaces_the_verdict(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("adb went away")
+
+    monkeypatch.setattr(deeplink, "registered_schemes", boom)
+    monkeypatch.setattr(deeplink, "unroutable_reason", boom)
+    ctx = _ctx_for()
+    with pytest.raises(outcome.FlowFailure) as raised:
+        outcome.raise_refused(FakeDriver(), screens(), ctx, WebDriverException(REAL_REFUSAL),
+                              expected="information request")
+    assert raised.value.category == outcome.UNROUTABLE
+
+
+def test_the_published_unroutable_sentence_no_longer_claims_a_delivery(monkeypatch):
+    """With the package named, a URL the wallet cannot take goes nowhere else."""
+    monkeypatch.setattr(deeplink, "registered_schemes", lambda *a, **k: ["openid"])
+    said = deeplink.unroutable_reason(FakeDriver(), "com.example.wallet", "eudi-openid4vp://x", "w")
+    assert "does not register" in said
+    assert "delivered to whatever else" not in said
+
+
+def test_every_flow_that_fires_through_the_recorder_diagnoses_a_refusal_honestly():
+    """hovi, unime and authbound all fire through `deeplink.fire`; their refusals must go to
+    `raise_refused`, not back to `raise_for(ABSENT)`, which describes a wait that never happened.
+    Checked on the source, since the flows cannot run here."""
+    from pathlib import Path
+    root = Path(__file__).parents[2]
+    offenders = []
+    for flow in sorted(root.glob("wallets/*/flows/*.py")):
+        text = flow.read_text()
+        if "deeplink.fire(" in text and "raise_refused(" not in text:
+            offenders.append(str(flow.relative_to(root)))
+    assert not offenders, offenders
+
+
+def test_a_skipped_error_probe_is_not_reported_as_no_error(monkeypatch):
+    """With a stale banner up the loop ignores the error surface, so "no error" was never checked
+    — the message must not say it was, then contradict itself with the stale-banner sentence."""
+    monkeypatch.setattr(deeplink, "unroutable_reason", lambda *a, **k: "")
+    monkeypatch.setattr(deeplink, "registered_schemes", lambda *a, **k: [])
+    with pytest.raises(outcome.FlowFailure) as raised:
+        outcome.raise_for(outcome.ABSENT, FakeDriver(), screens(error=always), _ctx_for("other"),
+                          expected="credential offer", timeout=30, error_before=True)
+    text = str(raised.value)
+    assert "no error and" not in text and ", no error" not in text
+    assert "stale error banner" in text

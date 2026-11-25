@@ -9,6 +9,12 @@ from base.utils import wait_present
 
 SCREEN_ID = (AppiumBy.XPATH, '//*[@text="TOPPAN Wallet"]')
 
+
+def on_screen(driver, timeout: float = 2) -> bool:
+    """toppan's wallet screen, by its header. Every home dump in reports/ carries it."""
+    return wait_present(driver, SCREEN_ID, timeout=timeout)
+
+
 # One card View per credential. Toppan is a WebView app, and this locator has now been wrong in
 # both directions, so both halves of it are load-bearing.
 #

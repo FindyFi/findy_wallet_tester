@@ -5,6 +5,7 @@ from pathlib import Path
 
 from base.test_cases import verification_cases
 from providers.factory import get_provider
+from wallets.procivis.flows._failures import require_something_to_present
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,9 @@ _verification_cases = verification_cases(APP_NAME)
 def test_credential_verification(app, issuer_name, test_case):
     pin = app.config["application"]["pin"]
     app_package = app.config["application"]["package"]
+
+    # Only an empty wallet that procivis itself calls empty is `nothing_to_present`; see there.
+    require_something_to_present(app.driver, app.page_args, issuer=issuer_name, case=test_case)
 
     provider = get_provider(app.config, issuer_name)
     verification_flow.run(

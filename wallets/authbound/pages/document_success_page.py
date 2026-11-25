@@ -4,6 +4,7 @@ import time as _time
 from appium.webdriver.common.appiumby import AppiumBy
 
 from base.android import authenticate_with_pin
+from base import progress
 from base.base_page import BasePage
 from base.utils import wait_present
 
@@ -42,6 +43,11 @@ def on_screen(driver, timeout: float = 2) -> bool:
 # flight, so the outcome wait extends rather than expiring — a presentation to a remote verifier
 # has been seen to outlast the 30s credential_offer timeout (2026-08-10).
 _LOADING = (AppiumBy.XPATH, '//*[starts-with(@text, "Please wait")]')
+
+
+def busy(driver, timeout: float = 2) -> bool:
+    """The wallet's own "Please wait…" indicator is showing."""
+    return wait_present(driver, _LOADING, timeout=timeout)
 
 
 def wait_for_outcome(driver, error_locator, timeout: float = 30, device_pin: str = "",
@@ -88,6 +94,7 @@ def wait_for_outcome(driver, error_locator, timeout: float = 30, device_pin: str
             try:
                 if authenticate_with_pin(driver, device_pin, detect_timeout=1):
                     answered += 1
+                    progress.step(f"answered device authentication ({answered})")
                     logger.info(
                         f"[document_success] Repeat authentication prompt {answered}/{max_prompts}"
                         " — answered with PIN"

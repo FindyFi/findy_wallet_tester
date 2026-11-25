@@ -12,6 +12,11 @@ _DECLINE = (AppiumBy.XPATH,
     '//android.view.View[@clickable="true" and .//android.widget.TextView[@text="DECLINE"]]')
 
 
+def no_match(driver, timeout: float = 2) -> bool:
+    """heidi's "No Matching Credentials", shown inside the Information Request screen."""
+    return wait_present(driver, NO_MATCHING_CREDENTIALS_ID, timeout=timeout)
+
+
 def on_screen(driver, timeout: float = 2) -> bool:
     return wait_present(driver, SCREEN_ID, timeout=timeout)
 

@@ -11,9 +11,11 @@ into a single cell. Only the issuance and verification suites are charted;
 install / onboarding / cleanup results stay in the per-wallet pytest reports.
 
 A failing cell says *why* it failed. The flows tag their exceptions with a
-category from a shared vocabulary ("[unroutable]", "[rejected]", ...); this
-script reads the tag out of the pytest log, falls back to matching known
-message shapes for the flows that have not adopted it, and prints a short
+category from a shared vocabulary ("[unroutable]", "[rejected]", ...). This
+script takes it from the run's summary.json, which records the exception's own
+category attribute; for runs without one it reads the tag out of the pytest
+log, falls back to matching known message shapes for the flows that have not
+adopted it, and prints a short
 reason under the cell's mark. An unrecognised failure still renders as a plain
 red cell, exactly as every failure did before. See FAILURE_CATEGORIES.
 
@@ -55,7 +57,7 @@ to the public site; being ignored is also what keeps git checkouts from
 touching it. HISTORY_LIMIT bounds how many runs it keeps.
 
 The JSON twin (data.json) carries all of this: each cell is an object with
-"outcome", "reason", "detail", "attempts", "flaky" and "change" rather than a
+"outcome", "reason", "detail", "stage", "steps", "attempts", "flaky" and "change" rather than a
 bare outcome string, and the top level gains "reason_counts", "flaky_cells",
 "wallet_info", "compared_to" and "change_counts".
 
@@ -82,6 +84,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+from base import progress
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = REPO_ROOT / "status"
@@ -176,7 +180,7 @@ TESTID_RE = re.compile(
 # A red cell that only says "Failed" is not an actionable finding: "your URL
 # never reached this wallet" and "this wallet rejected your credential" point
 # at opposite parties. These are the shared outcome names the flows already
-# raise, plus "harness" for the case where the test itself fell over.
+# raise, plus "setup" for the case where the test itself fell over.
 #
 # label       shown in the reason key under the matrix
 # short       the caption printed inside a matrix cell (kept narrow on purpose)
@@ -236,16 +240,45 @@ FAILURE_CATEGORIES = {
         "stage": "present",
         "label": "Timed out",
         "short": "timed out",
-        "description": "The wallet was still working when the wait ran out. No verdict was "
-                       "reached either way.",
+        "description": "The wait ran out with no verdict either way: the wallet was still "
+                       "working, or was in front on a screen the test does not recognise.",
     },
-    "harness": {
-        # No stage: the flow never started, so it cannot have stopped in one.
+    "prompt_loop": {
+        "stage": "present",
+        "label": "Prompt loop",
+        "short": "prompt loop",
+        "description": "The wallet kept asking for the same confirmation or authentication. "
+                       "Every prompt was answered and a new one appeared at once, so the flow "
+                       "never moved on.",
+    },
+    "crashed": {
+        # No fixed stage: a crash can happen at any point in the flow.
         "stage": None,
-        "label": "Test setup",
+        "label": "Crashed",
+        "short": "crashed",
+        "description": "The wallet app crashed or stopped responding while handling the offer "
+                       "or request. Android showed its crash or not-responding dialog.",
+    },
+    "lost_session": {
+        # Ours, not the wallet's: kept apart so it is never read as a finding about a vendor.
+        "stage": None,
+        "label": "Session lost",
+        "short": "session lost",
+        "description": "The test framework lost its connection to the device mid-test. The cell "
+                       "says nothing about interoperability. It is not counted in the pass "
+                       "and fail totals.",
+    },
+    "setup": {
+        # No stage: raised before or during a flow, but always ours, so it is kept off the flow
+        # diagram (OFF_FLOW_REASONS) wherever the trail got to.
+        "stage": None,
+        "label": "Framework or setup",
         "short": "setup",
-        "description": "The test setup failed before the flow could run. The cell says "
-                       "nothing about interoperability.",
+        "description": "Something on the testing side stopped the test, before or during the "
+                       "flow: missing configuration, a device PIN or fingerprint prompt the test "
+                       "framework cannot answer, a wallet that needs manual onboarding first, or "
+                       "the framework itself failing. The cell says nothing about "
+                       "interoperability. It is not counted in the pass and fail totals.",
     },
 }
 
@@ -294,7 +327,7 @@ CHANGES = {
 # link carries a request, and saying so beats one wording that fits neither.
 # "suites" limits a step to the flows it belongs to; a flow that has no such
 # step simply does not draw it.
-FLOW_STAGES = (
+_STAGE_TEXT = dict((
     ("deliver", {
         "label": {"issuance": "Offer link delivered",
                   "verification": "Request link delivered"},
@@ -328,7 +361,12 @@ FLOW_STAGES = (
         "caption": {"issuance": "the wallet's credential count moves",
                     "verification": "the presentation reaches the verifier"},
     }),
-)
+))
+
+# The keys are the progress trail's own (base/progress.py), so the diagram and what a
+# flow records cannot drift apart: a stage added there without a label here fails at
+# import rather than silently disappearing from the diagram.
+FLOW_STAGES = tuple((key, _STAGE_TEXT[key]) for key in progress.STAGES)
 
 SUITES = (("issuance", "Issuance"), ("verification", "Verification"))
 
@@ -353,12 +391,12 @@ def stage_applies(meta: dict, suite: str) -> bool:
 # Precedence when several test cases share one matrix cell. Highest wins, in
 # the same spirit as OUTCOME_RANK: prefer the reason that names a concrete
 # party. "unroutable" tops the list because it is the most definitive — the
-# flow never started. "harness" sits at the bottom: a real interop reason from
+# flow never started. "setup" sits at the bottom: a real interop reason from
 # a sibling case is always worth more than our own setup falling over.
 CATEGORY_RANK = {
-    None: 0, "harness": 10, "processing": 20, "absent": 30, "dismissed": 35,
-    "not_stored": 40, "nothing_to_present": 45, "no_match": 50,
-    "rejected": 60, "unroutable": 70,
+    None: 0, "lost_session": 5, "setup": 10, "processing": 20, "absent": 30,
+    "dismissed": 35, "prompt_loop": 38, "not_stored": 40, "nothing_to_present": 45,
+    "no_match": 50, "rejected": 60, "crashed": 65, "unroutable": 70,
 }
 
 # The flows tag their exceptions with the category in brackets, e.g.
@@ -372,6 +410,30 @@ TYPED_CATEGORY_RE = re.compile(
     r"^[\w.]*(?:Error|Exception|Failure|Failed):\s*\[([a-z_]+)\]"
 )
 
+# The old name of a category, read from old runs (summary.json, report text, history) and
+# nowhere else: the only place the old name may still appear. New runs write the new name.
+CATEGORY_ALIASES = {"harness": "setup"}
+
+
+def canonical_category(name):
+    """The current name of a category, given a current or an old one."""
+    return CATEGORY_ALIASES.get(name, name)
+
+
+def _typed_category(text: str):
+    """The known category a typed headline names, as (match, canonical name), else (None, None)."""
+    typed = TYPED_CATEGORY_RE.match(text)
+    if typed:
+        name = canonical_category(typed.group(1))
+        if name in FAILURE_CATEGORIES:
+            return typed, name
+    return None, None
+
+
+# The flow's own name, which follows the category: "[credential_flow]". Only dropped from a
+# tooltip when it directly follows a known category (see `_detail`).
+FLOW_TAG_RE = re.compile(r"\[[a-z_]+\]\s*")
+
 # The exception headline inside a pytest failure block: a line starting with
 # "E" whose text opens with an exception class or a bare assert. Skips the
 # stack frames, source echo and assertion diffs that also carry the E prefix.
@@ -383,27 +445,38 @@ EXC_LINE_RE = re.compile(r"^E\s+((?:[\w.]*(?:Error|Exception|Failure|Failed)\b|a
 #
 # Order matters: the first hit wins, so the specific phrasings come before the
 # catch-all "the wallet showed an error" ones. Message text becoming a contract
-# is the known cost of reading this out of prose; when a run grows an
-# outcomes.json sidecar, prefer that and keep this as the fallback.
+# is the known cost of reading this out of prose, which is why a category from
+# the run's summary.json (see load_summary) always wins over these. A regex
+# cannot read negation — "neither the success nor the error screen appeared"
+# matches the `rejected` pattern below. The wrapper messages ("Credential
+# issuance failed for 'x': <wallet's error text>") land in `rejected` too: the
+# flow only raises them after reading an error screen.
+#
+# Every entry is one alternative and carries exactly one tag comment:
+#   # third-party        text Android/Appium/Selenium writes, not us
+#   # old runs           a message our own code wrote before the wallet raised
+#                        typed failures; archived runs and `--backfill` need it
+#                        to regenerate as they did
+#   # pending: <wallet>  a wallet that still raises it untyped today
+# base/tests/test_report_pattern_ratchet.py enforces this: a `# pending:` wallet
+# that gains a screens.py must be re-tagged `# old runs` or deleted, and
+# `# old runs` can only shrink. New entries for our own messages are not
+# accepted: type the failure at the raise site instead.
 REASON_PATTERNS = (
-    # Appium could not hand the URL to any app: Android resolved no activity.
-    ("unroutable", r"Activity not started, unable to resolve Intent|Could not deliver\b"),
-    ("no_match", r"No matching credentials"),
-    ("nothing_to_present", r"does not have the cards required|UNAVAILABLE CARDS"),
-    ("dismissed", r"returned to (?:its )?home (?:screen )?without"),
-    # Wallet-agnostic setup assertions — gataca checks the active DID method
-    # before the flow starts, and that failing is our problem, not the agent's.
-    ("harness", r"Active DID is "),
-    ("processing", r"did not appear within|did not complete within timeout"
-                   r"|No offer/error/home screen after|No success/home screen after"
-                   r"|^selenium\.common\.exceptions\.TimeoutException"),
-    # The wallet surfaced an error of its own. The wrapper messages
-    # ("Credential issuance failed for 'x': <wallet's error text>") land here
-    # too: the flow only raises them after reading an error screen.
-    ("rejected", r"error dialog|error screen|was rejected|Error in OpenID4VCI"
-                 r"|status code is error|error response with status"
-                 r"|Credential issuance failed|Verification failed for"),
-    ("not_stored", r"^assert\s"),
+    ("unroutable", r"Activity not started, unable to resolve Intent"),   # third-party
+    ("no_match", r"No matching credentials"),                            # old runs
+    ("nothing_to_present", r"does not have the cards required"),         # old runs
+    ("dismissed", r"returned to (?:its )?home (?:screen )?without"),     # old runs
+    ("setup", r"Active DID is "),                                       # old runs
+    ("processing", r"No offer/error/home screen after"),                 # old runs
+    ("processing", r"No success/home screen after"),                     # old runs
+    ("processing", r"^selenium\.common\.exceptions\.TimeoutException"),  # third-party
+    ("rejected", r"error dialog"),                                       # old runs
+    ("rejected", r"error screen"),                                       # old runs
+    ("rejected", r"was rejected"),                                       # old runs
+    ("rejected", r"Credential issuance failed"),                         # old runs
+    ("rejected", r"Verification failed for"),                            # old runs
+    ("not_stored", r"^assert\s"),                                        # old runs
 )
 
 # Trailing marker the rerun plugin reads; noise in a published tooltip.
@@ -436,9 +509,9 @@ def classify_failure(log: Optional[str]):
     # WebDriverException, say) and ends with the flow's own diagnosis, which is
     # the sentence worth publishing.
     for headline in headlines:
-        typed = TYPED_CATEGORY_RE.match(headline)
-        if typed and typed.group(1) in FAILURE_CATEGORIES:
-            return typed.group(1), _detail(headline)
+        typed, name = _typed_category(headline)
+        if typed:
+            return name, _detail(headline)
 
     for category, pattern in REASON_PATTERNS:
         for headline in headlines:
@@ -448,8 +521,20 @@ def classify_failure(log: Optional[str]):
 
 
 def _detail(headline: str) -> str:
-    """Tidy one exception headline for a tooltip."""
+    """Tidy one exception headline for a tooltip.
+
+    A typed headline loses its exception class, its `[category]` tag and at most one `[flow]`
+    tag before the length cut: the cell already names the category, and the ~45 characters they
+    take are better spent on the wallet's own words. An untyped headline is kept as it is,
+    because there the class is often the only signal and nothing marks a bracket as a flow name.
+    """
     text = NO_RETRY_RE.sub("", headline).strip()
+    typed, _ = _typed_category(text)
+    if typed:
+        rest = text[typed.end():].lstrip()
+        flow = FLOW_TAG_RE.match(rest)
+        rest = rest[flow.end():] if flow else rest
+        text = rest.strip() or text
     if len(text) > DETAIL_MAX:
         text = text[:DETAIL_MAX - 1].rstrip() + "\u2026"
     return text
@@ -559,13 +644,42 @@ def is_wallet_dir(child: Path) -> bool:
     return (child / "report.html").exists() or (REPO_ROOT / "wallets" / child.name).is_dir()
 
 
-def make_cell(recs: list) -> dict:
+def load_summary(wallet_dir: Path) -> dict:
+    """The run's own per-test records from summary.json, keyed by nodeid. {} when unavailable.
+
+    summary.json holds the outcome category exactly as the flow raised it — the exception's
+    `.category` attribute, read in the root conftest — so it is the sidecar this report's comments
+    asked for, and a typed category from it never has to be parsed back out of prose. Runs from
+    before it existed, and xdist runs (which do not write it), have none; those cells fall back to
+    `classify_failure`, as every cell did before.
+    """
+    path = wallet_dir / "summary.json"
+    if not path.exists():
+        return {}
+    try:
+        tests = json.loads(path.read_text(encoding="utf-8")).get("tests", [])
+        if not isinstance(tests, list):
+            raise TypeError(f"'tests' is {type(tests).__name__}, not a list")
+        return {t["nodeid"]: t for t in tests
+                if isinstance(t, dict) and isinstance(t.get("nodeid"), str)}
+    except (ValueError, TypeError, OSError, AttributeError) as exc:
+        # ValueError covers bad JSON and bad UTF-8 alike. One wallet's damaged file must cost
+        # that wallet its typed reasons, never the whole report.
+        print(f"note: ignoring unreadable {path}: {exc}", file=sys.stderr)
+        return {}
+
+
+def make_cell(recs: list, record: Optional[dict] = None) -> dict:
     """Fold one test id's attempts into the facts a matrix cell shows.
 
     pytest-rerunfailures records every attempt, so ``recs`` may hold two
     discarded reruns before the verdict. Only the last attempt decides the
     outcome, but the earlier ones are the difference between "passes" and
     "passes on the third try" — worth publishing, and invisible until now.
+
+    ``record`` is this test's summary.json entry, when the run wrote one. Its category is what the
+    flow asserted, so it wins over anything read out of the log; the log still supplies the detail
+    line, which is the sentence a reader sees.
     """
     last = recs[-1] if recs else {}
     outcome = last.get("result")
@@ -573,10 +687,33 @@ def make_cell(recs: list) -> dict:
     reason, detail = (None, "")
     if outcome not in ("Passed", "Skipped", None):
         reason, detail = classify_failure(last.get("log"))
+        typed = (record or {}).get("category")
+        if isinstance(typed, str):
+            typed = canonical_category(typed)
+        if isinstance(typed, str) and typed in FAILURE_CATEGORIES:
+            # When the prose agrees, its headline is the sentence that justified it. When it does
+            # not, the log's line may be about something else entirely: a failed teardown gets
+            # its own pytest-html record, so `last` can be an InvalidSessionId while summary.json
+            # rightly keeps the call's verdict. The record's own line is the one that carried it.
+            error = (record or {}).get("error")
+            if (typed != reason or not detail) and isinstance(error, str) and error:
+                detail = _detail(error)
+            reason = typed
+    # How far the flow got, when it recorded that (base/progress.py). The last stage *completed*,
+    # not the one it stopped at; `stage_breakdown` works out the latter per suite. Absent for
+    # passes, for runs without summary.json, and for flows that record no progress.
+    stage, steps = None, []
+    if outcome not in ("Passed", "Skipped", None) and record:
+        if record.get("stage") in progress.STAGES:
+            stage = record["stage"]
+        if isinstance(record.get("steps"), list):
+            steps = [str(x) for x in record["steps"]]
     return {
         "outcome": outcome,
         "reason": reason,
         "detail": detail,
+        "stage": stage,
+        "steps": steps,
         "attempts": attempts,
         # A pass that needed a retry. The wallet did interoperate, so the cell
         # stays green, but a reader deciding on a provider should see it.
@@ -616,7 +753,7 @@ def collect(run_dir: Path) -> dict:
     verification: dict[str, dict[str, dict]] = {}
     issuance_agents: set = set()
     verification_agents: set = set()
-    totals = {"Passed": 0, "Failed": 0, "Error": 0, "Skipped": 0}
+    totals = {"Passed": 0, "Failed": 0, "Error": 0, "Skipped": 0, "Framework": 0}
     # wallet -> variants seen in this run; empty set means "no extra dimension"
     variants: dict[str, set] = {}
     no_report: list = []
@@ -641,6 +778,7 @@ def collect(run_dir: Path) -> dict:
             continue
 
         data = load_pytest_html(report)
+        summary = load_summary(child)
         for tid, recs in data.get("tests", {}).items():
             if isinstance(recs, dict):
                 recs = [recs]
@@ -658,10 +796,18 @@ def collect(run_dir: Path) -> dict:
             else:
                 target, agents_set = verification, verification_agents
             agents_set.add(agent)
-            cell = make_cell(recs)
+            cell = make_cell(recs, summary.get(tid))
+            if cell["stage"]:
+                # Labels differ per suite ("Offer shown" / "Request shown"), and only here is the
+                # suite known; the cell renderer is handed the finished phrase.
+                cell["reached_label"] = stage_text(_STAGE_TEXT[cell["stage"]], "label", flow)
             bucket = target.setdefault(col, {})
             bucket[agent] = merge_cells(bucket.get(agent), cell)
-            if cell["outcome"] in totals:
+            if not counted(cell["outcome"], cell["reason"]):
+                # The cell still shows, labelled; a failure of the test framework itself is
+                # not counted in the pass and fail totals.
+                totals["Framework"] += 1
+            elif cell["outcome"] in totals:
                 totals[cell["outcome"]] += 1
 
     columns = []
@@ -905,7 +1051,10 @@ def annotate_changes(matrix: dict, previous: Optional[dict]) -> None:
       reason       it failed both times, for a different reason
       new          there is no previous result for this cell
     Cells that read the same as last time are left unmarked — the page should
-    draw the eye to what moved, not to everything.
+    draw the eye to what moved, not to everything. A cell kept out of the pass
+    and fail totals, now or last time, gets no broke/fixed mark either: a lost
+    session after a pass did not newly fail, and a pass after one did not newly
+    pass.
     """
     matrix["compared_to"] = previous.get("run_ts") if previous else None
     matrix["change_counts"] = {}
@@ -926,14 +1075,18 @@ def annotate_changes(matrix: dict, previous: Optional[dict]) -> None:
                     counts["new"] = counts.get("new", 0) + 1
                     continue
                 was_outcome, _, was_reason = was.partition(":")
+                was_reason = canonical_category(was_reason)
                 passed_before = was_outcome == "Passed"
                 passes_now = outcome == "Passed"
+                both_counted = counted(outcome, cell.get("reason")) and counted(was_outcome, was_reason)
                 if passed_before and not passes_now:
-                    cell["change"] = "broke"
-                    counts["broke"] = counts.get("broke", 0) + 1
+                    if both_counted:
+                        cell["change"] = "broke"
+                        counts["broke"] = counts.get("broke", 0) + 1
                 elif passes_now and not passed_before:
-                    cell["change"] = "fixed"
-                    counts["fixed"] = counts.get("fixed", 0) + 1
+                    if both_counted:
+                        cell["change"] = "fixed"
+                        counts["fixed"] = counts.get("fixed", 0) + 1
                 elif not passes_now and was_reason != (cell.get("reason") or ""):
                     cell["change"] = "reason"
                     counts["reason"] = counts.get("reason", 0) + 1
@@ -1067,6 +1220,7 @@ h1 { margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: -.01em; }
 .pill.fail { background: rgba(212,69,44,.12); color: var(--fail); }
 .pill.err  { background: rgba(214,138,23,.14); color: var(--err); }
 .pill.skip { background: #eef0f3; color: var(--skip); }
+.pill.framework { background: #eef0f3; color: var(--skip); }
 .pill svg { width: 12px; height: 12px; }
 
 .table-wrap { padding: 6px 0 0; overflow-x: auto; }
@@ -1729,6 +1883,10 @@ def _outcome_td(cell: Optional[dict]) -> str:
         title.append(f'{meta["label"]} — {meta["description"]}')
     if cell.get("detail"):
         title.append(cell["detail"])
+    if cell.get("reached_label"):
+        n = len(cell.get("steps") or [])
+        title.append(f'Got as far as: {cell["reached_label"]} '
+                     f'({n} step{"s" if n != 1 else ""} recorded).')
     if cell.get("flaky"):
         cls += " flaky"
         caption = '<span class="reason">on retry</span>'
@@ -2132,6 +2290,33 @@ def render_change_key(matrix: dict) -> str:
     )
 
 
+# Failures that are ours, not the wallet's. They stay off the flow diagram however far the trail
+# got: drawing a lost Appium session at "Wallet opens" would publish it as a finding about the
+# vendor, which is what keeping them apart is for. A crash is the wallet's, so a measured stage
+# places it — that is exactly where it crashed.
+# The same reasons are kept out of the pass and fail totals (see `collect`).
+OFF_FLOW_REASONS = ("setup", "lost_session")
+
+
+def counted(outcome: Optional[str], reason: Optional[str]) -> bool:
+    """Whether a cell counts in the pass and fail totals: not when the framework, not the
+    wallet, failed it."""
+    return not (outcome in ("Failed", "Error") and reason in OFF_FLOW_REASONS)
+
+
+def stopped_after(completed: str, suite: str) -> str:
+    """The stage a cell stopped at, given the last one its flow completed.
+
+    The trail records what *completed*; the diagram draws where a cell *stopped*, which is the
+    next step of this suite's own flow — issuance has no "match". A failure after the final stage
+    stays on it.
+    """
+    order = [key for key, meta in FLOW_STAGES if stage_applies(meta, suite)]
+    done = progress.STAGES.index(completed)
+    later = [key for key in order if progress.STAGES.index(key) > done]
+    return later[0] if later else order[-1]
+
+
 def stage_breakdown(matrix: dict) -> dict:
     """How far each cell got, per suite, keyed by stage.
 
@@ -2152,14 +2337,19 @@ def stage_breakdown(matrix: dict) -> dict:
                     done += 1
                     continue
                 reason = cell.get("reason")
-                stage = FAILURE_CATEGORIES.get(reason, {}).get("stage") if reason else None
+                if cell.get("stage") and reason not in OFF_FLOW_REASONS:
+                    stage = stopped_after(cell["stage"], suite)
+                else:
+                    stage = FAILURE_CATEGORIES.get(reason, {}).get("stage") if reason else None
                 if stage not in stages:
                     # No reason, or a reason that is not part of the flow
                     # (a test-setup failure). Counted, but not placed.
                     off_flow += 1
                     continue
                 stages[stage]["n"] += 1
-                if reason not in stages[stage]["reasons"]:
+                # A measured stage places a cell even when its failure has no category — the bare
+                # locator timeout whose position used to be unknown.
+                if reason and reason not in stages[stage]["reasons"]:
                     stages[stage]["reasons"].append(reason)
         out[suite] = {"stages": stages, "done": done, "off_flow": off_flow}
     return out
@@ -2455,7 +2645,9 @@ def collection_tallies(entry: dict, groups: dict) -> dict:
 
     Counted from the run's stored cells rather than its totals, since the totals are not split by
     provider. "All tests" means passed, failed and errored, the same set the overview's tally
-    counts; skipped cells are left out of both.
+    counts: skipped cells, and failures that were ours rather than the wallet's (a test setup
+    failure, a lost Appium session, or "harness" in runs recorded before the rename), are left
+    out of both.
 
     A past run is grouped by today's registry. That is what lets a run from before groups existed
     be read in the same collections, and a provider no longer in the registry falls under "Other"
@@ -2466,8 +2658,10 @@ def collection_tallies(entry: dict, groups: dict) -> dict:
     for section in (entry.get("cells") or {}).values():
         for agents in section.values():
             for agent, token in agents.items():
-                outcome = str(token).split(":", 1)[0]
+                outcome, _, reason = str(token).partition(":")
                 if outcome not in ("Passed", "Failed", "Error"):
+                    continue
+                if not counted(outcome, canonical_category(reason or None)):
                     continue
                 group = groups.get(agent, "Other")
                 passed, total = tallies.get(group, (0, 0))
@@ -2631,20 +2825,32 @@ def _logo_html(output_dir: Path, embed: bool) -> str:
     return f'<img class="logo" src="{html.escape(src, quote=True)}" alt="" />'
 
 
+_FRAMEWORK_TIP = (
+    "Failures of the test framework itself (a lost device session, a failed test setup). "
+    "Their cells are shown and labelled, but not counted in the pass and fail totals."
+)
+
+
 def _pills_html(totals: dict, flaky_cells: int = 0) -> str:
     parts = [
-        ("ok",   SVG_PASS, totals.get("Passed", 0),  "passing"),
-        ("fail", SVG_FAIL, totals.get("Failed", 0),  "failing"),
+        ("ok",   SVG_PASS, totals.get("Passed", 0),  "passing", ""),
+        ("fail", SVG_FAIL, totals.get("Failed", 0),  "failing", ""),
     ]
     if totals.get("Error"):
-        parts.append(("err",  SVG_ERR,  totals["Error"],   "errored"))
+        parts.append(("err",  SVG_ERR,  totals["Error"],   "errored", ""))
     if totals.get("Skipped"):
-        parts.append(("skip", SVG_SKIP, totals["Skipped"], "skipped"))
+        parts.append(("skip", SVG_SKIP, totals["Skipped"], "skipped", ""))
+    if totals.get("Framework"):
+        parts.append(("framework", SVG_SKIP, totals["Framework"], "not counted", _FRAMEWORK_TIP))
     if flaky_cells:
-        parts.append(("flaky", SVG_PASS, flaky_cells, "on retry"))
+        parts.append(("flaky", SVG_PASS, flaky_cells, "on retry", ""))
+
+    def title(tip: str) -> str:
+        return f' title="{html.escape(tip, quote=True)}"' if tip else ""
+
     return "".join(
-        f'<span class="pill {cls}">{svg}<span>{n} {label}</span></span>'
-        for cls, svg, n, label in parts
+        f'<span class="pill {cls}"{title(tip)}>{svg}<span>{n} {label}</span></span>'
+        for cls, svg, n, label, tip in parts
     )
 
 
