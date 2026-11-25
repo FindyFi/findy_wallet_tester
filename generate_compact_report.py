@@ -605,7 +605,8 @@ def parse_test_id(test_id: str):
 # Brand-specific name spellings that don't follow simple capitalization.
 # Tokens not listed here are title-cased ("hovi_issuer" -> "Hovi Issuer").
 DISPLAY_OVERRIDES = {"waltid": "walt.id", "eudiplo": "EUDIPLO", "eudi": "EUDI", "lpid": "LPID",
-                     "pid": "PID"}
+                     "pid": "PID", "mdoc": "mDoc", "mdl": "mDL", "sdjwt": "SD-JWT", "ips": "IPS",
+                     "igrant": "iGrant"}
 
 
 def display_name(name: str) -> str:
