@@ -21,6 +21,8 @@ from typing import Optional, Tuple
 
 import pytest
 
+from base.redact import mark_secrets
+
 _ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -311,7 +313,8 @@ def wallet_config(wallet_name: str) -> dict:
             + "\n  ".join(sorted(set(missing)))
             + "\nSet them in the project's .env file (see env.example) or export them."
         )
-    return expanded
+    # PINs come out as `Secret`, whose repr is masked, and are registered for `base.redact`.
+    return mark_secrets(expanded)
 
 
 @lru_cache(maxsize=None)
@@ -410,4 +413,4 @@ def load_config(wallet_name):
     # once rather than inverted at nine call sites. When the test bodies move into base/, the
     # internal name can follow and this line goes away.
     merged.setdefault("onboarding", {})["skip_if_done"] = not merged["onboarding"].get("reset", False)
-    return merged
+    return mark_secrets(merged)

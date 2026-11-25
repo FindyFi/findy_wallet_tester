@@ -1,6 +1,7 @@
 from appium.webdriver.common.appiumby import AppiumBy
 
 from base.base_page import BasePage
+from base.redact import typing_secret
 from base.utils import wait_present
 
 # hovi's own wallet PIN, introduced in build 34. Before that the wallet had no lock at all and
@@ -40,8 +41,9 @@ def awaiting_confirmation(driver, timeout: float = 2) -> bool:
 class PinPage(BasePage):
     def enter(self, pin: str):
         """Tap `pin` on the keypad. Does not wait for whatever the screen does next."""
-        for digit in pin:
-            self.click(_digit(digit))
+        with typing_secret():   # the digit lookups spell the PIN in Appium's log
+            for digit in pin:
+                self.click(_digit(digit))
 
     def set_pin(self, pin: str):
         """Choose the wallet PIN and confirm it, leaving the confirm screen dismissed.

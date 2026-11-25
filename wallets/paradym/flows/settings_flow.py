@@ -6,6 +6,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
+from base.redact import redact
 from wallets.paradym.pages import home_page
 from wallets.paradym.pages.settings_page import SettingsPage
 
@@ -73,7 +74,7 @@ def _save_settings_screen(driver, xml_dir) -> str:
     """
     try:
         xml_dir.mkdir(parents=True, exist_ok=True)
-        (xml_dir / _SETTINGS_DUMP).write_text(driver.page_source, encoding="utf-8")
+        (xml_dir / _SETTINGS_DUMP).write_text(redact(driver.page_source), encoding="utf-8")
     except Exception as e:
         return f"; could not save the Settings screen ({_describe(e)})"
     return f"; Settings screen saved to xml_dumps/{_SETTINGS_DUMP}"

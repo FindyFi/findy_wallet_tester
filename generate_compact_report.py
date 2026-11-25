@@ -86,6 +86,7 @@ from pathlib import Path
 from typing import Optional
 
 from base import progress
+from base.redact import redact, redact_json
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = REPO_ROOT / "status"
@@ -500,7 +501,7 @@ def classify_failure(log: Optional[str]):
     """
     if not log:
         return None, ""
-    headlines = exception_headlines(html.unescape(log))
+    headlines = exception_headlines(redact(html.unescape(log)))
     if not headlines:
         return None, ""
 
@@ -555,7 +556,7 @@ def load_app_info(wallet_dir: Path) -> dict:
     except (json.JSONDecodeError, OSError) as exc:
         print(f"note: ignoring unreadable {path}: {exc}", file=sys.stderr)
         return {}
-    return data if isinstance(data, dict) else {}
+    return redact_json(data) if isinstance(data, dict) else {}
 
 
 def version_label(info: dict) -> str:
@@ -581,7 +582,9 @@ def load_pytest_html(report_html: Path) -> dict:
     match = JSONBLOB_RE.search(text)
     if not match:
         return {"tests": {}}
-    return json.loads(html.unescape(match.group(1)))
+    # Redacted on the way in, so no PIN or local path from an older run's tracebacks and logs can
+    # reach the published page (see base/redact.py); newer runs are already clean.
+    return redact_json(json.loads(html.unescape(match.group(1))))
 
 
 def parse_test_id(test_id: str):
@@ -657,7 +660,7 @@ def load_summary(wallet_dir: Path) -> dict:
     if not path.exists():
         return {}
     try:
-        tests = json.loads(path.read_text(encoding="utf-8")).get("tests", [])
+        tests = redact_json(json.loads(path.read_text(encoding="utf-8")).get("tests", []))
         if not isinstance(tests, list):
             raise TypeError(f"'tests' is {type(tests).__name__}, not a list")
         return {t["nodeid"]: t for t in tests

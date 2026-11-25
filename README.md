@@ -190,7 +190,8 @@ install and onboard on a device it has not used before, which the clean-slate po
 together, because the server's log is shared and each wallet's `appium.log` would otherwise absorb
 the other wallet's lines. To run them together, give each device its own server (`appium -p 4724`)
 and set `<WALLET>_APPIUM_SERVER=http://localhost:4724` on the wallets pinned to that device, or
-pass `--allow-shared-server`.
+pass `--allow-shared-server`. With a shared server, a wallet's `appium.log` can then hold another
+wallet's keypad PIN entry: each wallet leaves out only the PIN entry it typed itself.
 
 **Exit code.** 130 after Ctrl-C. Otherwise the highest pytest exit code other than 0, 1 and 5
 (pytest's "all passed", "some failed" and "nothing collected"); otherwise 10 if a wallet was
@@ -204,8 +205,7 @@ after 150 seconds is killed. A second press kills them straight away.
 
 **Limits.** The runner does not stop another runner, or `run_tests.py`, from using a device. It
 looks for an `adb logcat` capture on the device and waits if it finds one, which is a best-effort
-check. A Python traceback that goes through the unlock code can print the PIN into `pytest.out`,
-just as it already does in `report.html`. Whether two wallets on two devices can start their
+check. Whether two wallets on two devices can start their
 UiAutomator2 sessions at the same moment without a port clash has not been verified. Compare the
 first parallel run with a sequential one, since a loaded machine can make a test slower.
 
@@ -271,6 +271,14 @@ the config is loaded. That keeps device serials, PINs and credentials out of the
   config key that used it — rather than passing a literal `"${DEVICE_NAME}"` through to Appium.
 - Keep comments on their own lines in `.env`. Everything after the first `=` is the value, so a
   trailing `# comment` becomes part of it.
+- **PINs and local paths never reach a run's records.** Every device and app PIN the config loads
+  is masked as `****`, in logs, tracebacks, `summary.json`, `app_info.json`, XML dumps, `appium.log`
+  and `report.html`, and in pytest's own output (`pytest.out`, the nightly log). Appium's whole
+  unlock exchange is left out of `appium.log`, since the order of its keypad clicks spells the PIN,
+  and so is a PIN typed on a wallet's own keypad (the pin pages type inside `typing_secret()`).
+  Paths inside the repository are written relative to it, and any other home folder as `~`. The
+  compact report applies the same rules to whatever run it reads. See `base/redact.py`.
+  `logcat.log` is the device's own log, copied as it is.
 
 **`config/device.json`** — shared infrastructure settings (committed with placeholders; put your
 values in `.env` as shown in Setup). Beyond the Appium/device keys, it carries two run-wide switches:
