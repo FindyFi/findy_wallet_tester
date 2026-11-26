@@ -473,7 +473,7 @@ proofs. They are kept to show when wallets support that.
 ### Credential-typed entries
 
 An entry with a `credential_type` covers one credential type from one provider,
-and carry what a report needs to describe that type without asking the provider again:
+and carries what a report needs to describe that type without asking the provider again:
 
 | Key | Meaning |
 |:----|:--------|
