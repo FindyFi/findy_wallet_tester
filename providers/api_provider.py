@@ -78,7 +78,9 @@ class ApiDeeplinkProvider(DeeplinkProvider):
         "{{get:<url>}}"   the text of a GET to <url> (a path is joined to base_url). The Findynet
                           IPS demo posts a 50 kB patient-summary bundle that its own page fetches
                           from beside it; fetching the same file keeps it out of the registry and
-                          in step with what the demo itself sends.
+                          in step with what the demo itself sends. The GET runs in this provider's
+                          session, so cookies it sets go with the request: Opintotodiste mints an
+                          offer only for records that GET /demo has loaded into the session.
 
     Without `response_field` the response is read with the same `extract_deeplink` the web
     provider uses, so an API that answers with a bare URL (walt.id) and one that answers with JSON

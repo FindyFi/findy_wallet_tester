@@ -1266,7 +1266,7 @@ tr.section th.group {
   font-weight: 700;
 }
 tr.section:first-child th.group { border-top: none; }
-/* A provider group (Pension demo, FIDES Community) is the outermost split. It is marked by the
+/* A provider group (PID, mDL, Pension Credential, …) is the outermost split. It is marked by the
    Findynet blue in its text and a thin rule under it, not a solid band: the rest of the report
    is light, and a dark band drew the eye away from the results it was meant to organise. */
 tr.section th.group { color: var(--brand); font-size: .74rem; padding: 16px 28px 7px;
@@ -1919,8 +1919,9 @@ def _outcome_td(cell: Optional[dict]) -> str:
 def load_agent_groups(registry: Path = REPO_ROOT / "config" / "providers.json") -> dict:
     """Map each matrix row ("hovi_issuer") to the group its provider belongs to in the registry.
 
-    The group is provenance ("Pension demo", "FIDES Community"), so it is declared once, next to the
-    provider in config/providers.json, rather than kept in a list here that would drift from it.
+    The group is the kind of credential the provider issues or requests ("PID", "mDL",
+    "Pension Credential"), so it is declared once, next to the provider in config/providers.json,
+    rather than kept in a list here that would drift from it.
     Insertion order follows the registry, which is what fixes the order the groups render in.
 
     A missing or unreadable registry yields no groups, and the report renders ungrouped — split

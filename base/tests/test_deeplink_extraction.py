@@ -497,9 +497,11 @@ def test_every_registry_entry_gets_the_provider_its_type_names(section, row, ent
 
 # Their request names the credential in the vendor's own terms (Hovi's playground type, the IPS
 # demo's protocol) or not at all (Lissi's issuance call takes no body; its id "pid" only appears
-# in the minted offer), so the recorded configuration id cannot be checked in it.
+# in the minted offer; Opintotodiste names a demo record, and the issuer picks the configuration
+# from that record's kind), so the recorded configuration id cannot be checked in it.
 _ID_NOT_IN_REQUEST = {"hovi_playground_pid_mdoc", "hovi_playground_pid_sdjwt", "findynet_ips",
-                      "lissi_pid_sdjwt"}
+                      "lissi_pid_sdjwt", "opintotodiste_student_status_sdjwt",
+                      "opintotodiste_openbadge_sdjwt"}
 
 
 @pytest.mark.parametrize("name,entry",
